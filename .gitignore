@@ -1,0 +1,55 @@
+# Plan (internal)
+PLAN.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# uv
+backend/.venv/
+backend/.python-version-*
+
+# Ruff / mypy
+.ruff_cache/
+.mypy_cache/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+pgdata/

@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: tripl
+      POSTGRES_PASSWORD: tripl
+      POSTGRES_DB: tripl
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tripl"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    command: ["sh", "-c", "alembic upgrade head && uvicorn tripl.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
+      DEBUG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

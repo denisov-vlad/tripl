@@ -1,0 +1,67 @@
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+from tripl.schemas.event_type import EventTypeBrief
+
+
+class EventFieldValueIn(BaseModel):
+    field_definition_id: uuid.UUID
+    value: str
+
+
+class EventMetaValueIn(BaseModel):
+    meta_field_definition_id: uuid.UUID
+    value: str
+
+
+class EventCreate(BaseModel):
+    event_type_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=500)
+    description: str = ""
+    field_values: list[EventFieldValueIn] = []
+    meta_values: list[EventMetaValueIn] = []
+
+
+class EventUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=500)
+    description: str | None = None
+    field_values: list[EventFieldValueIn] | None = None
+    meta_values: list[EventMetaValueIn] | None = None
+
+
+class EventFieldValueResponse(BaseModel):
+    id: uuid.UUID
+    field_definition_id: uuid.UUID
+    value: str
+
+    model_config = {"from_attributes": True}
+
+
+class EventMetaValueResponse(BaseModel):
+    id: uuid.UUID
+    meta_field_definition_id: uuid.UUID
+    value: str
+
+    model_config = {"from_attributes": True}
+
+
+class EventResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    event_type_id: uuid.UUID
+    event_type: EventTypeBrief
+    name: str
+    description: str
+    field_values: list[EventFieldValueResponse] = []
+    meta_values: list[EventMetaValueResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EventListResponse(BaseModel):
+    items: list[EventResponse]
+    total: int
