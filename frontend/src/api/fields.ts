@@ -6,7 +6,7 @@ export const fieldsApi = {
     api.get<FieldDefinition[]>(`/projects/${slug}/event-types/${etId}/fields`),
   create: (slug: string, etId: string, data: {
     name: string; display_name: string; field_type: string; is_required?: boolean;
-    enum_options?: string[]; description?: string
+    enum_options?: string[]; description?: string; order?: number
   }) => api.post<FieldDefinition>(`/projects/${slug}/event-types/${etId}/fields`, data),
   update: (slug: string, etId: string, fieldId: string, data: Partial<FieldDefinition>) =>
     api.patch<FieldDefinition>(`/projects/${slug}/event-types/${etId}/fields/${fieldId}`, data),
