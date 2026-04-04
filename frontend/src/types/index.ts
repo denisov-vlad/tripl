@@ -74,6 +74,11 @@ export interface EventMetaValue {
   value: string
 }
 
+export interface EventTag {
+  id: string
+  name: string
+}
+
 export interface Event {
   id: string
   project_id: string
@@ -81,6 +86,8 @@ export interface Event {
   event_type: EventTypeBrief
   name: string
   description: string
+  implemented: boolean
+  tags: EventTag[]
   field_values: EventFieldValue[]
   meta_values: EventMetaValue[]
   created_at: string
@@ -90,4 +97,14 @@ export interface Event {
 export interface EventListResponse {
   items: Event[]
   total: number
+}
+
+export type VariableType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'string_array' | 'number_array'
+
+export interface Variable {
+  id: string
+  project_id: string
+  name: string
+  variable_type: VariableType
+  description: string
 }

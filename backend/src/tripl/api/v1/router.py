@@ -6,6 +6,7 @@ from tripl.api.v1.fields import router as fields_router
 from tripl.api.v1.meta_fields import router as meta_fields_router
 from tripl.api.v1.projects import router as projects_router
 from tripl.api.v1.relations import router as relations_router
+from tripl.api.v1.variables import router as variables_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(projects_router)
@@ -14,3 +15,4 @@ router.include_router(fields_router)
 router.include_router(relations_router)
 router.include_router(meta_fields_router)
 router.include_router(events_router)
+router.include_router(variables_router)

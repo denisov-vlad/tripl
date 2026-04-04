@@ -20,6 +20,8 @@ class EventCreate(BaseModel):
     event_type_id: uuid.UUID
     name: str = Field(min_length=1, max_length=500)
     description: str = ""
+    implemented: bool = False
+    tags: list[str] = []
     field_values: list[EventFieldValueIn] = []
     meta_values: list[EventMetaValueIn] = []
 
@@ -27,6 +29,8 @@ class EventCreate(BaseModel):
 class EventUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=500)
     description: str | None = None
+    implemented: bool | None = None
+    tags: list[str] | None = None
     field_values: list[EventFieldValueIn] | None = None
     meta_values: list[EventMetaValueIn] | None = None
 
@@ -47,6 +51,13 @@ class EventMetaValueResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class EventTagResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class EventResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -54,6 +65,8 @@ class EventResponse(BaseModel):
     event_type: EventTypeBrief
     name: str
     description: str
+    implemented: bool
+    tags: list[EventTagResponse] = []
     field_values: list[EventFieldValueResponse] = []
     meta_values: list[EventMetaValueResponse] = []
     created_at: datetime

@@ -149,6 +149,129 @@ async def test_delete_event(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_create_event_with_tags_and_implemented(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-tags")
+    resp = await client.post(
+        "/api/v1/projects/ev-tags/events",
+        json={
+            "event_type_id": et_id,
+            "name": "Tagged Event",
+            "implemented": True,
+            "tags": ["mobile", "v2"],
+            "field_values": [{"field_definition_id": field_id, "value": "home"}],
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["implemented"] is True
+    assert sorted([t["name"] for t in data["tags"]]) == ["mobile", "v2"]
+
+
+@pytest.mark.asyncio
+async def test_filter_by_implemented(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-impl")
+    await client.post(
+        "/api/v1/projects/ev-impl/events",
+        json={
+            "event_type_id": et_id,
+            "name": "Done",
+            "implemented": True,
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    await client.post(
+        "/api/v1/projects/ev-impl/events",
+        json={
+            "event_type_id": et_id,
+            "name": "Not Done",
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    resp = await client.get("/api/v1/projects/ev-impl/events?implemented=true")
+    assert resp.json()["total"] == 1
+    assert resp.json()["items"][0]["name"] == "Done"
+
+    resp = await client.get("/api/v1/projects/ev-impl/events?implemented=false")
+    assert resp.json()["total"] == 1
+    assert resp.json()["items"][0]["name"] == "Not Done"
+
+
+@pytest.mark.asyncio
+async def test_filter_by_tag(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-ftag")
+    await client.post(
+        "/api/v1/projects/ev-ftag/events",
+        json={
+            "event_type_id": et_id,
+            "name": "Mobile Event",
+            "tags": ["mobile"],
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    await client.post(
+        "/api/v1/projects/ev-ftag/events",
+        json={
+            "event_type_id": et_id,
+            "name": "Web Event",
+            "tags": ["web"],
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    resp = await client.get("/api/v1/projects/ev-ftag/events?tag=mobile")
+    assert resp.json()["total"] == 1
+    assert resp.json()["items"][0]["name"] == "Mobile Event"
+
+
+@pytest.mark.asyncio
+async def test_list_tags(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-ltag")
+    await client.post(
+        "/api/v1/projects/ev-ltag/events",
+        json={
+            "event_type_id": et_id,
+            "name": "E1",
+            "tags": ["mobile", "v2"],
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    await client.post(
+        "/api/v1/projects/ev-ltag/events",
+        json={
+            "event_type_id": et_id,
+            "name": "E2",
+            "tags": ["web", "v2"],
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    resp = await client.get("/api/v1/projects/ev-ltag/events/tags")
+    assert resp.status_code == 200
+    assert sorted(resp.json()) == ["mobile", "v2", "web"]
+
+
+@pytest.mark.asyncio
+async def test_update_tags_and_implemented(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-utag")
+    create = await client.post(
+        "/api/v1/projects/ev-utag/events",
+        json={
+            "event_type_id": et_id,
+            "name": "E",
+            "tags": ["old"],
+            "field_values": [{"field_definition_id": field_id, "value": "s"}],
+        },
+    )
+    event_id = create.json()["id"]
+    resp = await client.patch(
+        f"/api/v1/projects/ev-utag/events/{event_id}",
+        json={"implemented": True, "tags": ["new1", "new2"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["implemented"] is True
+    assert sorted([t["name"] for t in data["tags"]]) == ["new1", "new2"]
+
+
+@pytest.mark.asyncio
 async def test_bulk_create_events(client: AsyncClient):
     et_id, field_id, _ = await _setup_events(client, "ev-bulk")
     resp = await client.post(

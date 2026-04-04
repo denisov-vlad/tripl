@@ -43,17 +43,14 @@ export default function ProjectsPage() {
     if (ok) deleteMut.mutate(p.slug)
   }
 
-  if (isLoading) return <div className="text-gray-500">Loading...</div>
+  if (isLoading) return <div className="cell-muted">Loading...</div>
 
   return (
     <div>
       {dialog}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Projects</h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="inline-flex items-center gap-1.5 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 shadow-sm transition"
-        >
+      <div className="page-header">
+        <h1 className="page-title">Projects</h1>
+        <button onClick={() => setShowForm(!showForm)} className="btn-primary">
           + New Project
         </button>
       </div>
@@ -61,67 +58,60 @@ export default function ProjectsPage() {
       {showForm && (
         <form
           onSubmit={e => { e.preventDefault(); createMut.mutate() }}
-          className="bg-white border rounded-xl p-5 mb-6 space-y-4 shadow-sm"
+          className="form-card"
         >
-          <div className="grid grid-cols-2 gap-4">
+          <div className="form-grid-2">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Project name</label>
+              <label className="field-label">Project name</label>
               <input
                 value={name}
                 onChange={e => { setName(e.target.value); if (!slugTouched) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+                className="input"
                 required
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Slug (url-friendly)</label>
+              <label className="field-label">Slug (url-friendly)</label>
               <input
                 value={slug}
                 onChange={e => { setSlugTouched(true); setSlug(e.target.value) }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+                className="input-mono"
                 pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$"
                 required
               />
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">Description (optional)</label>
+            <label className="field-label">Description (optional)</label>
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
+              className="textarea"
               rows={2}
             />
           </div>
-          <div className="flex gap-3">
-            <button type="submit" className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 shadow-sm transition">
-              Create
-            </button>
-            <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition">
-              Cancel
-            </button>
+          <div className="form-actions">
+            <button type="submit" className="btn-primary">Create</button>
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
           </div>
-          {createMut.isError && <p className="text-red-600 text-sm">{(createMut.error as Error).message}</p>}
+          {createMut.isError && <p className="form-error">{(createMut.error as Error).message}</p>}
         </form>
       )}
 
       <div className="grid gap-4">
         {projects.map((p: Project) => (
-          <div key={p.id} className="bg-white border rounded-xl p-5 flex items-center justify-between hover:border-indigo-300 shadow-sm transition">
-            <Link to={`/p/${p.slug}/events`} className="flex-1">
+          <div key={p.id} className="card-hover p-5 flex items-center justify-between">
+            <Link to={`/p/${p.slug}/events`} className="flex-1 no-underline">
               <h2 className="font-semibold text-gray-900">{p.name}</h2>
               <p className="text-sm text-gray-500 mt-0.5">{p.slug}{p.description && ` — ${p.description}`}</p>
             </Link>
-            <button
-              onClick={() => handleDelete(p)}
-              className="ml-4 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition"
-            >
+            <button onClick={() => handleDelete(p)} className="btn-danger-sm ml-4">
               Delete
             </button>
           </div>
         ))}
         {projects.length === 0 && !showForm && (
-          <p className="text-gray-400 text-center py-12">No projects yet. Create one to get started.</p>
+          <p className="table-empty">No projects yet. Create one to get started.</p>
         )}
       </div>
     </div>

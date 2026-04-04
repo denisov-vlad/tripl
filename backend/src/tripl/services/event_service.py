@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tripl.models.event import Event
 from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
+from tripl.models.event_tag import EventTag
 from tripl.models.field_definition import FieldDefinition
 from tripl.schemas.event import EventCreate, EventUpdate
 from tripl.services.project_service import get_project_id_by_slug
@@ -36,6 +37,8 @@ async def list_events(
     slug: str,
     event_type_id: uuid.UUID | None = None,
     search: str | None = None,
+    implemented: bool | None = None,
+    tag: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[list[Event], int]:
@@ -49,12 +52,31 @@ async def list_events(
     if search:
         query = query.where(Event.name.ilike(f"%{search}%"))
         count_query = count_query.where(Event.name.ilike(f"%{search}%"))
+    if implemented is not None:
+        query = query.where(Event.implemented == implemented)
+        count_query = count_query.where(Event.implemented == implemented)
+    if tag:
+        tag_filter = select(EventTag.event_id).where(EventTag.name == tag).correlate(None)
+        query = query.where(Event.id.in_(tag_filter))
+        count_query = count_query.where(Event.id.in_(tag_filter))
 
     total = (await session.execute(count_query)).scalar() or 0
     result = await session.execute(
         query.order_by(Event.created_at.desc()).offset(offset).limit(limit)
     )
     return list(result.scalars().all()), total
+
+
+async def list_tags(session: AsyncSession, slug: str) -> list[str]:
+    project_id = await get_project_id_by_slug(session, slug)
+    result = await session.execute(
+        select(EventTag.name)
+        .join(Event, EventTag.event_id == Event.id)
+        .where(Event.project_id == project_id)
+        .distinct()
+        .order_by(EventTag.name)
+    )
+    return list(result.scalars().all())
 
 
 async def get_event(session: AsyncSession, slug: str, event_id: uuid.UUID) -> Event:
@@ -77,6 +99,7 @@ async def create_event(session: AsyncSession, slug: str, data: EventCreate) -> E
         event_type_id=data.event_type_id,
         name=data.name,
         description=data.description,
+        implemented=data.implemented,
     )
     session.add(event)
     await session.flush()
@@ -97,6 +120,8 @@ async def create_event(session: AsyncSession, slug: str, data: EventCreate) -> E
                 value=mv.value,
             )
         )
+    for tag_name in data.tags:
+        session.add(EventTag(event_id=event.id, name=tag_name))
 
     await session.commit()
     await session.refresh(event)
@@ -113,6 +138,15 @@ async def update_event(
         event.name = update_data["name"]
     if "description" in update_data:
         event.description = update_data["description"]
+    if "implemented" in update_data:
+        event.implemented = update_data["implemented"]
+
+    if data.tags is not None:
+        for t in list(event.tags):
+            await session.delete(t)
+        await session.flush()
+        for tag_name in data.tags:
+            session.add(EventTag(event_id=event.id, name=tag_name))
 
     if data.field_values is not None:
         await _validate_field_values(session, event.event_type_id, data.field_values)

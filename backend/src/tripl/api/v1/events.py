@@ -15,13 +15,20 @@ async def list_events(
     slug: str,
     event_type_id: uuid.UUID | None = None,
     search: str | None = None,
+    implemented: bool | None = None,
+    tag: str | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ):
     items, total = await event_service.list_events(
-        session, slug, event_type_id, search, offset, limit
+        session, slug, event_type_id, search, implemented, tag, offset, limit
     )
     return EventListResponse(items=items, total=total)
+
+
+@router.get("/tags", response_model=list[str])
+async def list_tags(session: SessionDep, slug: str):
+    return await event_service.list_tags(session, slug)
 
 
 @router.post("", response_model=EventResponse, status_code=201)

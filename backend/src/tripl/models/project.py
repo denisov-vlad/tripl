@@ -22,3 +22,6 @@ class Project(UUIDMixin, TimestampMixin, Base):
     relations: Mapped[list[EventTypeRelation]] = relationship(  # noqa: F821
         back_populates="project", cascade="all, delete-orphan", lazy="selectin"
     )
+    variables: Mapped[list[Variable]] = relationship(  # noqa: F821
+        back_populates="project", cascade="all, delete-orphan", lazy="selectin"
+    )

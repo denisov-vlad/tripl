@@ -5,16 +5,11 @@ import { eventTypesApi } from '../api/eventTypes'
 import { fieldsApi } from '../api/fields'
 import { metaFieldsApi } from '../api/metaFields'
 import { relationsApi } from '../api/relations'
+import { variablesApi } from '../api/variables'
 import { useConfirm } from '../hooks/useConfirm'
-import type { EventType, FieldDefinition, MetaFieldDefinition, EventTypeRelation } from '../types'
+import type { EventType, FieldDefinition, MetaFieldDefinition, EventTypeRelation, Variable, VariableType } from '../types'
 
-type Tab = 'event-types' | 'meta-fields' | 'relations'
-
-const inputClass = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition'
-const inputSmClass = 'w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition'
-const btnPrimary = 'bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 shadow-sm transition'
-const btnSecondary = 'px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition'
-const btnDangerSm = 'px-2.5 py-1 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition'
+type Tab = 'event-types' | 'meta-fields' | 'relations' | 'variables'
 
 export default function ProjectSettingsPage() {
   const { slug } = useParams<{ slug: string }>()
@@ -24,19 +19,18 @@ export default function ProjectSettingsPage() {
     { key: 'event-types', label: 'Event Types' },
     { key: 'meta-fields', label: 'Meta Fields' },
     { key: 'relations', label: 'Relations' },
+    { key: 'variables', label: 'Variables' },
   ]
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Project Settings</h1>
-      <div className="flex gap-1 border-b mb-6">
+      <h1 className="page-title mb-6">Project Settings</h1>
+      <div className="tabs mb-6">
         {tabs.map(t => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
-              tab === t.key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
+            className={tab === t.key ? 'tab-active' : 'tab-inactive'}
           >
             {t.label}
           </button>
@@ -46,6 +40,7 @@ export default function ProjectSettingsPage() {
       {tab === 'event-types' && slug && <EventTypesTab slug={slug} />}
       {tab === 'meta-fields' && slug && <MetaFieldsTab slug={slug} />}
       {tab === 'relations' && slug && <RelationsTab slug={slug} />}
+      {tab === 'variables' && slug && <VariablesTab slug={slug} />}
     </div>
   )
 }
@@ -110,58 +105,58 @@ function EventTypesTab({ slug }: { slug: string }) {
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="font-semibold text-gray-700">Event Types</h2>
-        <button onClick={() => setShowForm(!showForm)} className={btnPrimary}>
+        <h2 className="section-title">Event Types</h2>
+        <button onClick={() => setShowForm(!showForm)} className="btn-primary">
           + Add Event Type
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm">
+        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
           <div className="flex gap-3 items-end">
             <div className="flex-1">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Name (e.g. pv)</label>
-              <input value={name} onChange={e => setName(e.target.value)} className={inputClass} required />
+              <label className="field-label">Name (e.g. pv)</label>
+              <input value={name} onChange={e => setName(e.target.value)} className="input" required />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
-              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className={inputClass} required />
+              <label className="field-label">Display Name</label>
+              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="input" required />
             </div>
             <div className="w-16">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Color</label>
-              <input type="color" value={color} onChange={e => setColor(e.target.value)} className="w-full h-[38px] rounded-lg border border-gray-300 cursor-pointer" />
+              <label className="field-label">Color</label>
+              <input type="color" value={color} onChange={e => setColor(e.target.value)} className="color-input" />
             </div>
           </div>
-          <div className="flex gap-3">
-            <button type="submit" className={btnPrimary}>Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className={btnSecondary}>Cancel</button>
+          <div className="form-actions">
+            <button type="submit" className="btn-primary">Create</button>
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
           </div>
-          {createMut.isError && <p className="text-red-600 text-xs">{(createMut.error as Error).message}</p>}
+          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
         </form>
       )}
 
       {eventTypes.map((et: EventType) => (
-        <div key={et.id} className="bg-white border rounded-xl shadow-sm overflow-hidden">
+        <div key={et.id} className="card overflow-hidden">
           <div
-            className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition"
+            className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
             onClick={() => setExpandedId(expandedId === et.id ? null : et.id)}
           >
             <div className="flex items-center gap-3">
               <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: et.color }} />
               <span className="font-mono text-sm font-semibold text-gray-900">{et.name}</span>
               <span className="text-gray-500 text-sm">{et.display_name}</span>
-              <span className="text-gray-400 text-xs bg-gray-100 px-2 py-0.5 rounded-full">{et.field_definitions.length} fields</span>
+              <span className="count-pill">{et.field_definitions.length} fields</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={e => { e.stopPropagation(); startEdit(et) }}
-                className="px-2.5 py-1 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-md transition"
+                className="btn-edit-sm"
               >
                 Edit
               </button>
               <button
                 onClick={e => { e.stopPropagation(); handleDelete(et) }}
-                className={btnDangerSm}
+                className="btn-danger-sm"
               >
                 Delete
               </button>
@@ -169,28 +164,27 @@ function EventTypesTab({ slug }: { slug: string }) {
             </div>
           </div>
 
-          {/* Edit event type inline */}
           {editingId === et.id && (
             <div className="border-t bg-indigo-50/30 p-4 space-y-3">
               <div className="flex gap-3 items-end">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
-                  <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className={inputClass} />
+                  <label className="field-label">Display Name</label>
+                  <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className="input" />
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Description</label>
-                  <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className={inputClass} />
+                  <label className="field-label">Description</label>
+                  <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className="input" />
                 </div>
                 <div className="w-16">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Color</label>
-                  <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="w-full h-[38px] rounded-lg border border-gray-300 cursor-pointer" />
+                  <label className="field-label">Color</label>
+                  <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="color-input" />
                 </div>
               </div>
-              <div className="flex gap-3">
-                <button onClick={() => updateMut.mutate(et.id)} className={btnPrimary}>Save</button>
-                <button onClick={() => setEditingId(null)} className={btnSecondary}>Cancel</button>
+              <div className="form-actions">
+                <button onClick={() => updateMut.mutate(et.id)} className="btn-primary">Save</button>
+                <button onClick={() => setEditingId(null)} className="btn-secondary">Cancel</button>
               </div>
-              {updateMut.isError && <p className="text-red-600 text-xs">{(updateMut.error as Error).message}</p>}
+              {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
             </div>
           )}
 
@@ -280,46 +274,46 @@ function FieldsEditor({ slug, eventType }: { slug: string; eventType: EventType 
     <div className="border-t px-4 py-4 bg-gray-50/50 space-y-3">
       {dialog}
       <div className="flex justify-between items-center">
-        <span className="text-xs font-semibold text-gray-500 uppercase">Fields</span>
-        <button onClick={() => setShowForm(!showForm)} className="text-sm font-medium text-indigo-600 hover:text-indigo-700 transition">
+        <span className="section-label">Fields</span>
+        <button onClick={() => setShowForm(!showForm)} className="btn-link">
           + Add Field
         </button>
       </div>
 
       {showForm && (
         <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="bg-white p-3 rounded-lg border space-y-3 shadow-sm">
-          <div className="grid grid-cols-4 gap-2">
+          <div className="form-grid-4">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Name</label>
-              <input value={name} onChange={e => setName(e.target.value)} className={inputSmClass} required />
+              <label className="field-label">Name</label>
+              <input value={name} onChange={e => setName(e.target.value)} className="input-sm" required />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
-              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className={inputSmClass} required />
+              <label className="field-label">Display Name</label>
+              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="input-sm" required />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Type</label>
-              <select value={fieldType} onChange={e => setFieldType(e.target.value)} className={inputSmClass}>
+              <label className="field-label">Type</label>
+              <select value={fieldType} onChange={e => setFieldType(e.target.value)} className="select-sm">
                 {fieldTypes.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div className="flex items-end pb-0.5">
               <label className="text-xs flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} className="rounded text-indigo-600" /> Required
+                <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} className="checkbox" /> Required
               </label>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button type="submit" className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700 shadow-sm transition">Add</button>
-            <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Cancel</button>
+          <div className="form-actions">
+            <button type="submit" className="btn-primary text-xs px-3 py-1.5">Add</button>
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary text-xs px-3 py-1.5">Cancel</button>
           </div>
-          {createMut.isError && <p className="text-red-600 text-xs">{(createMut.error as Error).message}</p>}
+          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
         </form>
       )}
 
       {sortedFields.length > 0 ? (
         <div className="space-y-0">
-          <div className="grid grid-cols-[32px_1fr_1fr_80px_60px_100px] gap-2 text-xs text-gray-500 font-semibold py-1.5 px-1">
+          <div className="grid grid-cols-[32px_1fr_1fr_80px_60px_100px] gap-2 grid-header">
             <span></span>
             <span>Name</span>
             <span>Display</span>
@@ -334,54 +328,54 @@ function FieldsEditor({ slug, eventType }: { slug: string; eventType: EventType 
                   <button
                     onClick={() => moveField(idx, -1)}
                     disabled={idx === 0 || reorderMut.isPending}
-                    className="text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed leading-none text-[10px]"
+                    className="move-btn"
                     title="Move up"
                   >▲</button>
                   <button
                     onClick={() => moveField(idx, 1)}
                     disabled={idx === sortedFields.length - 1 || reorderMut.isPending}
-                    className="text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed leading-none text-[10px]"
+                    className="move-btn"
                     title="Move down"
                   >▼</button>
                 </div>
                 <span className="font-mono text-gray-900">{f.name}</span>
                 <span className="text-gray-600">{f.display_name}</span>
-                <span><span className="bg-gray-200 px-1.5 py-0.5 rounded text-xs font-medium">{f.field_type}</span></span>
+                <span><span className="field-type-badge">{f.field_type}</span></span>
                 <span>{f.is_required ? <span className="text-green-600 font-medium">✓</span> : <span className="text-gray-300">—</span>}</span>
                 <div className="flex gap-1.5 justify-end">
-                  <button onClick={() => startEdit(f)} className="px-2 py-0.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-md transition">Edit</button>
-                  <button onClick={() => handleDeleteField(f)} className={btnDangerSm}>Delete</button>
+                  <button onClick={() => startEdit(f)} className="btn-edit-sm">Edit</button>
+                  <button onClick={() => handleDeleteField(f)} className="btn-danger-sm">Delete</button>
                 </div>
               </div>
 
               {editingId === f.id && (
                 <div className="bg-indigo-50/40 border-t border-indigo-100 px-3 py-3 space-y-2">
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="form-grid-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
-                      <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className={inputSmClass} />
+                      <label className="field-label">Display Name</label>
+                      <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className="input-sm" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Type</label>
-                      <select value={editFieldType} onChange={e => setEditFieldType(e.target.value)} className={inputSmClass}>
+                      <label className="field-label">Type</label>
+                      <select value={editFieldType} onChange={e => setEditFieldType(e.target.value)} className="select-sm">
                         {fieldTypes.map(t => <option key={t}>{t}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Description</label>
-                      <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className={inputSmClass} placeholder="Optional" />
+                      <label className="field-label">Description</label>
+                      <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className="input-sm" placeholder="Optional" />
                     </div>
                     <div className="flex items-end pb-0.5">
                       <label className="text-xs flex items-center gap-1.5 cursor-pointer">
-                        <input type="checkbox" checked={editIsRequired} onChange={e => setEditIsRequired(e.target.checked)} className="rounded text-indigo-600" /> Required
+                        <input type="checkbox" checked={editIsRequired} onChange={e => setEditIsRequired(e.target.checked)} className="checkbox" /> Required
                       </label>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => saveEdit(f.id)} className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-xs font-medium hover:bg-indigo-700 shadow-sm transition">Save</button>
-                    <button onClick={() => setEditingId(null)} className="px-3 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition">Cancel</button>
+                  <div className="form-actions">
+                    <button onClick={() => saveEdit(f.id)} className="btn-primary text-xs px-3 py-1">Save</button>
+                    <button onClick={() => setEditingId(null)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
                   </div>
-                  {updateMut.isError && <p className="text-red-600 text-xs">{(updateMut.error as Error).message}</p>}
+                  {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
                 </div>
               )}
             </div>
@@ -435,68 +429,64 @@ function MetaFieldsTab({ slug }: { slug: string }) {
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="font-semibold text-gray-700">Meta Fields</h2>
-        <button onClick={() => setShowForm(!showForm)} className={btnPrimary}>+ Add Meta Field</button>
+        <h2 className="section-title">Meta Fields</h2>
+        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Add Meta Field</button>
       </div>
 
       {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm">
-          <div className="grid grid-cols-4 gap-3 items-end">
+        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
+          <div className="form-grid-4 items-end">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Name (e.g. jira_link)</label>
-              <input value={name} onChange={e => setName(e.target.value)} className={inputClass} required />
+              <label className="field-label">Name (e.g. jira_link)</label>
+              <input value={name} onChange={e => setName(e.target.value)} className="input" required />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Display Name</label>
-              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className={inputClass} required />
+              <label className="field-label">Display Name</label>
+              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="input" required />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Type</label>
-              <select value={fieldType} onChange={e => setFieldType(e.target.value)} className={inputClass}>
+              <label className="field-label">Type</label>
+              <select value={fieldType} onChange={e => setFieldType(e.target.value)} className="select">
                 {['string', 'url', 'boolean', 'enum', 'date'].map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div className="flex items-end pb-2">
               <label className="text-sm flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} className="rounded text-indigo-600" /> Required
+                <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} className="checkbox" /> Required
               </label>
             </div>
           </div>
-          <div className="flex gap-3">
-            <button type="submit" className={btnPrimary}>Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className={btnSecondary}>Cancel</button>
+          <div className="form-actions">
+            <button type="submit" className="btn-primary">Create</button>
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
           </div>
-          {createMut.isError && <p className="text-red-600 text-xs">{(createMut.error as Error).message}</p>}
+          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
         </form>
       )}
 
-      <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left">
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Display</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Required</th>
-              <th className="px-4 py-3 w-20"></th>
+      <div className="table-wrapper">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Display</th>
+              <th>Type</th>
+              <th>Required</th>
+              <th className="w-20"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody>
             {metaFields.map((mf: MetaFieldDefinition) => (
-              <tr key={mf.id} className="hover:bg-gray-50 transition">
-                <td className="px-4 py-3 font-mono text-gray-900">{mf.name}</td>
-                <td className="px-4 py-3 text-gray-600">{mf.display_name}</td>
-                <td className="px-4 py-3">
-                  <span className="bg-gray-200 px-2 py-0.5 rounded text-xs font-medium">{mf.field_type}</span>
-                </td>
-                <td className="px-4 py-3">{mf.is_required ? <span className="text-green-600 font-medium">✓</span> : <span className="text-gray-300">—</span>}</td>
-                <td className="px-4 py-3">
-                  <button onClick={() => handleDelete(mf)} className={btnDangerSm}>Delete</button>
-                </td>
+              <tr key={mf.id}>
+                <td className="cell-mono">{mf.name}</td>
+                <td className="text-gray-600">{mf.display_name}</td>
+                <td><span className="field-type-badge">{mf.field_type}</span></td>
+                <td>{mf.is_required ? <span className="text-green-600 font-medium">✓</span> : <span className="text-gray-300">—</span>}</td>
+                <td><button onClick={() => handleDelete(mf)} className="btn-danger-sm">Delete</button></td>
               </tr>
             ))}
             {metaFields.length === 0 && (
-              <tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">No meta fields yet.</td></tr>
+              <tr><td colSpan={5} className="table-empty text-sm">No meta fields yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -558,79 +548,237 @@ function RelationsTab({ slug }: { slug: string }) {
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="font-semibold text-gray-700">Relations</h2>
-        <button onClick={() => setShowForm(!showForm)} className={btnPrimary}>+ Add Relation</button>
+        <h2 className="section-title">Relations</h2>
+        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Add Relation</button>
       </div>
 
       {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="bg-white border rounded-xl p-4 space-y-3 shadow-sm">
-          <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
+          <div className="form-grid-2">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Source Event Type</label>
-              <select value={srcEtId} onChange={e => { setSrcEtId(e.target.value); setSrcFieldId('') }} className={inputClass}>
+              <label className="field-label">Source Event Type</label>
+              <select value={srcEtId} onChange={e => { setSrcEtId(e.target.value); setSrcFieldId('') }} className="select">
                 <option value="">Select...</option>
                 {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Target Event Type</label>
-              <select value={tgtEtId} onChange={e => { setTgtEtId(e.target.value); setTgtFieldId('') }} className={inputClass}>
+              <label className="field-label">Target Event Type</label>
+              <select value={tgtEtId} onChange={e => { setTgtEtId(e.target.value); setTgtFieldId('') }} className="select">
                 <option value="">Select...</option>
                 {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Source Field</label>
-              <select value={srcFieldId} onChange={e => setSrcFieldId(e.target.value)} className={inputClass}>
+              <label className="field-label">Source Field</label>
+              <select value={srcFieldId} onChange={e => setSrcFieldId(e.target.value)} className="select">
                 <option value="">Select...</option>
                 {srcEt?.field_definitions.map(f => <option key={f.id} value={f.id}>{f.display_name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Target Field</label>
-              <select value={tgtFieldId} onChange={e => setTgtFieldId(e.target.value)} className={inputClass}>
+              <label className="field-label">Target Field</label>
+              <select value={tgtFieldId} onChange={e => setTgtFieldId(e.target.value)} className="select">
                 <option value="">Select...</option>
                 {tgtEt?.field_definitions.map(f => <option key={f.id} value={f.id}>{f.display_name}</option>)}
               </select>
             </div>
           </div>
-          <div className="flex gap-3">
-            <button type="submit" className={btnPrimary} disabled={!srcFieldId || !tgtFieldId}>Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className={btnSecondary}>Cancel</button>
+          <div className="form-actions">
+            <button type="submit" className="btn-primary" disabled={!srcFieldId || !tgtFieldId}>Create</button>
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
           </div>
-          {createMut.isError && <p className="text-red-600 text-xs">{(createMut.error as Error).message}</p>}
+          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
         </form>
       )}
 
-      <div className="bg-white border rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left">
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Source</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider w-8">→</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Target</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Type</th>
-              <th className="px-4 py-3 w-20"></th>
+      <div className="table-wrapper">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th className="w-8">→</th>
+              <th>Target</th>
+              <th>Type</th>
+              <th className="w-20"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody>
             {relations.map((r: EventTypeRelation) => (
-              <tr key={r.id} className="hover:bg-gray-50 transition">
-                <td className="px-4 py-3 font-mono text-gray-900">{etMap[r.source_event_type_id]?.name ?? '?'}</td>
-                <td className="px-4 py-3 text-gray-400">→</td>
-                <td className="px-4 py-3 font-mono text-gray-900">{etMap[r.target_event_type_id]?.name ?? '?'}</td>
-                <td className="px-4 py-3 text-gray-600">{r.relation_type}</td>
-                <td className="px-4 py-3">
-                  <button onClick={() => handleDelete(r)} className={btnDangerSm}>Delete</button>
-                </td>
+              <tr key={r.id}>
+                <td className="cell-mono">{etMap[r.source_event_type_id]?.name ?? '?'}</td>
+                <td className="text-gray-400">→</td>
+                <td className="cell-mono">{etMap[r.target_event_type_id]?.name ?? '?'}</td>
+                <td className="text-gray-600">{r.relation_type}</td>
+                <td><button onClick={() => handleDelete(r)} className="btn-danger-sm">Delete</button></td>
               </tr>
             ))}
             {relations.length === 0 && (
-              <tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">No relations yet.</td></tr>
+              <tr><td colSpan={5} className="table-empty text-sm">No relations yet.</td></tr>
             )}
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function VariablesTab({ slug }: { slug: string }) {
+  const qc = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const [name, setName] = useState('')
+  const [varType, setVarType] = useState<VariableType>('string')
+  const [description, setDescription] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editVarType, setEditVarType] = useState<VariableType>('string')
+  const [editDescription, setEditDescription] = useState('')
+  const { confirm, dialog } = useConfirm()
+
+  const variableTypes: VariableType[] = ['string', 'number', 'boolean', 'date', 'datetime', 'json', 'string_array', 'number_array']
+  const typeLabels: Record<VariableType, string> = {
+    string: 'String', number: 'Number', boolean: 'Boolean', date: 'Date',
+    datetime: 'Datetime', json: 'JSON', string_array: 'String[]', number_array: 'Number[]',
+  }
+
+  const { data: variables = [] } = useQuery({
+    queryKey: ['variables', slug],
+    queryFn: () => variablesApi.list(slug),
+  })
+
+  const createMut = useMutation({
+    mutationFn: () => variablesApi.create(slug, { name, variable_type: varType, description }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['variables', slug] })
+      setShowForm(false); setName(''); setVarType('string'); setDescription('')
+    },
+  })
+
+  const updateMut = useMutation({
+    mutationFn: (id: string) => variablesApi.update(slug, id, { variable_type: editVarType, description: editDescription }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['variables', slug] })
+      setEditingId(null)
+    },
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => variablesApi.del(slug, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['variables', slug] }),
+  })
+
+  const handleDelete = async (v: Variable) => {
+    const ok = await confirm({
+      title: 'Delete variable',
+      message: `Delete "${v.name}"? Any event fields referencing \${${v.name}} will keep the literal text.`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+    })
+    if (ok) deleteMut.mutate(v.id)
+  }
+
+  const startEdit = (v: Variable) => {
+    setEditingId(v.id)
+    setEditVarType(v.variable_type)
+    setEditDescription(v.description)
+  }
+
+  return (
+    <div className="space-y-4">
+      {dialog}
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="section-title">Variables</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Define template placeholders. Use <code className="bg-gray-100 px-1 rounded">{'${var_name}'}</code> in event field values.</p>
+        </div>
+        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Add Variable</button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
+          <div className="form-grid-3">
+            <div>
+              <label className="field-label">Name (lowercase, e.g. spot_id)</label>
+              <input value={name} onChange={e => setName(e.target.value)} className="input" required placeholder="my_variable" pattern="^[a-z][a-z0-9_]*$" />
+            </div>
+            <div>
+              <label className="field-label">Type</label>
+              <select value={varType} onChange={e => setVarType(e.target.value as VariableType)} className="select">
+                {variableTypes.map(t => <option key={t} value={t}>{typeLabels[t]}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="field-label">Description</label>
+              <input value={description} onChange={e => setDescription(e.target.value)} className="input" placeholder="Optional" />
+            </div>
+          </div>
+          <div className="form-actions">
+            <button type="submit" className="btn-primary">Create</button>
+            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
+          </div>
+          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
+        </form>
+      )}
+
+      <div className="table-wrapper">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Description</th>
+              <th>Usage</th>
+              <th className="w-28"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {variables.map((v: Variable) => (
+              <tr key={v.id}>
+                {editingId === v.id ? (
+                  <>
+                    <td className="cell-mono">{v.name}</td>
+                    <td className="py-2">
+                      <select value={editVarType} onChange={e => setEditVarType(e.target.value as VariableType)} className="select-sm">
+                        {variableTypes.map(t => <option key={t} value={t}>{typeLabels[t]}</option>)}
+                      </select>
+                    </td>
+                    <td className="py-2">
+                      <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className="input-sm" />
+                    </td>
+                    <td>
+                      <code className="var-code text-indigo-600 bg-indigo-50">{`\${${v.name}}`}</code>
+                    </td>
+                    <td>
+                      <div className="flex gap-1.5 justify-end">
+                        <button onClick={() => updateMut.mutate(v.id)} className="btn-primary text-xs px-2.5 py-1">Save</button>
+                        <button onClick={() => setEditingId(null)} className="btn-secondary text-xs px-2.5 py-1">Cancel</button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="cell-mono">{v.name}</td>
+                    <td><span className="field-type-badge">{typeLabels[v.variable_type]}</span></td>
+                    <td className="cell-muted">{v.description}</td>
+                    <td>
+                      <code className="var-code text-indigo-600 bg-indigo-50">{`\${${v.name}}`}</code>
+                    </td>
+                    <td>
+                      <div className="flex gap-1.5 justify-end">
+                        <button onClick={() => startEdit(v)} className="btn-edit-sm">Edit</button>
+                        <button onClick={() => handleDelete(v)} className="btn-danger-sm">Delete</button>
+                      </div>
+                    </td>
+                  </>
+                )}
+              </tr>
+            ))}
+            {variables.length === 0 && (
+              <tr><td colSpan={5} className="table-empty text-sm">No variables yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {updateMut.isError && <p className="form-error-sm mt-2">{(updateMut.error as Error).message}</p>}
     </div>
   )
 }
