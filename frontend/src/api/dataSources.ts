@@ -1,0 +1,36 @@
+import { api } from './client'
+import type { DataSource, DbType } from '../types'
+
+export const dataSourcesApi = {
+  list: () =>
+    api.get<DataSource[]>('/data-sources'),
+
+  get: (id: string) =>
+    api.get<DataSource>(`/data-sources/${id}`),
+
+  create: (data: {
+    name: string
+    db_type: DbType
+    host: string
+    port: number
+    database_name: string
+    username?: string
+    password?: string
+  }) => api.post<DataSource>('/data-sources', data),
+
+  update: (id: string, data: {
+    name?: string
+    db_type?: DbType
+    host?: string
+    port?: number
+    database_name?: string
+    username?: string
+    password?: string
+  }) => api.patch<DataSource>(`/data-sources/${id}`, data),
+
+  del: (id: string) =>
+    api.del(`/data-sources/${id}`),
+
+  testConnection: (id: string) =>
+    api.post<{ task_id: string; status: string }>(`/data-sources/${id}/test`, {}),
+}

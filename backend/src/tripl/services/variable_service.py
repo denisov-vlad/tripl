@@ -12,16 +12,12 @@ from tripl.services.project_service import get_project_id_by_slug
 async def list_variables(session: AsyncSession, slug: str) -> list[Variable]:
     project_id = await get_project_id_by_slug(session, slug)
     result = await session.execute(
-        select(Variable)
-        .where(Variable.project_id == project_id)
-        .order_by(Variable.name)
+        select(Variable).where(Variable.project_id == project_id).order_by(Variable.name)
     )
     return list(result.scalars().all())
 
 
-async def create_variable(
-    session: AsyncSession, slug: str, data: VariableCreate
-) -> Variable:
+async def create_variable(session: AsyncSession, slug: str, data: VariableCreate) -> Variable:
     project_id = await get_project_id_by_slug(session, slug)
     existing = await session.execute(
         select(Variable).where(

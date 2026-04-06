@@ -7,6 +7,7 @@ export default function Layout() {
     <div className="app-shell">
       <nav className="navbar">
         <Link to="/" className="navbar-brand">tripl</Link>
+        <Link to="/data-sources" className="navbar-link">Data Sources</Link>
         {slug && (
           <>
             <span className="navbar-divider">/</span>

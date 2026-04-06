@@ -15,6 +15,18 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   api:
     build: ./backend
     command: ["sh", "-c", "alembic upgrade head && uvicorn tripl.main:app --host 0.0.0.0 --port 8000"]
@@ -22,6 +34,9 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
+      SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       DEBUG: "true"
     depends_on:
       postgres:
@@ -31,6 +46,32 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  celery-worker:
+    build: ./backend
+    command: ["celery", "-A", "tripl.worker.celery_app", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
+      SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  celery-beat:
+    build: ./backend
+    command: ["celery", "-A", "tripl.worker.celery_app", "beat", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
+      SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -43,3 +84,4 @@ services:
 
 volumes:
   pgdata:
+  chdata:

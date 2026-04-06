@@ -10,6 +10,10 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.15",
     "pydantic-settings>=2.8",
+    "celery[rabbitmq]>=5.4",
+    "clickhouse-connect>=0.8",
+    "cryptography>=44.0",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]

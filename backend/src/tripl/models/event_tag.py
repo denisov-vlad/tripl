@@ -10,9 +10,7 @@ from tripl.models.base import Base, UUIDMixin
 
 class EventTag(UUIDMixin, Base):
     __tablename__ = "event_tags"
-    __table_args__ = (
-        UniqueConstraint("event_id", "name", name="uq_event_tag"),
-    )
+    __table_args__ = (UniqueConstraint("event_id", "name", name="uq_event_tag"),)
 
     event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(100))

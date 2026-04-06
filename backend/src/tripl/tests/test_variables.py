@@ -98,7 +98,16 @@ async def test_delete_variable(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_variable_types(client: AsyncClient):
     await _setup_project(client, "var-types")
-    for vt in ["string", "number", "boolean", "date", "datetime", "json", "string_array", "number_array"]:
+    for vt in [
+        "string",
+        "number",
+        "boolean",
+        "date",
+        "datetime",
+        "json",
+        "string_array",
+        "number_array",
+    ]:
         resp = await client.post(
             "/api/v1/projects/var-types/variables",
             json={"name": f"v_{vt}", "variable_type": vt},

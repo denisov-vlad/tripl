@@ -108,3 +108,51 @@ export interface Variable {
   variable_type: VariableType
   description: string
 }
+
+export type DbType = 'clickhouse'
+
+export interface DataSource {
+  id: string
+  name: string
+  db_type: DbType
+  host: string
+  port: number
+  database_name: string
+  username: string
+  password_set: boolean
+  extra_params: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ScanConfig {
+  id: string
+  data_source_id: string
+  project_id: string
+  event_type_id: string | null
+  name: string
+  base_query: string
+  event_type_column: string | null
+  cardinality_threshold: number
+  schedule: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ScanJob {
+  id: string
+  scan_config_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  started_at: string | null
+  completed_at: string | null
+  result_summary: {
+    events_created?: number
+    events_skipped?: number
+    variables_created?: number
+    columns_analyzed?: number
+    details?: string[]
+  } | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}

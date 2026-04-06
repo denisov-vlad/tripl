@@ -22,9 +22,7 @@ class VariableType(str, enum.Enum):
 
 class Variable(UUIDMixin, Base):
     __tablename__ = "variables"
-    __table_args__ = (
-        UniqueConstraint("project_id", "name", name="uq_variable_project_name"),
-    )
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_variable_project_name"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(100))
