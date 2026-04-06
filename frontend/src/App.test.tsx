@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -16,13 +16,29 @@ function renderApp() {
 }
 
 describe('App', () => {
-  it('renders the tripl header', () => {
+  beforeEach(() => {
+    // Ensure localStorage is available for ThemeProvider
+    if (!window.localStorage) {
+      Object.defineProperty(window, 'localStorage', {
+        value: {
+          store: {} as Record<string, string>,
+          getItem(key: string) { return this.store[key] ?? null },
+          setItem(key: string, value: string) { this.store[key] = value },
+          removeItem(key: string) { delete this.store[key] },
+          clear() { this.store = {} },
+        },
+        writable: true,
+      })
+    }
+  })
+
+  it('renders the tripl brand', () => {
     renderApp()
     expect(screen.getByText('tripl')).toBeInTheDocument()
   })
 
-  it('shows loading state initially', () => {
+  it('renders the sidebar navigation', () => {
     renderApp()
-    expect(screen.getByText('Loading...')).toBeInTheDocument()
+    expect(screen.getAllByText('Projects').length).toBeGreaterThan(0)
   })
 })

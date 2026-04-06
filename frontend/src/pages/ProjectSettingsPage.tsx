@@ -1,58 +1,63 @@
-import { useState, useEffect } from 'react'
+import { useState, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { eventTypesApi } from '../api/eventTypes'
-import { fieldsApi } from '../api/fields'
-import { metaFieldsApi } from '../api/metaFields'
-import { relationsApi } from '../api/relations'
-import { variablesApi } from '../api/variables'
-import { dataSourcesApi } from '../api/dataSources'
-import { scansApi } from '../api/scans'
-import { useConfirm } from '../hooks/useConfirm'
-import type { EventType, FieldDefinition, MetaFieldDefinition, EventTypeRelation, Variable, VariableType, DataSource, ScanConfig, ScanJob } from '../types'
+import { eventTypesApi } from '@/api/eventTypes'
+import { fieldsApi } from '@/api/fields'
+import { metaFieldsApi } from '@/api/metaFields'
+import { relationsApi } from '@/api/relations'
+import { variablesApi } from '@/api/variables'
+import { dataSourcesApi } from '@/api/dataSources'
+import { scansApi } from '@/api/scans'
+import { useConfirm } from '@/hooks/useConfirm'
+import type { EventType, FieldDefinition, MetaFieldDefinition, EventTypeRelation, Variable, VariableType, DataSource, ScanConfig, ScanJob } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Card, CardContent } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { EmptyState } from '@/components/empty-state'
+import { Plus, Pencil, Trash2, ChevronDown, ArrowUp, ArrowDown, Play, Layers, Link2, Variable as VariableIcon, List, Search } from 'lucide-react'
 
-type Tab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'scans'
+type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'scans'
 
 export default function ProjectSettingsPage() {
   const { slug, tab: urlTab } = useParams<{ slug: string; tab?: string }>()
   const navigate = useNavigate()
-  const validTabs: Tab[] = ['event-types', 'meta-fields', 'relations', 'variables', 'scans']
-  const initialTab = validTabs.includes(urlTab as Tab) ? (urlTab as Tab) : 'event-types'
-  const [tab, setTab] = useState<Tab>(initialTab)
+  const validTabs: SettingsTab[] = ['event-types', 'meta-fields', 'relations', 'variables', 'scans']
+  const tab: SettingsTab = validTabs.includes(urlTab as SettingsTab) ? (urlTab as SettingsTab) : 'event-types'
 
-  useEffect(() => {
-    if (urlTab && validTabs.includes(urlTab as Tab) && urlTab !== tab) {
-      setTab(urlTab as Tab)
-    }
-  }, [urlTab])
-
-  const changeTab = (t: Tab) => {
-    setTab(t)
+  const changeTab = (t: string) => {
     navigate(`/p/${slug}/settings/${t}`, { replace: true })
   }
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'event-types', label: 'Event Types' },
-    { key: 'meta-fields', label: 'Meta Fields' },
-    { key: 'relations', label: 'Relations' },
-    { key: 'variables', label: 'Variables' },
-    { key: 'scans', label: 'Scans' },
-  ]
-
   return (
     <div>
-      <h1 className="page-title mb-6">Project Settings</h1>
-      <div className="tabs mb-6">
-        {tabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => changeTab(t.key)}
-            className={tab === t.key ? 'tab-active' : 'tab-inactive'}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold tracking-tight">Project Settings</h1>
+        <p className="text-sm text-muted-foreground mt-1">Configure event types, fields, and scanning</p>
       </div>
+
+      <Tabs value={tab} onValueChange={changeTab} className="mb-6">
+        <TabsList>
+          <TabsTrigger value="event-types">Event Types</TabsTrigger>
+          <TabsTrigger value="meta-fields">Meta Fields</TabsTrigger>
+          <TabsTrigger value="relations">Relations</TabsTrigger>
+          <TabsTrigger value="variables">Variables</TabsTrigger>
+          <TabsTrigger value="scans">Scans</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {tab === 'event-types' && slug && <EventTypesTab slug={slug} />}
       {tab === 'meta-fields' && slug && <MetaFieldsTab slug={slug} />}
@@ -70,7 +75,7 @@ function EventTypesTab({ slug }: { slug: string }) {
   const [displayName, setDisplayName] = useState('')
   const [color, setColor] = useState('#6366f1')
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingEt, setEditingEt] = useState<EventType | null>(null)
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editColor, setEditColor] = useState('')
   const [editDescription, setEditDescription] = useState('')
@@ -93,7 +98,7 @@ function EventTypesTab({ slug }: { slug: string }) {
     mutationFn: (id: string) => eventTypesApi.update(slug, id, { display_name: editDisplayName, color: editColor, description: editDescription }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['eventTypes', slug] })
-      setEditingId(null)
+      setEditingEt(null)
     },
   })
 
@@ -113,7 +118,7 @@ function EventTypesTab({ slug }: { slug: string }) {
   }
 
   const startEdit = (et: EventType) => {
-    setEditingId(et.id)
+    setEditingEt(et)
     setEditDisplayName(et.display_name)
     setEditColor(et.color)
     setEditDescription(et.description)
@@ -123,91 +128,104 @@ function EventTypesTab({ slug }: { slug: string }) {
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="section-title">Event Types</h2>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">
-          + Add Event Type
-        </button>
+        <h2 className="text-lg font-semibold">Event Types</h2>
+        <Button onClick={() => setShowForm(true)} size="sm">
+          <Plus className="mr-2 h-4 w-4" />
+          Add Event Type
+        </Button>
       </div>
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="field-label">Name (e.g. pv)</label>
-              <input value={name} onChange={e => setName(e.target.value)} className="input" required />
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader><DialogTitle>New Event Type</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-5 gap-3">
+                <div className="col-span-2 grid gap-2">
+                  <Label>Name (e.g. pv)</Label>
+                  <Input value={name} onChange={e => setName(e.target.value)} required />
+                </div>
+                <div className="col-span-2 grid gap-2">
+                  <Label>Display Name</Label>
+                  <Input value={displayName} onChange={e => setDisplayName(e.target.value)} required />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Color</Label>
+                  <input type="color" value={color} onChange={e => setColor(e.target.value)} className="h-9 w-full cursor-pointer rounded-md border border-input" />
+                </div>
+              </div>
+              {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-            <div className="flex-1">
-              <label className="field-label">Display Name</label>
-              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="input" required />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="submit" disabled={createMut.isPending}>Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit dialog */}
+      <Dialog open={!!editingEt} onOpenChange={v => { if (!v) setEditingEt(null) }}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); if (editingEt) updateMut.mutate(editingEt.id) }}>
+            <DialogHeader><DialogTitle>Edit Event Type</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-5 gap-3">
+                <div className="col-span-2 grid gap-2">
+                  <Label>Display Name</Label>
+                  <Input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} />
+                </div>
+                <div className="col-span-2 grid gap-2">
+                  <Label>Description</Label>
+                  <Input value={editDescription} onChange={e => setEditDescription(e.target.value)} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Color</Label>
+                  <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="h-9 w-full cursor-pointer rounded-md border border-input" />
+                </div>
+              </div>
+              {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
             </div>
-            <div className="w-16">
-              <label className="field-label">Color</label>
-              <input type="color" value={color} onChange={e => setColor(e.target.value)} className="color-input" />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button type="submit" className="btn-primary">Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingEt(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateMut.isPending}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {eventTypes.length === 0 && (
+        <EmptyState icon={Layers} title="No event types" description="Create event types to categorize your events." />
       )}
 
       {eventTypes.map((et: EventType) => (
-        <div key={et.id} className="card overflow-hidden">
-          <div
-            className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-            onClick={() => setExpandedId(expandedId === et.id ? null : et.id)}
-          >
-            <div className="flex items-center gap-3">
-              <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: et.color }} />
-              <span className="font-mono text-sm font-semibold text-gray-900">{et.name}</span>
-              <span className="text-gray-500 text-sm">{et.display_name}</span>
-              <span className="count-pill">{et.field_definitions.length} fields</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={e => { e.stopPropagation(); startEdit(et) }}
-                className="btn-edit-sm"
-              >
-                Edit
-              </button>
-              <button
-                onClick={e => { e.stopPropagation(); handleDelete(et) }}
-                className="btn-danger-sm"
-              >
-                Delete
-              </button>
-              <span className="text-gray-400 text-xs ml-2">{expandedId === et.id ? '▲' : '▼'}</span>
-            </div>
-          </div>
-
-          {editingId === et.id && (
-            <div className="border-t bg-indigo-50/30 p-4 space-y-3">
-              <div className="flex gap-3 items-end">
-                <div className="flex-1">
-                  <label className="field-label">Display Name</label>
-                  <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className="input" />
+        <Collapsible key={et.id} open={expandedId === et.id} onOpenChange={v => setExpandedId(v ? et.id : null)}>
+          <Card>
+            <CollapsibleTrigger asChild>
+              <CardContent className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors">
+                <div className="flex items-center gap-3">
+                  <span className="h-3.5 w-3.5 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
+                  <span className="font-mono text-sm font-semibold">{et.name}</span>
+                  <span className="text-muted-foreground text-sm">{et.display_name}</span>
+                  <Badge variant="secondary" className="text-[10px]">{et.field_definitions.length} fields</Badge>
                 </div>
-                <div className="flex-1">
-                  <label className="field-label">Description</label>
-                  <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className="input" />
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); startEdit(et) }}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={e => { e.stopPropagation(); handleDelete(et) }}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${expandedId === et.id ? 'rotate-180' : ''}`} />
                 </div>
-                <div className="w-16">
-                  <label className="field-label">Color</label>
-                  <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="color-input" />
-                </div>
-              </div>
-              <div className="form-actions">
-                <button onClick={() => updateMut.mutate(et.id)} className="btn-primary">Save</button>
-                <button onClick={() => setEditingId(null)} className="btn-secondary">Cancel</button>
-              </div>
-              {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
-            </div>
-          )}
-
-          {expandedId === et.id && <FieldsEditor slug={slug} eventType={et} />}
-        </div>
+              </CardContent>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <FieldsEditor slug={slug} eventType={et} />
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
       ))}
     </div>
   )
@@ -222,7 +240,7 @@ function FieldsEditor({ slug, eventType }: { slug: string; eventType: EventType 
   const [isRequired, setIsRequired] = useState(false)
   const [enumOptions, setEnumOptions] = useState<string[]>([])
   const [enumInput, setEnumInput] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingField, setEditingField] = useState<FieldDefinition | null>(null)
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editFieldType, setEditFieldType] = useState('')
   const [editIsRequired, setEditIsRequired] = useState(false)
@@ -250,7 +268,7 @@ function FieldsEditor({ slug, eventType }: { slug: string; eventType: EventType 
     mutationFn: ({ fid, data }: { fid: string; data: Partial<FieldDefinition> }) => fieldsApi.update(slug, eventType.id, fid, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['eventTypes', slug] })
-      setEditingId(null)
+      setEditingField(null)
     },
   })
 
@@ -275,7 +293,7 @@ function FieldsEditor({ slug, eventType }: { slug: string; eventType: EventType 
   }
 
   const startEdit = (f: FieldDefinition) => {
-    setEditingId(f.id)
+    setEditingField(f)
     setEditDisplayName(f.display_name)
     setEditFieldType(f.field_type)
     setEditIsRequired(f.is_required)
@@ -316,168 +334,178 @@ function FieldsEditor({ slug, eventType }: { slug: string; eventType: EventType 
   const fieldTypes = ['string', 'number', 'boolean', 'json', 'enum', 'url']
 
   return (
-    <div className="border-t px-4 py-4 bg-gray-50/50 space-y-3">
+    <div className="border-t px-4 py-4 bg-muted/30 space-y-3">
       {dialog}
       <div className="flex justify-between items-center">
-        <span className="section-label">Fields</span>
-        <button onClick={() => setShowForm(!showForm)} className="btn-link">
-          + Add Field
-        </button>
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Fields</span>
+        <Button variant="ghost" size="sm" onClick={() => setShowForm(!showForm)} className="h-7 text-xs">
+          <Plus className="mr-1 h-3 w-3" />
+          Add Field
+        </Button>
       </div>
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="bg-white p-3 rounded-lg border space-y-3 shadow-sm">
-          <div className="form-grid-4">
-            <div>
-              <label className="field-label">Name</label>
-              <input value={name} onChange={e => setName(e.target.value)} className="input-sm" required />
-            </div>
-            <div>
-              <label className="field-label">Display Name</label>
-              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="input-sm" required />
-            </div>
-            <div>
-              <label className="field-label">Type</label>
-              <select value={fieldType} onChange={e => setFieldType(e.target.value)} className="select-sm">
-                {fieldTypes.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="flex items-end pb-0.5">
-              <label className="text-xs flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} className="checkbox" /> Required
-              </label>
-            </div>
-          </div>
-          {fieldType === 'enum' && (
-            <div>
-              <label className="field-label">Enum Options</label>
-              <div className="flex gap-2 items-center">
-                <input
-                  value={enumInput}
-                  onChange={e => setEnumInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addEnumOption(enumInput, 'create') } }}
-                  className="input-sm flex-1"
-                  placeholder="Type option and press Enter"
-                />
-                <button type="button" onClick={() => addEnumOption(enumInput, 'create')} className="btn-secondary text-xs px-2 py-1">Add</button>
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader><DialogTitle>New Field</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Name</Label><Input value={name} onChange={e => setName(e.target.value)} required /></div>
+                <div className="grid gap-2"><Label>Display Name</Label><Input value={displayName} onChange={e => setDisplayName(e.target.value)} required /></div>
               </div>
-              {enumOptions.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {enumOptions.map(opt => (
-                    <span key={opt} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">
-                      {opt}
-                      <button type="button" onClick={() => setEnumOptions(enumOptions.filter(o => o !== opt))} className="text-indigo-400 hover:text-indigo-700">×</button>
-                    </span>
-                  ))}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <select value={fieldType} onChange={e => setFieldType(e.target.value)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    {fieldTypes.map(t => <option key={t}>{t}</option>)}
+                  </select>
                 </div>
-              )}
-            </div>
-          )}
-          <div className="form-actions">
-            <button type="submit" className="btn-primary text-xs px-3 py-1.5">Add</button>
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary text-xs px-3 py-1.5">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
-      )}
-
-      {sortedFields.length > 0 ? (
-        <div className="space-y-0">
-          <div className="grid grid-cols-[32px_1fr_1fr_80px_60px_100px] gap-2 grid-header">
-            <span></span>
-            <span>Name</span>
-            <span>Display</span>
-            <span>Type</span>
-            <span>Req</span>
-            <span></span>
-          </div>
-          {sortedFields.map((f: FieldDefinition, idx: number) => (
-            <div key={f.id}>
-              <div className="grid grid-cols-[32px_1fr_1fr_80px_60px_100px] gap-2 items-center text-xs border-t border-gray-200 py-1.5 px-1">
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => moveField(idx, -1)}
-                    disabled={idx === 0 || reorderMut.isPending}
-                    className="move-btn"
-                    title="Move up"
-                  >▲</button>
-                  <button
-                    onClick={() => moveField(idx, 1)}
-                    disabled={idx === sortedFields.length - 1 || reorderMut.isPending}
-                    className="move-btn"
-                    title="Move down"
-                  >▼</button>
-                </div>
-                <span className="font-mono text-gray-900">{f.name}</span>
-                <span className="text-gray-600">{f.display_name}</span>
-                <span><span className="field-type-badge">{f.field_type}</span>{f.field_type === 'enum' && f.enum_options && <span className="text-gray-400 text-[10px] ml-1">({f.enum_options.length})</span>}</span>
-                <span>{f.is_required ? <span className="text-green-600 font-medium">✓</span> : <span className="text-gray-300">—</span>}</span>
-                <div className="flex gap-1.5 justify-end">
-                  <button onClick={() => startEdit(f)} className="btn-edit-sm">Edit</button>
-                  <button onClick={() => handleDeleteField(f)} className="btn-danger-sm">Delete</button>
-                </div>
-              </div>
-
-              {editingId === f.id && (
-                <div className="bg-indigo-50/40 border-t border-indigo-100 px-3 py-3 space-y-2">
-                  <div className="form-grid-4">
-                    <div>
-                      <label className="field-label">Display Name</label>
-                      <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className="input-sm" />
-                    </div>
-                    <div>
-                      <label className="field-label">Type</label>
-                      <select value={editFieldType} onChange={e => setEditFieldType(e.target.value)} className="select-sm">
-                        {fieldTypes.map(t => <option key={t}>{t}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="field-label">Description</label>
-                      <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className="input-sm" placeholder="Optional" />
-                    </div>
-                    <div className="flex items-end pb-0.5">
-                      <label className="text-xs flex items-center gap-1.5 cursor-pointer">
-                        <input type="checkbox" checked={editIsRequired} onChange={e => setEditIsRequired(e.target.checked)} className="checkbox" /> Required
-                      </label>
-                    </div>
+                <div className="flex items-end pb-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="field-req" checked={isRequired} onCheckedChange={c => setIsRequired(!!c)} />
+                    <Label htmlFor="field-req" className="cursor-pointer">Required</Label>
                   </div>
-                  {editFieldType === 'enum' && (
-                    <div>
-                      <label className="field-label">Enum Options</label>
-                      <div className="flex gap-2 items-center">
-                        <input
-                          value={editEnumInput}
-                          onChange={e => setEditEnumInput(e.target.value)}
-                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addEnumOption(editEnumInput, 'edit') } }}
-                          className="input-sm flex-1"
-                          placeholder="Type option and press Enter"
-                        />
-                        <button type="button" onClick={() => addEnumOption(editEnumInput, 'edit')} className="btn-secondary text-xs px-2 py-1">Add</button>
-                      </div>
-                      {editEnumOptions.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {editEnumOptions.map(opt => (
-                            <span key={opt} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">
-                              {opt}
-                              <button type="button" onClick={() => setEditEnumOptions(editEnumOptions.filter(o => o !== opt))} className="text-indigo-400 hover:text-indigo-700">×</button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                </div>
+              </div>
+              {fieldType === 'enum' && (
+                <div className="grid gap-2">
+                  <Label>Enum Options</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={enumInput}
+                      onChange={e => setEnumInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addEnumOption(enumInput, 'create') } }}
+                      placeholder="Type option and press Enter" className="flex-1"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={() => addEnumOption(enumInput, 'create')}>Add</Button>
+                  </div>
+                  {enumOptions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {enumOptions.map(opt => (
+                        <Badge key={opt} variant="secondary" className="gap-1">
+                          {opt}
+                          <button type="button" onClick={() => setEnumOptions(enumOptions.filter(o => o !== opt))} className="hover:text-destructive">×</button>
+                        </Badge>
+                      ))}
                     </div>
                   )}
-                  <div className="form-actions">
-                    <button onClick={() => saveEdit(f.id)} className="btn-primary text-xs px-3 py-1">Save</button>
-                    <button onClick={() => setEditingId(null)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
-                  </div>
-                  {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
                 </div>
               )}
+              {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-          ))}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="submit" disabled={createMut.isPending}>Add</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit dialog */}
+      <Dialog open={!!editingField} onOpenChange={v => { if (!v) setEditingField(null) }}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); if (editingField) saveEdit(editingField.id) }}>
+            <DialogHeader><DialogTitle>Edit Field</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Display Name</Label><Input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} /></div>
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <select value={editFieldType} onChange={e => setEditFieldType(e.target.value)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    {fieldTypes.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Description</Label><Input value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="Optional" /></div>
+                <div className="flex items-end pb-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="edit-field-req" checked={editIsRequired} onCheckedChange={c => setEditIsRequired(!!c)} />
+                    <Label htmlFor="edit-field-req" className="cursor-pointer">Required</Label>
+                  </div>
+                </div>
+              </div>
+              {editFieldType === 'enum' && (
+                <div className="grid gap-2">
+                  <Label>Enum Options</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={editEnumInput}
+                      onChange={e => setEditEnumInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addEnumOption(editEnumInput, 'edit') } }}
+                      placeholder="Type option and press Enter" className="flex-1"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={() => addEnumOption(editEnumInput, 'edit')}>Add</Button>
+                  </div>
+                  {editEnumOptions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {editEnumOptions.map(opt => (
+                        <Badge key={opt} variant="secondary" className="gap-1">
+                          {opt}
+                          <button type="button" onClick={() => setEditEnumOptions(editEnumOptions.filter(o => o !== opt))} className="hover:text-destructive">×</button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingField(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateMut.isPending}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {sortedFields.length > 0 ? (
+        <div className="rounded-lg border bg-background">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10"></TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Display</TableHead>
+                <TableHead className="w-20">Type</TableHead>
+                <TableHead className="w-16">Req</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedFields.map((f: FieldDefinition, idx: number) => (
+                <TableRow key={f.id}>
+                  <TableCell className="py-1">
+                    <div className="flex flex-col gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveField(idx, -1)} disabled={idx === 0 || reorderMut.isPending}>
+                        <ArrowUp className="h-3 w-3" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveField(idx, 1)} disabled={idx === sortedFields.length - 1 || reorderMut.isPending}>
+                        <ArrowDown className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{f.name}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{f.display_name}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px]">{f.field_type}</Badge>
+                    {f.field_type === 'enum' && f.enum_options && <span className="text-muted-foreground text-[10px] ml-1">({f.enum_options.length})</span>}
+                  </TableCell>
+                  <TableCell>{f.is_required ? <span className="text-green-600 font-medium text-xs">✓</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(f)}><Pencil className="h-3 w-3" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteField(f)}><Trash2 className="h-3 w-3" /></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       ) : (
-        <p className="text-xs text-gray-400 py-2">No fields defined yet.</p>
+        <p className="text-xs text-muted-foreground py-2">No fields defined yet.</p>
       )}
     </div>
   )
@@ -493,7 +521,7 @@ function MetaFieldsTab({ slug }: { slug: string }) {
   const [enumOptions, setEnumOptions] = useState<string[]>([])
   const [enumInput, setEnumInput] = useState('')
   const [defaultValue, setDefaultValue] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingMf, setEditingMf] = useState<MetaFieldDefinition | null>(null)
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editFieldType, setEditFieldType] = useState('')
   const [editIsRequired, setEditIsRequired] = useState(false)
@@ -530,7 +558,7 @@ function MetaFieldsTab({ slug }: { slug: string }) {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['metaFields', slug] })
-      setEditingId(null)
+      setEditingMf(null)
     },
   })
 
@@ -550,7 +578,7 @@ function MetaFieldsTab({ slug }: { slug: string }) {
   }
 
   const startEdit = (mf: MetaFieldDefinition) => {
-    setEditingId(mf.id)
+    setEditingMf(mf)
     setEditDisplayName(mf.display_name)
     setEditFieldType(mf.field_type)
     setEditIsRequired(mf.is_required)
@@ -575,168 +603,153 @@ function MetaFieldsTab({ slug }: { slug: string }) {
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="section-title">Meta Fields</h2>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Add Meta Field</button>
+        <h2 className="text-lg font-semibold">Meta Fields</h2>
+        <Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add Meta Field</Button>
       </div>
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
-          <div className="form-grid-4 items-end">
-            <div>
-              <label className="field-label">Name (e.g. jira_link)</label>
-              <input value={name} onChange={e => setName(e.target.value)} className="input" required />
-            </div>
-            <div>
-              <label className="field-label">Display Name</label>
-              <input value={displayName} onChange={e => setDisplayName(e.target.value)} className="input" required />
-            </div>
-            <div>
-              <label className="field-label">Type</label>
-              <select value={fieldType} onChange={e => setFieldType(e.target.value)} className="select">
-                {metaFieldTypes.map(t => <option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="flex items-end pb-2">
-              <label className="text-sm flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={isRequired} onChange={e => setIsRequired(e.target.checked)} className="checkbox" /> Required
-              </label>
-            </div>
-          </div>
-          {fieldType === 'enum' && (
-            <div>
-              <label className="field-label">Enum Options</label>
-              <div className="flex gap-2 items-center">
-                <input
-                  value={enumInput}
-                  onChange={e => setEnumInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMetaEnumOption(enumInput, 'create') } }}
-                  className="input flex-1"
-                  placeholder="Type option and press Enter"
-                />
-                <button type="button" onClick={() => addMetaEnumOption(enumInput, 'create')} className="btn-secondary">Add</button>
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader><DialogTitle>New Meta Field</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Name (e.g. jira_link)</Label><Input value={name} onChange={e => setName(e.target.value)} required /></div>
+                <div className="grid gap-2"><Label>Display Name</Label><Input value={displayName} onChange={e => setDisplayName(e.target.value)} required /></div>
               </div>
-              {enumOptions.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {enumOptions.map(opt => (
-                    <span key={opt} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">
-                      {opt}
-                      <button type="button" onClick={() => setEnumOptions(enumOptions.filter(o => o !== opt))} className="text-indigo-400 hover:text-indigo-700">×</button>
-                    </span>
-                  ))}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <select value={fieldType} onChange={e => setFieldType(e.target.value)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    {metaFieldTypes.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-end pb-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="meta-req" checked={isRequired} onCheckedChange={c => setIsRequired(!!c)} />
+                    <Label htmlFor="meta-req" className="cursor-pointer">Required</Label>
+                  </div>
+                </div>
+              </div>
+              {fieldType === 'enum' && (
+                <div className="grid gap-2">
+                  <Label>Enum Options</Label>
+                  <div className="flex gap-2">
+                    <Input value={enumInput} onChange={e => setEnumInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMetaEnumOption(enumInput, 'create') } }}
+                      placeholder="Type option and press Enter" className="flex-1" />
+                    <Button type="button" variant="outline" size="sm" onClick={() => addMetaEnumOption(enumInput, 'create')}>Add</Button>
+                  </div>
+                  {enumOptions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {enumOptions.map(opt => (
+                        <Badge key={opt} variant="secondary" className="gap-1">{opt}<button type="button" onClick={() => setEnumOptions(enumOptions.filter(o => o !== opt))} className="hover:text-destructive">×</button></Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
+              <div className="grid gap-2"><Label>Default Value (optional)</Label><Input value={defaultValue} onChange={e => setDefaultValue(e.target.value)} placeholder="Optional default" /></div>
+              {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-          )}
-          <div>
-            <label className="field-label">Default Value (optional)</label>
-            <input value={defaultValue} onChange={e => setDefaultValue(e.target.value)} className="input" placeholder="Optional default" />
-          </div>
-          <div className="form-actions">
-            <button type="submit" className="btn-primary">Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
-      )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="submit" disabled={createMut.isPending}>Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-      <div className="table-wrapper">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Display</th>
-              <th>Type</th>
-              <th>Required</th>
-              <th>Default</th>
-              <th className="w-28"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {metaFields.map((mf: MetaFieldDefinition) => (
-              <tr key={mf.id}>
-                <td className="cell-mono">{mf.name}</td>
-                <td className="text-gray-600">{mf.display_name}</td>
-                <td>
-                  <span className="field-type-badge">{mf.field_type}</span>
-                  {mf.field_type === 'enum' && mf.enum_options && <span className="text-gray-400 text-[10px] ml-1">({mf.enum_options.length})</span>}
-                </td>
-                <td>{mf.is_required ? <span className="text-green-600 font-medium">✓</span> : <span className="text-gray-300">—</span>}</td>
-                <td className="cell-muted text-xs">{mf.default_value ?? '—'}</td>
-                <td>
-                  <div className="flex gap-1.5 justify-end">
-                    <button onClick={() => startEdit(mf)} className="btn-edit-sm">Edit</button>
-                    <button onClick={() => handleDelete(mf)} className="btn-danger-sm">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {metaFields.length === 0 && (
-              <tr><td colSpan={6} className="table-empty text-sm">No meta fields yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {editingId && (() => {
-        const mf = metaFields.find((m: MetaFieldDefinition) => m.id === editingId)
-        if (!mf) return null
-        return (
-          <div className="card card-body space-y-3">
-            <h3 className="text-sm font-semibold text-gray-700">Editing: {mf.name}</h3>
-            <div className="form-grid-4 items-end">
-              <div>
-                <label className="field-label">Display Name</label>
-                <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} className="input" />
-              </div>
-              <div>
-                <label className="field-label">Type</label>
-                <select value={editFieldType} onChange={e => setEditFieldType(e.target.value)} className="select">
-                  {metaFieldTypes.map(t => <option key={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="field-label">Default Value</label>
-                <input value={editDefaultValue} onChange={e => setEditDefaultValue(e.target.value)} className="input" placeholder="Optional" />
-              </div>
-              <div className="flex items-end pb-2">
-                <label className="text-sm flex items-center gap-1.5 cursor-pointer">
-                  <input type="checkbox" checked={editIsRequired} onChange={e => setEditIsRequired(e.target.checked)} className="checkbox" /> Required
-                </label>
-              </div>
-            </div>
-            {editFieldType === 'enum' && (
-              <div>
-                <label className="field-label">Enum Options</label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    value={editEnumInput}
-                    onChange={e => setEditEnumInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMetaEnumOption(editEnumInput, 'edit') } }}
-                    className="input flex-1"
-                    placeholder="Type option and press Enter"
-                  />
-                  <button type="button" onClick={() => addMetaEnumOption(editEnumInput, 'edit')} className="btn-secondary">Add</button>
+      {/* Edit dialog */}
+      <Dialog open={!!editingMf} onOpenChange={v => { if (!v) setEditingMf(null) }}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); if (editingMf) updateMut.mutate(editingMf.id) }}>
+            <DialogHeader><DialogTitle>Edit: {editingMf?.name}</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Display Name</Label><Input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} /></div>
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <select value={editFieldType} onChange={e => setEditFieldType(e.target.value)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    {metaFieldTypes.map(t => <option key={t}>{t}</option>)}
+                  </select>
                 </div>
-                {editEnumOptions.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {editEnumOptions.map(opt => (
-                      <span key={opt} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded">
-                        {opt}
-                        <button type="button" onClick={() => setEditEnumOptions(editEnumOptions.filter(o => o !== opt))} className="text-indigo-400 hover:text-indigo-700">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
-            )}
-            <div className="form-actions">
-              <button onClick={() => updateMut.mutate(mf.id)} className="btn-primary">Save</button>
-              <button onClick={() => setEditingId(null)} className="btn-secondary">Cancel</button>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Default Value</Label><Input value={editDefaultValue} onChange={e => setEditDefaultValue(e.target.value)} placeholder="Optional" /></div>
+                <div className="flex items-end pb-2">
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="edit-meta-req" checked={editIsRequired} onCheckedChange={c => setEditIsRequired(!!c)} />
+                    <Label htmlFor="edit-meta-req" className="cursor-pointer">Required</Label>
+                  </div>
+                </div>
+              </div>
+              {editFieldType === 'enum' && (
+                <div className="grid gap-2">
+                  <Label>Enum Options</Label>
+                  <div className="flex gap-2">
+                    <Input value={editEnumInput} onChange={e => setEditEnumInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMetaEnumOption(editEnumInput, 'edit') } }}
+                      placeholder="Type option and press Enter" className="flex-1" />
+                    <Button type="button" variant="outline" size="sm" onClick={() => addMetaEnumOption(editEnumInput, 'edit')}>Add</Button>
+                  </div>
+                  {editEnumOptions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {editEnumOptions.map(opt => (
+                        <Badge key={opt} variant="secondary" className="gap-1">{opt}<button type="button" onClick={() => setEditEnumOptions(editEnumOptions.filter(o => o !== opt))} className="hover:text-destructive">×</button></Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
             </div>
-            {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
-          </div>
-        )
-      })()}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingMf(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateMut.isPending}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {metaFields.length > 0 ? (
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Display</TableHead>
+                <TableHead className="w-20">Type</TableHead>
+                <TableHead className="w-16">Req</TableHead>
+                <TableHead>Default</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {metaFields.map((mf: MetaFieldDefinition) => (
+                <TableRow key={mf.id}>
+                  <TableCell className="font-mono text-xs">{mf.name}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{mf.display_name}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px]">{mf.field_type}</Badge>
+                    {mf.field_type === 'enum' && mf.enum_options && <span className="text-muted-foreground text-[10px] ml-1">({mf.enum_options.length})</span>}
+                  </TableCell>
+                  <TableCell>{mf.is_required ? <span className="text-green-600 font-medium text-xs">✓</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{mf.default_value ?? '—'}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(mf)}><Pencil className="h-3 w-3" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(mf)}><Trash2 className="h-3 w-3" /></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <EmptyState icon={List} title="No meta fields" description="Define meta fields to add structured metadata to your events." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add Meta Field</Button>} />
+      )}
     </div>
   )
 }
@@ -794,77 +807,88 @@ function RelationsTab({ slug }: { slug: string }) {
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="section-title">Relations</h2>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Add Relation</button>
+        <h2 className="text-lg font-semibold">Relations</h2>
+        <Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add Relation</Button>
       </div>
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
-          <div className="form-grid-2">
-            <div>
-              <label className="field-label">Source Event Type</label>
-              <select value={srcEtId} onChange={e => { setSrcEtId(e.target.value); setSrcFieldId('') }} className="select">
-                <option value="">Select...</option>
-                {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
-              </select>
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader><DialogTitle>New Relation</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Source Event Type</Label>
+                  <select value={srcEtId} onChange={e => { setSrcEtId(e.target.value); setSrcFieldId('') }} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    <option value="">Select...</option>
+                    {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Target Event Type</Label>
+                  <select value={tgtEtId} onChange={e => { setTgtEtId(e.target.value); setTgtFieldId('') }} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    <option value="">Select...</option>
+                    {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Source Field</Label>
+                  <select value={srcFieldId} onChange={e => setSrcFieldId(e.target.value)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    <option value="">Select...</option>
+                    {srcEt?.field_definitions.map(f => <option key={f.id} value={f.id}>{f.display_name}</option>)}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Target Field</Label>
+                  <select value={tgtFieldId} onChange={e => setTgtFieldId(e.target.value)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    <option value="">Select...</option>
+                    {tgtEt?.field_definitions.map(f => <option key={f.id} value={f.id}>{f.display_name}</option>)}
+                  </select>
+                </div>
+              </div>
+              {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-            <div>
-              <label className="field-label">Target Event Type</label>
-              <select value={tgtEtId} onChange={e => { setTgtEtId(e.target.value); setTgtFieldId('') }} className="select">
-                <option value="">Select...</option>
-                {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="field-label">Source Field</label>
-              <select value={srcFieldId} onChange={e => setSrcFieldId(e.target.value)} className="select">
-                <option value="">Select...</option>
-                {srcEt?.field_definitions.map(f => <option key={f.id} value={f.id}>{f.display_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="field-label">Target Field</label>
-              <select value={tgtFieldId} onChange={e => setTgtFieldId(e.target.value)} className="select">
-                <option value="">Select...</option>
-                {tgtEt?.field_definitions.map(f => <option key={f.id} value={f.id}>{f.display_name}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="form-actions">
-            <button type="submit" className="btn-primary" disabled={!srcFieldId || !tgtFieldId}>Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="submit" disabled={!srcFieldId || !tgtFieldId || createMut.isPending}>Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {relations.length > 0 ? (
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Source</TableHead>
+                <TableHead className="w-8"></TableHead>
+                <TableHead>Target</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="w-16"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {relations.map((r: EventTypeRelation) => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-mono text-xs">{etMap[r.source_event_type_id]?.name ?? '?'}</TableCell>
+                  <TableCell className="text-muted-foreground">→</TableCell>
+                  <TableCell className="font-mono text-xs">{etMap[r.target_event_type_id]?.name ?? '?'}</TableCell>
+                  <TableCell className="text-muted-foreground text-xs">{r.relation_type}</TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(r)}><Trash2 className="h-3 w-3" /></Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <EmptyState icon={Link2} title="No relations" description="Create relations to link event types by their fields." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add Relation</Button>} />
       )}
-
-      <div className="table-wrapper">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th className="w-8">→</th>
-              <th>Target</th>
-              <th>Type</th>
-              <th className="w-20"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {relations.map((r: EventTypeRelation) => (
-              <tr key={r.id}>
-                <td className="cell-mono">{etMap[r.source_event_type_id]?.name ?? '?'}</td>
-                <td className="text-gray-400">→</td>
-                <td className="cell-mono">{etMap[r.target_event_type_id]?.name ?? '?'}</td>
-                <td className="text-gray-600">{r.relation_type}</td>
-                <td><button onClick={() => handleDelete(r)} className="btn-danger-sm">Delete</button></td>
-              </tr>
-            ))}
-            {relations.length === 0 && (
-              <tr><td colSpan={5} className="table-empty text-sm">No relations yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }
@@ -875,7 +899,7 @@ function VariablesTab({ slug }: { slug: string }) {
   const [name, setName] = useState('')
   const [varType, setVarType] = useState<VariableType>('string')
   const [description, setDescription] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingVar, setEditingVar] = useState<Variable | null>(null)
   const [editVarType, setEditVarType] = useState<VariableType>('string')
   const [editDescription, setEditDescription] = useState('')
   const { confirm, dialog } = useConfirm()
@@ -903,7 +927,7 @@ function VariablesTab({ slug }: { slug: string }) {
     mutationFn: (id: string) => variablesApi.update(slug, id, { variable_type: editVarType, description: editDescription }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['variables', slug] })
-      setEditingId(null)
+      setEditingVar(null)
     },
   })
 
@@ -923,7 +947,7 @@ function VariablesTab({ slug }: { slug: string }) {
   }
 
   const startEdit = (v: Variable) => {
-    setEditingId(v.id)
+    setEditingVar(v)
     setEditVarType(v.variable_type)
     setEditDescription(v.description)
   }
@@ -933,98 +957,105 @@ function VariablesTab({ slug }: { slug: string }) {
       {dialog}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="section-title">Variables</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Define template placeholders. Use <code className="bg-gray-100 px-1 rounded">{'${var_name}'}</code> in event field values.</p>
+          <h2 className="text-lg font-semibold">Variables</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Define template placeholders. Use <code className="bg-muted px-1 rounded">{'${var_name}'}</code> in event field values.</p>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">+ Add Variable</button>
+        <Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add Variable</Button>
       </div>
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
-          <div className="form-grid-3">
-            <div>
-              <label className="field-label">Name (lowercase, e.g. spot_id)</label>
-              <input value={name} onChange={e => setName(e.target.value)} className="input" required placeholder="my_variable" pattern="^[a-z][a-z0-9_]*$" />
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader><DialogTitle>New Variable</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label>Name (lowercase, e.g. spot_id)</Label>
+                <Input value={name} onChange={e => setName(e.target.value)} required placeholder="my_variable" pattern="^[a-z][a-z0-9_]*$" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <select value={varType} onChange={e => setVarType(e.target.value as VariableType)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    {variableTypes.map(t => <option key={t} value={t}>{typeLabels[t]}</option>)}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Description</Label>
+                  <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Optional" />
+                </div>
+              </div>
+              {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-            <div>
-              <label className="field-label">Type</label>
-              <select value={varType} onChange={e => setVarType(e.target.value as VariableType)} className="select">
-                {variableTypes.map(t => <option key={t} value={t}>{typeLabels[t]}</option>)}
-              </select>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
+              <Button type="submit" disabled={createMut.isPending}>Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit dialog */}
+      <Dialog open={!!editingVar} onOpenChange={v => { if (!v) setEditingVar(null) }}>
+        <DialogContent>
+          <form onSubmit={e => { e.preventDefault(); if (editingVar) updateMut.mutate(editingVar.id) }}>
+            <DialogHeader><DialogTitle>Edit: {editingVar?.name}</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <select value={editVarType} onChange={e => setEditVarType(e.target.value as VariableType)} className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm">
+                    {variableTypes.map(t => <option key={t} value={t}>{typeLabels[t]}</option>)}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Description</Label>
+                  <Input value={editDescription} onChange={e => setEditDescription(e.target.value)} />
+                </div>
+              </div>
+              {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
             </div>
-            <div>
-              <label className="field-label">Description</label>
-              <input value={description} onChange={e => setDescription(e.target.value)} className="input" placeholder="Optional" />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button type="submit" className="btn-primary">Create</button>
-            <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingVar(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateMut.isPending}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {variables.length > 0 ? (
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead className="w-24">Type</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Usage</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {variables.map((v: Variable) => (
+                <TableRow key={v.id}>
+                  <TableCell className="font-mono text-xs">{v.name}</TableCell>
+                  <TableCell><Badge variant="outline" className="text-[10px]">{typeLabels[v.variable_type]}</Badge></TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{v.description}</TableCell>
+                  <TableCell><code className="text-xs font-mono bg-primary/10 text-primary px-1.5 py-0.5 rounded">{`\${${v.name}}`}</code></TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 justify-end">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEdit(v)}><Pencil className="h-3 w-3" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(v)}><Trash2 className="h-3 w-3" /></Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <EmptyState icon={VariableIcon} title="No variables" description="Define template placeholders to reuse across event field values." action={<Button onClick={() => setShowForm(true)}><Plus className="mr-2 h-4 w-4" />Add Variable</Button>} />
       )}
-
-      <div className="table-wrapper">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Description</th>
-              <th>Usage</th>
-              <th className="w-28"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {variables.map((v: Variable) => (
-              <tr key={v.id}>
-                {editingId === v.id ? (
-                  <>
-                    <td className="cell-mono">{v.name}</td>
-                    <td className="py-2">
-                      <select value={editVarType} onChange={e => setEditVarType(e.target.value as VariableType)} className="select-sm">
-                        {variableTypes.map(t => <option key={t} value={t}>{typeLabels[t]}</option>)}
-                      </select>
-                    </td>
-                    <td className="py-2">
-                      <input value={editDescription} onChange={e => setEditDescription(e.target.value)} className="input-sm" />
-                    </td>
-                    <td>
-                      <code className="var-code text-indigo-600 bg-indigo-50">{`\${${v.name}}`}</code>
-                    </td>
-                    <td>
-                      <div className="flex gap-1.5 justify-end">
-                        <button onClick={() => updateMut.mutate(v.id)} className="btn-primary text-xs px-2.5 py-1">Save</button>
-                        <button onClick={() => setEditingId(null)} className="btn-secondary text-xs px-2.5 py-1">Cancel</button>
-                      </div>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td className="cell-mono">{v.name}</td>
-                    <td><span className="field-type-badge">{typeLabels[v.variable_type]}</span></td>
-                    <td className="cell-muted">{v.description}</td>
-                    <td>
-                      <code className="var-code text-indigo-600 bg-indigo-50">{`\${${v.name}}`}</code>
-                    </td>
-                    <td>
-                      <div className="flex gap-1.5 justify-end">
-                        <button onClick={() => startEdit(v)} className="btn-edit-sm">Edit</button>
-                        <button onClick={() => handleDelete(v)} className="btn-danger-sm">Delete</button>
-                      </div>
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
-            {variables.length === 0 && (
-              <tr><td colSpan={5} className="table-empty text-sm">No variables yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      {updateMut.isError && <p className="form-error-sm mt-2">{(updateMut.error as Error).message}</p>}
     </div>
   )
 }
@@ -1069,7 +1100,6 @@ function ScansTab({ slug }: { slug: string }) {
     queryFn: () => scansApi.list(slug),
   })
 
-  // Build a lookup for data source names
   const dsMap = new Map(dataSources.map((ds: DataSource) => [ds.id, ds.name]))
 
   const createMut = useMutation({
@@ -1137,174 +1167,124 @@ function ScansTab({ slug }: { slug: string }) {
     setCardinalityThreshold(100); setSchedule('')
   }
 
+  const selectClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+
   return (
     <div className="space-y-4">
       {dialog}
       <div className="flex justify-between items-center">
-        <h2 className="section-title">Scan Configs</h2>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="btn-primary"
-          disabled={dataSources.length === 0}
-          title={dataSources.length === 0 ? 'Add a data source first' : ''}
-        >
-          + Add Scan Config
-        </button>
+        <h2 className="text-lg font-semibold">Scan Configs</h2>
+        <Button onClick={() => setShowForm(true)} disabled={dataSources.length === 0}
+          title={dataSources.length === 0 ? 'Add a data source first' : ''}>
+          <Plus className="mr-2 h-4 w-4" />Add Scan Config
+        </Button>
       </div>
 
       {dataSources.length === 0 && (
-        <div className="card card-body text-center text-gray-500 py-8">
-          Add a data source connection first (via the global Data Sources page) to create scan configs.
-        </div>
+        <EmptyState icon={Search} title="No data sources" description="Add a data source connection first (via the global Data Sources page) to create scan configs." />
       )}
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="field-label">Name</label>
-              <input value={scanName} onChange={e => setScanName(e.target.value)} className="input" required placeholder="e.g. Main events scan" />
-            </div>
-            <div className="flex-1">
-              <label className="field-label">Data Source</label>
-              <select value={dsId} onChange={e => setDsId(e.target.value)} className="input" required>
-                <option value="">Select…</option>
-                {dataSources.map((ds: DataSource) => (
-                  <option key={ds.id} value={ds.id}>{ds.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="field-label">Base Query (used as subquery)</label>
-            <textarea
-              value={baseQuery}
-              onChange={e => setBaseQuery(e.target.value)}
-              className="input font-mono text-sm"
-              rows={4}
-              required
-              placeholder="SELECT * FROM analytics.events"
-            />
-          </div>
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="field-label">Event Type (optional)</label>
-              <select value={eventTypeId} onChange={e => setEventTypeId(e.target.value)} className="input">
-                <option value="">Auto-detect</option>
-                {eventTypes.map((et: EventType) => (
-                  <option key={et.id} value={et.id}>{et.display_name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex-1">
-              <label className="field-label">Event Type Column (optional)</label>
-              <input value={eventTypeColumn} onChange={e => setEventTypeColumn(e.target.value)} className="input" placeholder="e.g. event_name" />
-            </div>
-          </div>
-          <div className="flex gap-3 items-end">
-            <div className="w-40">
-              <label className="field-label">Cardinality Threshold</label>
-              <input type="number" value={cardinalityThreshold} onChange={e => setCardinalityThreshold(Number(e.target.value))} className="input" min={1} />
-            </div>
-            <div className="flex-1">
-              <label className="field-label">Schedule (cron, optional)</label>
-              <input value={schedule} onChange={e => setSchedule(e.target.value)} className="input" placeholder="e.g. 0 */6 * * *" />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button type="submit" className="btn-primary">Create</button>
-            <button type="button" onClick={resetForm} className="btn-secondary">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
-      )}
-
-      {scanConfigs.map((sc: ScanConfig) => (
-        <div key={sc.id} className="card overflow-hidden">
-          <div
-            className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-            onClick={() => setExpandedId(expandedId === sc.id ? null : sc.id)}
-          >
-            <div className="flex items-center gap-3">
-              <span className="font-semibold text-gray-900">{sc.name}</span>
-              <span className="text-gray-500 text-sm">{dsMap.get(sc.data_source_id) ?? 'Unknown'}</span>
-              {sc.schedule && <span className="count-pill">⏱ {sc.schedule}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={e => { e.stopPropagation(); startEditScan(sc) }}
-                className="btn-edit-sm"
-              >
-                Edit
-              </button>
-              <button
-                onClick={e => { e.stopPropagation(); handleDelete(sc) }}
-                className="btn-danger-sm"
-              >
-                Delete
-              </button>
-              <span className="text-gray-400 text-xs ml-2">{expandedId === sc.id ? '▲' : '▼'}</span>
-            </div>
-          </div>
-
-          {editingScanId === sc.id && (
-            <div className="border-t bg-indigo-50/30 p-4 space-y-3">
-              <div className="flex gap-3 items-end">
-                <div className="flex-1">
-                  <label className="field-label">Name</label>
-                  <input value={editName} onChange={e => setEditName(e.target.value)} className="input" />
-                </div>
-                <div className="flex-1">
-                  <label className="field-label">Data Source</label>
-                  <input value={dsMap.get(sc.data_source_id) ?? 'Unknown'} className="input bg-gray-50" disabled />
-                </div>
-              </div>
-              <div>
-                <label className="field-label">Base Query (used as subquery)</label>
-                <textarea
-                  value={editBaseQuery}
-                  onChange={e => setEditBaseQuery(e.target.value)}
-                  className="input font-mono text-sm"
-                  rows={4}
-                />
-              </div>
-              <div className="flex gap-3 items-end">
-                <div className="flex-1">
-                  <label className="field-label">Event Type (optional)</label>
-                  <select value={editEventTypeId} onChange={e => setEditEventTypeId(e.target.value)} className="input">
-                    <option value="">Auto-detect</option>
-                    {eventTypes.map((et: EventType) => (
-                      <option key={et.id} value={et.id}>{et.display_name}</option>
-                    ))}
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={v => { if (!v) resetForm(); else setShowForm(true) }}>
+        <DialogContent className="max-w-lg">
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader><DialogTitle>New Scan Config</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Name</Label><Input value={scanName} onChange={e => setScanName(e.target.value)} required placeholder="e.g. Main events scan" /></div>
+                <div className="grid gap-2">
+                  <Label>Data Source</Label>
+                  <select value={dsId} onChange={e => setDsId(e.target.value)} className={selectClass} required>
+                    <option value="">Select…</option>
+                    {dataSources.map((ds: DataSource) => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
                   </select>
                 </div>
-                <div className="flex-1">
-                  <label className="field-label">Event Type Column (optional)</label>
-                  <input value={editEventTypeColumn} onChange={e => setEditEventTypeColumn(e.target.value)} className="input" placeholder="e.g. event_name" />
-                </div>
               </div>
-              <div className="flex gap-3 items-end">
-                <div className="w-40">
-                  <label className="field-label">Cardinality Threshold</label>
-                  <input type="number" value={editCardinalityThreshold} onChange={e => setEditCardinalityThreshold(Number(e.target.value))} className="input" min={1} />
-                </div>
-                <div className="flex-1">
-                  <label className="field-label">Schedule (cron, optional)</label>
-                  <input value={editSchedule} onChange={e => setEditSchedule(e.target.value)} className="input" placeholder="e.g. 0 */6 * * *" />
-                </div>
+              <div className="grid gap-2">
+                <Label>Base Query (used as subquery)</Label>
+                <Textarea value={baseQuery} onChange={e => setBaseQuery(e.target.value)} className="font-mono text-sm" rows={4} required placeholder="SELECT * FROM analytics.events" />
               </div>
-              <div className="form-actions">
-                <button onClick={() => updateMut.mutate(sc.id)} className="btn-primary">Save</button>
-                <button onClick={() => setEditingScanId(null)} className="btn-secondary">Cancel</button>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Event Type (optional)</Label>
+                  <select value={eventTypeId} onChange={e => setEventTypeId(e.target.value)} className={selectClass}>
+                    <option value="">Auto-detect</option>
+                    {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
+                  </select>
+                </div>
+                <div className="grid gap-2"><Label>Event Type Column (optional)</Label><Input value={eventTypeColumn} onChange={e => setEventTypeColumn(e.target.value)} placeholder="e.g. event_name" /></div>
               </div>
-              {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={cardinalityThreshold} onChange={e => setCardinalityThreshold(Number(e.target.value))} min={1} /></div>
+                <div className="grid gap-2"><Label>Schedule (cron, optional)</Label><Input value={schedule} onChange={e => setSchedule(e.target.value)} placeholder="e.g. 0 */6 * * *" /></div>
+              </div>
+              {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-          )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
+              <Button type="submit" disabled={createMut.isPending}>Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-          {expandedId === sc.id && (
-            <ScanDetail slug={slug} scanConfig={sc} eventTypes={eventTypes} />
-          )}
-        </div>
+      {/* Edit dialog */}
+      <Dialog open={!!editingScanId} onOpenChange={v => { if (!v) setEditingScanId(null) }}>
+        <DialogContent className="max-w-lg">
+          <form onSubmit={e => { e.preventDefault(); if (editingScanId) updateMut.mutate(editingScanId) }}>
+            <DialogHeader><DialogTitle>Edit Scan Config</DialogTitle></DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2"><Label>Name</Label><Input value={editName} onChange={e => setEditName(e.target.value)} /></div>
+              <div className="grid gap-2">
+                <Label>Base Query (used as subquery)</Label>
+                <Textarea value={editBaseQuery} onChange={e => setEditBaseQuery(e.target.value)} className="font-mono text-sm" rows={4} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Event Type (optional)</Label>
+                  <select value={editEventTypeId} onChange={e => setEditEventTypeId(e.target.value)} className={selectClass}>
+                    <option value="">Auto-detect</option>
+                    {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
+                  </select>
+                </div>
+                <div className="grid gap-2"><Label>Event Type Column (optional)</Label><Input value={editEventTypeColumn} onChange={e => setEditEventTypeColumn(e.target.value)} placeholder="e.g. event_name" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={editCardinalityThreshold} onChange={e => setEditCardinalityThreshold(Number(e.target.value))} min={1} /></div>
+                <div className="grid gap-2"><Label>Schedule (cron, optional)</Label><Input value={editSchedule} onChange={e => setEditSchedule(e.target.value)} placeholder="e.g. 0 */6 * * *" /></div>
+              </div>
+              {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingScanId(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateMut.isPending}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {scanConfigs.map((sc: ScanConfig) => (
+        <Collapsible key={sc.id} open={expandedId === sc.id} onOpenChange={open => setExpandedId(open ? sc.id : null)}>
+          <Card>
+            <CollapsibleTrigger asChild>
+              <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted/50 transition-colors">
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold">{sc.name}</span>
+                  <span className="text-muted-foreground text-sm">{dsMap.get(sc.data_source_id) ?? 'Unknown'}</span>
+                  {sc.schedule && <Badge variant="outline" className="text-xs">⏱ {sc.schedule}</Badge>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); startEditScan(sc) }}><Pencil className="h-3 w-3" /></Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={e => { e.stopPropagation(); handleDelete(sc) }}><Trash2 className="h-3 w-3" /></Button>
+                  <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${expandedId === sc.id ? 'rotate-180' : ''}`} />
+                </div>
+              </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <ScanDetail slug={slug} scanConfig={sc} eventTypes={eventTypes} />
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
       ))}
     </div>
   )
@@ -1328,164 +1308,139 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scanJobs', slug, scanConfig.id] }),
   })
 
-  const statusColor: Record<string, string> = {
-    pending: 'bg-yellow-100 text-yellow-800',
-    running: 'bg-blue-100 text-blue-800',
-    completed: 'bg-green-100 text-green-800',
-    failed: 'bg-red-100 text-red-800',
+  const statusVariant: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
+    pending: 'outline',
+    running: 'secondary',
+    completed: 'default',
+    failed: 'destructive',
   }
 
   return (
     <div className="border-t p-4 space-y-4">
       {/* Query info panel */}
-      <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
-        <div className="px-3 py-2 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Base Query (subquery)</span>
-          <div className="flex gap-3 text-xs text-gray-500">
-            <span>Threshold: <strong>{scanConfig.cardinality_threshold}</strong></span>
-            {scanConfig.event_type_column && <span>Group by: <strong>{scanConfig.event_type_column}</strong></span>}
-            {etName && <span>Event Type: <strong>{etName}</strong></span>}
-            {scanConfig.schedule && <span>Schedule: <strong>{scanConfig.schedule}</strong></span>}
+      <div className="rounded-lg border bg-muted/30 overflow-hidden">
+        <div className="px-3 py-2 bg-muted/50 border-b flex items-center justify-between">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Base Query (subquery)</span>
+          <div className="flex gap-3 text-xs text-muted-foreground">
+            <span>Threshold: <strong className="text-foreground">{scanConfig.cardinality_threshold}</strong></span>
+            {scanConfig.event_type_column && <span>Group by: <strong className="text-foreground">{scanConfig.event_type_column}</strong></span>}
+            {etName && <span>Event Type: <strong className="text-foreground">{etName}</strong></span>}
+            {scanConfig.schedule && <span>Schedule: <strong className="text-foreground">{scanConfig.schedule}</strong></span>}
           </div>
         </div>
-        <pre className="p-3 text-xs font-mono text-gray-700 whitespace-pre-wrap overflow-x-auto">{scanConfig.base_query}</pre>
+        <pre className="p-3 text-xs font-mono text-foreground/80 whitespace-pre-wrap overflow-x-auto">{scanConfig.base_query}</pre>
       </div>
 
       <div className="flex justify-between items-center">
-        <h3 className="text-sm font-semibold text-gray-700">Jobs</h3>
-        <button
-          onClick={() => runMut.mutate()}
-          disabled={runMut.isPending}
-          className="btn-primary text-xs"
-        >
-          {runMut.isPending ? 'Starting…' : '▶ Run Scan'}
-        </button>
+        <h3 className="text-sm font-semibold">Jobs</h3>
+        <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending}>
+          <Play className="mr-1 h-3 w-3" />
+          {runMut.isPending ? 'Starting…' : 'Run Scan'}
+        </Button>
       </div>
 
-      {runMut.isError && <p className="form-error-sm">{(runMut.error as Error).message}</p>}
+      {runMut.isError && <p className="text-sm text-destructive">{(runMut.error as Error).message}</p>}
 
-      {isLoading && <p className="text-sm text-gray-400">Loading jobs…</p>}
+      {isLoading && <p className="text-sm text-muted-foreground">Loading jobs…</p>}
 
       {jobs.length === 0 && !isLoading && (
-        <p className="text-sm text-gray-400">No jobs yet. Click "Run Scan" to start.</p>
+        <p className="text-sm text-muted-foreground">No jobs yet. Click "Run Scan" to start.</p>
       )}
 
       {jobs.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-500 border-b">
-                <th className="pb-2 pr-4">Status</th>
-                <th className="pb-2 pr-4">Started</th>
-                <th className="pb-2 pr-4">Duration</th>
-                <th className="pb-2 pr-4">Result</th>
-                <th className="pb-2 w-8"></th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Started</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>Result</TableHead>
+                <TableHead className="w-8"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {jobs.map((job: ScanJob) => {
                 const duration = job.started_at && job.completed_at
                   ? `${((new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 1000).toFixed(1)}s`
                   : job.started_at && job.status === 'running' ? 'running…' : '—'
                 return (
-                  <tr key={job.id} className="border-b last:border-0">
-                    <td className="py-2 pr-4">
-                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${statusColor[job.status] ?? ''}`}>
-                        {job.status}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4 text-gray-600 text-xs">
+                  <Fragment key={job.id}>
+                  <TableRow>
+                    <TableCell>
+                      <Badge variant={statusVariant[job.status] ?? 'outline'} className="text-xs">{job.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
                       {job.started_at ? new Date(job.started_at).toLocaleString() : '—'}
-                    </td>
-                    <td className="py-2 pr-4 text-gray-600 text-xs">{duration}</td>
-                    <td className="py-2 text-xs">
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{duration}</TableCell>
+                    <TableCell className="text-xs">
                       {job.status === 'failed' && (
-                        <span className="text-red-600">{job.error_message}</span>
+                        <span className="text-destructive">{job.error_message}</span>
                       )}
                       {job.result_summary && (
-                        <div className="flex gap-3">
+                        <div className="flex gap-2">
                           {job.result_summary.events_created != null && (
-                            <span className="inline-flex items-center gap-1 bg-green-50 text-green-700 px-2 py-0.5 rounded text-xs">
-                              +{job.result_summary.events_created} events
-                            </span>
+                            <Badge variant="outline" className="text-[10px] text-green-600">+{job.result_summary.events_created} events</Badge>
                           )}
                           {job.result_summary.variables_created != null && job.result_summary.variables_created > 0 && (
-                            <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs">
-                              +{job.result_summary.variables_created} vars
-                            </span>
+                            <Badge variant="outline" className="text-[10px] text-blue-600">+{job.result_summary.variables_created} vars</Badge>
                           )}
                           {job.result_summary.events_skipped != null && job.result_summary.events_skipped > 0 && (
-                            <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs">
-                              {job.result_summary.events_skipped} skipped
-                            </span>
+                            <Badge variant="outline" className="text-[10px]">{job.result_summary.events_skipped} skipped</Badge>
                           )}
                           {job.result_summary.columns_analyzed != null && (
-                            <span className="text-gray-500">{job.result_summary.columns_analyzed} cols</span>
+                            <span className="text-muted-foreground text-[10px]">{job.result_summary.columns_analyzed} cols</span>
                           )}
                         </div>
                       )}
-                    </td>
-                    <td className="py-2">
+                    </TableCell>
+                    <TableCell>
                       {(job.result_summary?.details?.length || job.error_message) && (
-                        <button
-                          onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}
-                          className="text-gray-400 hover:text-gray-600 text-xs"
-                        >
-                          {expandedJobId === job.id ? '▲' : '▼'}
-                        </button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6"
+                          onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}>
+                          <ChevronDown className={`h-3 w-3 transition-transform ${expandedJobId === job.id ? 'rotate-180' : ''}`} />
+                        </Button>
                       )}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
+                  {expandedJobId === job.id && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="p-0">
+                        <div className="p-4 space-y-3 bg-muted/30">
+                          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Job Details</h4>
+                          {job.error_message && (
+                            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-xs text-destructive font-mono whitespace-pre-wrap">
+                              {job.error_message}
+                            </div>
+                          )}
+                          {job.result_summary && (
+                            <div className="grid grid-cols-4 gap-3 text-xs">
+                              <Card className="p-3 text-center"><div className="text-lg font-bold text-green-600">{job.result_summary.events_created ?? 0}</div><div className="text-muted-foreground">Events created</div></Card>
+                              <Card className="p-3 text-center"><div className="text-lg font-bold text-blue-600">{job.result_summary.variables_created ?? 0}</div><div className="text-muted-foreground">Variables created</div></Card>
+                              <Card className="p-3 text-center"><div className="text-lg font-bold text-foreground">{job.result_summary.events_skipped ?? 0}</div><div className="text-muted-foreground">Events skipped</div></Card>
+                              <Card className="p-3 text-center"><div className="text-lg font-bold text-primary">{job.result_summary.columns_analyzed ?? 0}</div><div className="text-muted-foreground">Columns analyzed</div></Card>
+                            </div>
+                          )}
+                          {job.result_summary?.details && job.result_summary.details.length > 0 && (
+                            <div>
+                              <h5 className="text-xs font-semibold text-muted-foreground mb-1">Log</h5>
+                              <div className="rounded-lg border bg-background p-2 max-h-48 overflow-y-auto">
+                                {job.result_summary.details.map((detail, i) => (
+                                  <div key={i} className="text-xs font-mono text-muted-foreground py-0.5 border-b border-border/50 last:border-0">{detail}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
                 )
               })}
-            </tbody>
-          </table>
-
-          {/* Expanded job details */}
-          {expandedJobId && (() => {
-            const job = jobs.find((j: ScanJob) => j.id === expandedJobId)
-            if (!job) return null
-            return (
-              <div className="mt-2 bg-gray-50 rounded-lg border border-gray-200 p-3 space-y-2">
-                <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Job Details</h4>
-                {job.error_message && (
-                  <div className="bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700 font-mono whitespace-pre-wrap">
-                    {job.error_message}
-                  </div>
-                )}
-                {job.result_summary && (
-                  <div className="grid grid-cols-4 gap-3 text-xs">
-                    <div className="bg-white rounded border p-2 text-center">
-                      <div className="text-lg font-bold text-green-600">{job.result_summary.events_created ?? 0}</div>
-                      <div className="text-gray-500">Events created</div>
-                    </div>
-                    <div className="bg-white rounded border p-2 text-center">
-                      <div className="text-lg font-bold text-blue-600">{job.result_summary.variables_created ?? 0}</div>
-                      <div className="text-gray-500">Variables created</div>
-                    </div>
-                    <div className="bg-white rounded border p-2 text-center">
-                      <div className="text-lg font-bold text-gray-600">{job.result_summary.events_skipped ?? 0}</div>
-                      <div className="text-gray-500">Events skipped</div>
-                    </div>
-                    <div className="bg-white rounded border p-2 text-center">
-                      <div className="text-lg font-bold text-indigo-600">{job.result_summary.columns_analyzed ?? 0}</div>
-                      <div className="text-gray-500">Columns analyzed</div>
-                    </div>
-                  </div>
-                )}
-                {job.result_summary?.details && job.result_summary.details.length > 0 && (
-                  <div>
-                    <h5 className="text-xs font-semibold text-gray-600 mb-1">Log</h5>
-                    <div className="bg-white rounded border p-2 max-h-48 overflow-y-auto">
-                      {job.result_summary.details.map((detail, i) => (
-                        <div key={i} className="text-xs font-mono text-gray-600 py-0.5 border-b border-gray-50 last:border-0">{detail}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })()}
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

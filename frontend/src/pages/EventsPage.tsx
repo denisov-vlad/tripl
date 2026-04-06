@@ -1,12 +1,31 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { eventsApi } from '../api/events'
-import { eventTypesApi } from '../api/eventTypes'
-import { metaFieldsApi } from '../api/metaFields'
-import { variablesApi } from '../api/variables'
-import { useConfirm } from '../hooks/useConfirm'
-import type { Event as TEvent, EventType, FieldDefinition, MetaFieldDefinition, Variable } from '../types'
+import { eventsApi } from '@/api/events'
+import { eventTypesApi } from '@/api/eventTypes'
+import { metaFieldsApi } from '@/api/metaFields'
+import { variablesApi } from '@/api/variables'
+import { useConfirm } from '@/hooks/useConfirm'
+import type { Event as TEvent, EventType, FieldDefinition, MetaFieldDefinition, Variable } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Separator } from '@/components/ui/separator'
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from '@/components/ui/table'
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter,
+} from '@/components/ui/sheet'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { EmptyState } from '@/components/empty-state'
+import { Calendar, Plus, Pencil, Trash2, Search, X, Filter } from 'lucide-react'
 
 export default function EventsPage() {
   const { slug } = useParams<{ slug: string }>()
@@ -19,6 +38,7 @@ export default function EventsPage() {
   const [metaFilters, setMetaFilters] = useState<Record<string, string>>({})
   const [showForm, setShowForm] = useState(false)
   const [editingEvent, setEditingEvent] = useState<TEvent | null>(null)
+  const [expandedCell, setExpandedCell] = useState<string | null>(null)
   const { confirm, dialog } = useConfirm()
 
   const { data: eventTypes = [] } = useQuery({
@@ -127,12 +147,11 @@ export default function EventsPage() {
 
   // Client-side filtering by field values and meta values
   const events = useMemo(() => {
-    let filtered = rawEvents
     const hasFieldFilter = Object.values(fieldFilters).some(v => v !== '')
     const hasMetaFilter = Object.values(metaFilters).some(v => v !== '')
-    if (!hasFieldFilter && !hasMetaFilter) return filtered
+    if (!hasFieldFilter && !hasMetaFilter) return rawEvents
 
-    return filtered.filter(ev => {
+    return rawEvents.filter(ev => {
       for (const col of fieldColumns) {
         const fv = fieldFilters[col.id]
         if (!fv) continue
@@ -173,74 +192,145 @@ export default function EventsPage() {
       {dialog}
 
       {/* Header */}
-      <div className="page-header">
-        <h1 className="page-title">
-          Events <span className="page-subtitle">({total})</span>
-        </h1>
-        <button
-          onClick={() => { setShowForm(!showForm); setEditingEvent(null) }}
-          className="btn-primary"
-        >
-          + New Event
-        </button>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Events <span className="text-muted-foreground font-normal text-lg">({total})</span>
+          </h1>
+        </div>
+        <Button onClick={() => { setShowForm(!showForm); setEditingEvent(null) }}>
+          <Plus className="mr-2 h-4 w-4" />
+          New Event
+        </Button>
       </div>
 
       {/* Tabs + search */}
       <div className="flex items-end gap-4 mb-4">
-        <div className="tabs flex-1">
-          <button
-            onClick={() => setActiveTab('all')}
-            className={activeTab === 'all' ? 'tab-active' : 'tab-inactive'}
-          >
-            All
-          </button>
-          {eventTypes.map((et: EventType) => (
-            <button
-              key={et.id}
-              onClick={() => setActiveTab(et.id)}
-              className={activeTab === et.id ? 'tab-active' : 'tab-inactive'}
-            >
-              <span className="type-dot-lg" style={{ backgroundColor: et.color }} />
-              {et.display_name}
-            </button>
-          ))}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
+          <TabsList className="h-9">
+            <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+            {eventTypes.map((et: EventType) => (
+              <TabsTrigger key={et.id} value={et.id} className="text-xs gap-1.5">
+                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
+                {et.display_name}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search events..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-9 h-9 w-56"
+          />
         </div>
-        <input
-          placeholder="Search events..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="search-input"
-        />
       </div>
 
       {/* Filters */}
-      <div className="filter-bar mb-4">
-        <span className="section-label">Filters:</span>
-        <select
-          value={filterImplemented === undefined ? '' : String(filterImplemented)}
-          onChange={e => setFilterImplemented(e.target.value === '' ? undefined : e.target.value === 'true')}
-          className="filter-select"
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <Select
+          value={filterImplemented === undefined ? '__all__' : String(filterImplemented)}
+          onValueChange={v => setFilterImplemented(v === '__all__' ? undefined : v === 'true')}
         >
-          <option value="">All statuses</option>
-          <option value="true">Implemented</option>
-          <option value="false">Not implemented</option>
-        </select>
-        <select
-          value={filterTag}
-          onChange={e => setFilterTag(e.target.value)}
-          className="filter-select"
+          <SelectTrigger className="h-8 w-36 text-xs">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All statuses</SelectItem>
+            <SelectItem value="true">Implemented</SelectItem>
+            <SelectItem value="false">Not implemented</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={filterTag || '__all__'}
+          onValueChange={v => setFilterTag(v === '__all__' ? '' : v)}
         >
-          <option value="">All tags</option>
-          {allTags.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+          <SelectTrigger className="h-8 w-32 text-xs">
+            <SelectValue placeholder="All tags" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All tags</SelectItem>
+            {allTags.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {fieldColumns.map(f => {
+          const enumOpts = fieldEnumOptions[f.id]
+          if (enumOpts) {
+            return (
+              <select
+                key={f.id}
+                value={fieldFilters[f.id] ?? ''}
+                onChange={e => setFieldFilters({ ...fieldFilters, [f.id]: e.target.value })}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="">{f.display_name}: All</option>
+                {Array.from(enumOpts).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            )
+          }
+          if (f.field_type !== 'json') {
+            return (
+              <Input
+                key={f.id}
+                value={fieldFilters[f.id] ?? ''}
+                onChange={e => setFieldFilters({ ...fieldFilters, [f.id]: e.target.value })}
+                className="h-8 w-28 text-xs"
+                placeholder={f.display_name}
+              />
+            )
+          }
+          return null
+        })}
+        {metaFields.map((mf: MetaFieldDefinition) => {
+          if (mf.field_type === 'enum' && mf.enum_options) {
+            return (
+              <select
+                key={mf.id}
+                value={metaFilters[mf.id] ?? ''}
+                onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="">{mf.display_name}: All</option>
+                {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            )
+          }
+          if (mf.field_type === 'boolean') {
+            return (
+              <select
+                key={mf.id}
+                value={metaFilters[mf.id] ?? ''}
+                onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="">{mf.display_name}: All</option>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            )
+          }
+          return (
+            <Input
+              key={mf.id}
+              value={metaFilters[mf.id] ?? ''}
+              onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
+              className="h-8 w-28 text-xs"
+              placeholder={mf.display_name}
+            />
+          )
+        })}
         {hasActiveFilters && (
-          <button onClick={clearAllFilters} className="filter-clear">
-            Clear filters
-          </button>
+          <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-8 text-xs">
+            <X className="mr-1 h-3 w-3" />
+            Clear
+          </Button>
         )}
       </div>
 
-      {/* Event Form */}
+      {/* Event Form (Sheet) */}
       {(showForm || editingEvent) && slug && (
         <EventForm
           slug={slug}
@@ -254,161 +344,118 @@ export default function EventsPage() {
       )}
 
       {/* Events Table */}
-      <div className="table-wrapper">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Type</th>
-              <th className="w-16">Impl</th>
-              <th>Tags</th>
+      <div className="rounded-lg border overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead className="w-16">Impl</TableHead>
+              <TableHead>Tags</TableHead>
               {fieldColumns.map(f => (
-                <th key={f.id}>{f.display_name}</th>
+                <TableHead key={f.id}>{f.display_name}</TableHead>
               ))}
               {metaFields.map((mf: MetaFieldDefinition) => (
-                <th key={mf.id} className="meta-col">{mf.display_name}</th>
+                <TableHead key={mf.id} className="text-muted-foreground">{mf.display_name}</TableHead>
               ))}
-              <th className="w-28"></th>
-            </tr>
-            {/* Column filter row */}
-            {(fieldColumns.length > 0 || metaFields.length > 0) && (
-              <tr className="bg-gray-50/40">
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                {fieldColumns.map(f => (
-                  <td key={f.id} className="py-1.5 px-4">
-                    {fieldEnumOptions[f.id] ? (
-                      <select
-                        value={fieldFilters[f.id] ?? ''}
-                        onChange={e => setFieldFilters({ ...fieldFilters, [f.id]: e.target.value })}
-                        className="filter-select text-[11px]"
-                      >
-                        <option value="">All</option>
-                        {Array.from(fieldEnumOptions[f.id]).map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    ) : f.field_type !== 'json' ? (
-                      <input
-                        value={fieldFilters[f.id] ?? ''}
-                        onChange={e => setFieldFilters({ ...fieldFilters, [f.id]: e.target.value })}
-                        className="filter-input text-[11px]"
-                        placeholder="Filter..."
-                      />
-                    ) : null}
-                  </td>
-                ))}
-                {metaFields.map((mf: MetaFieldDefinition) => (
-                  <td key={mf.id} className="py-1.5 px-4">
-                    {mf.field_type === 'enum' && mf.enum_options ? (
-                      <select
-                        value={metaFilters[mf.id] ?? ''}
-                        onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
-                        className="filter-select text-[11px]"
-                      >
-                        <option value="">All</option>
-                        {mf.enum_options.map(opt => (
-                          <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                      </select>
-                    ) : mf.field_type === 'boolean' ? (
-                      <select
-                        value={metaFilters[mf.id] ?? ''}
-                        onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
-                        className="filter-select text-[11px]"
-                      >
-                        <option value="">All</option>
-                        <option value="true">Yes</option>
-                        <option value="false">No</option>
-                      </select>
-                    ) : (
-                      <input
-                        value={metaFilters[mf.id] ?? ''}
-                        onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
-                        className="filter-input text-[11px]"
-                        placeholder="Filter..."
-                      />
-                    )}
-                  </td>
-                ))}
-                <td></td>
-              </tr>
-            )}
-          </thead>
-          <tbody>
+              <TableHead className="w-24"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {events.map((ev: TEvent) => {
               const mvMap = Object.fromEntries(ev.meta_values.map(mv => [mv.meta_field_definition_id, mv.value]))
 
               return (
-                <tr key={ev.id}>
-                  <td className="cell-name">{ev.name}</td>
-                  <td>
-                    <span
-                      className="event-type-badge"
-                      style={{ backgroundColor: ev.event_type.color + '18', color: ev.event_type.color }}
-                    >
-                      <span className="type-dot" style={{ backgroundColor: ev.event_type.color }} />
+                <TableRow key={ev.id}>
+                  <TableCell className="font-medium">{ev.name}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="gap-1.5 font-mono text-[11px]" style={{
+                      borderColor: ev.event_type.color + '40',
+                      color: ev.event_type.color,
+                      backgroundColor: ev.event_type.color + '0a',
+                    }}>
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ev.event_type.color }} />
                       {ev.event_type.name}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      onClick={() => toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })}
-                      className={ev.implemented ? 'impl-check-on' : 'impl-check-off'}
-                      title={ev.implemented ? 'Implemented' : 'Not implemented'}
-                    >
-                      {ev.implemented && <span className="text-xs leading-none">✓</span>}
-                    </button>
-                  </td>
-                  <td>
-                    <div className="tags-wrap">
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Checkbox
+                      checked={ev.implemented}
+                      onCheckedChange={checked =>
+                        toggleImplementedMut.mutate({ id: ev.id, implemented: !!checked })
+                      }
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1 flex-wrap">
                       {ev.tags.map(t => (
-                        <span key={t.id} className="tag-neutral">{t.name}</span>
+                        <Badge key={t.id} variant="secondary" className="text-[10px]">{t.name}</Badge>
                       ))}
-                      {ev.tags.length === 0 && <span className="text-xs text-gray-300">—</span>}
+                      {ev.tags.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
                     </div>
-                  </td>
-                  {fieldColumns.map(f => (
-                    <td key={f.id} className="cell-truncate">
-                      {getFieldValue(ev, f)}
-                    </td>
-                  ))}
+                  </TableCell>
+                  {fieldColumns.map(f => {
+                    const val = getFieldValue(ev, f)
+                    const cellKey = `${ev.id}-${f.id}`
+                    const isExpanded = expandedCell === cellKey
+                    const isLong = typeof val === 'string' && val.length > 30
+                    return (
+                      <TableCell
+                        key={f.id}
+                        className={`text-xs ${isLong ? 'cursor-pointer' : ''} ${isExpanded ? '' : 'max-w-40'}`}
+                        onClick={isLong ? () => setExpandedCell(isExpanded ? null : cellKey) : undefined}
+                      >
+                        {isExpanded ? (
+                          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] max-w-sm">{(() => {
+                            try { return JSON.stringify(JSON.parse(val), null, 2) } catch { return val }
+                          })()}</pre>
+                        ) : (
+                          <span className={isLong ? 'block truncate' : ''}>{val}</span>
+                        )}
+                      </TableCell>
+                    )
+                  })}
                   {metaFields.map((mf: MetaFieldDefinition) => (
-                    <td key={mf.id} className="cell-muted max-w-52 truncate">
+                    <TableCell key={mf.id} className="text-muted-foreground max-w-40 truncate text-xs">
                       {mf.field_type === 'url' && mvMap[mf.id] ? (
-                        <a href={mvMap[mf.id]} target="_blank" rel="noopener noreferrer" className="link">
+                        <a href={mvMap[mf.id]} target="_blank" rel="noopener noreferrer" className="text-primary underline-offset-4 hover:underline">
                           Link
                         </a>
                       ) : mf.field_type === 'boolean' && mvMap[mf.id] ? (
-                        <span className={mvMap[mf.id] === 'true' ? 'badge-green' : 'badge-gray'}>
+                        <Badge variant={mvMap[mf.id] === 'true' ? 'success' : 'secondary'} className="text-[10px]">
                           {mvMap[mf.id] === 'true' ? 'Yes' : 'No'}
-                        </span>
+                        </Badge>
                       ) : mvMap[mf.id] ?? ''}
-                    </td>
+                    </TableCell>
                   ))}
-                  <td>
-                    <div className="flex gap-2">
-                      <button
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost" size="icon" className="h-7 w-7"
                         onClick={() => { setEditingEvent(ev); setShowForm(false) }}
-                        className="btn-edit-sm"
                       >
-                        Edit
-                      </button>
-                      <button onClick={() => handleDelete(ev)} className="btn-danger-sm">
-                        Delete
-                      </button>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(ev)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )
             })}
             {events.length === 0 && (
-              <tr><td colSpan={99} className="table-empty">No events yet.</td></tr>
+              <TableRow>
+                <TableCell colSpan={99}>
+                  <EmptyState icon={Calendar} title="No events yet" description="Create your first event to get started." />
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   )
@@ -486,192 +533,186 @@ function EventForm({
   })
 
   return (
-    <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="form-card">
-      <h3 className="text-lg font-semibold text-gray-900">{event ? 'Edit Event' : 'New Event'}</h3>
+    <Sheet open onOpenChange={v => { if (!v) onClose() }}>
+      <SheetContent className="overflow-y-auto sm:max-w-lg">
+        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="flex flex-col gap-4 h-full">
+          <SheetHeader>
+            <SheetTitle>{event ? 'Edit Event' : 'New Event'}</SheetTitle>
+          </SheetHeader>
 
-      <div className="form-grid-2">
-        <div>
-          <label className="field-label">Event Type</label>
-          <select
-            value={etId}
-            onChange={e => { setEtId(e.target.value); setFieldValues({}) }}
-            className="select"
-            required
-            disabled={!!event}
-          >
-            <option value="">Select type...</option>
-            {eventTypes.map(et => <option key={et.id} value={et.id}>{et.display_name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="field-label">Name</label>
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="input"
-            placeholder="e.g. Home Page View"
-            required
-          />
-        </div>
-      </div>
-
-      <div>
-        <label className="field-label">Description</label>
-        <textarea
-          value={description}
-          onChange={e => setDescription(e.target.value)}
-          className="textarea"
-          rows={2}
-        />
-      </div>
-
-      <div className="flex items-center gap-6">
-        <label className="text-sm flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={implemented}
-            onChange={e => setImplemented(e.target.checked)}
-            className="checkbox"
-          />
-          <span className="text-gray-700">Implemented</span>
-        </label>
-      </div>
-
-      {/* Tags */}
-      <div>
-        <label className="field-label">Tags</label>
-        <div className="tags-wrap mb-2">
-          {tags.map(t => (
-            <span key={t} className="tag">
-              {t}
-              <button type="button" onClick={() => setTags(tags.filter(x => x !== t))} className="tag-remove">&times;</button>
-            </span>
-          ))}
-          {tags.length === 0 && <span className="text-xs text-gray-400">No tags added</span>}
-        </div>
-        <input
-          value={tagInput}
-          onChange={e => setTagInput(e.target.value)}
-          onKeyDown={e => {
-            if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
-              e.preventDefault()
-              const t = tagInput.trim().toLowerCase()
-              if (!tags.includes(t)) setTags([...tags, t])
-              setTagInput('')
-            }
-          }}
-          className="input"
-          placeholder="Type a tag and press Enter"
-        />
-      </div>
-
-      {/* Dynamic fields */}
-      {sortedFields.length > 0 && (
-        <div>
-          <h4 className="section-label mb-3">Fields</h4>
-          <div className="form-grid-2">
-            {sortedFields.map(f => (
-              <div key={f.id}>
-                <label className={`field-label${f.is_required ? ' field-label-required' : ''}`}>
-                  {f.display_name}
-                  <span className="ml-1 text-gray-400">({f.field_type})</span>
-                </label>
-                {f.field_type === 'boolean' ? (
-                  <select
-                    value={fieldValues[f.id] ?? ''}
-                    onChange={e => setFieldValues({ ...fieldValues, [f.id]: e.target.value })}
-                    className="select"
-                    required={f.is_required}
-                  >
-                    <option value="">—</option>
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                  </select>
-                ) : f.field_type === 'enum' && f.enum_options ? (
-                  <select
-                    value={fieldValues[f.id] ?? ''}
-                    onChange={e => setFieldValues({ ...fieldValues, [f.id]: e.target.value })}
-                    className="select"
-                    required={f.is_required}
-                  >
-                    <option value="">—</option>
-                    {f.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                ) : f.field_type === 'json' ? (
-                  <JsonEditor
-                    value={fieldValues[f.id] ?? ''}
-                    onChange={v => setFieldValues({ ...fieldValues, [f.id]: v })}
-                    required={f.is_required}
-                    variables={varSuggestions}
-                  />
-                ) : (
-                  <VariableInput
-                    value={fieldValues[f.id] ?? ''}
-                    onChange={v => setFieldValues({ ...fieldValues, [f.id]: v })}
-                    variables={varSuggestions}
-                    required={f.is_required}
-                    type={f.field_type === 'number' ? 'number' : f.field_type === 'url' ? 'url' : 'text'}
-                  />
-                )}
+          <div className="flex-1 space-y-4 px-6">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label>Event Type</Label>
+                <select
+                  value={etId}
+                  onChange={e => { setEtId(e.target.value); setFieldValues({}) }}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                  required
+                  disabled={!!event}
+                >
+                  <option value="">Select type...</option>
+                  {eventTypes.map(et => <option key={et.id} value={et.id}>{et.display_name}</option>)}
+                </select>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Dynamic meta fields */}
-      {metaFields.length > 0 && (
-        <div>
-          <h4 className="section-label text-indigo-500 mb-3">Meta</h4>
-          <div className="form-grid-2">
-            {metaFields.map(mf => (
-              <div key={mf.id}>
-                <label className={`field-label${mf.is_required ? ' field-label-required' : ''}`}>
-                  {mf.display_name}
-                </label>
-                {mf.field_type === 'boolean' ? (
-                  <select
-                    value={metaValues[mf.id] ?? ''}
-                    onChange={e => setMetaValues({ ...metaValues, [mf.id]: e.target.value })}
-                    className="select"
-                  >
-                    <option value="">—</option>
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                  </select>
-                ) : mf.field_type === 'enum' && mf.enum_options ? (
-                  <select
-                    value={metaValues[mf.id] ?? ''}
-                    onChange={e => setMetaValues({ ...metaValues, [mf.id]: e.target.value })}
-                    className="select"
-                  >
-                    <option value="">—</option>
-                    {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                ) : (
-                  <VariableInput
-                    value={metaValues[mf.id] ?? ''}
-                    onChange={v => setMetaValues({ ...metaValues, [mf.id]: v })}
-                    variables={varSuggestions}
-                    type={mf.field_type === 'url' ? 'url' : mf.field_type === 'date' ? 'date' : 'text'}
-                  />
-                )}
+              <div className="grid gap-2">
+                <Label>Name</Label>
+                <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Home Page View" required />
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            </div>
 
-      <div className="form-actions">
-        <button type="submit" className="btn-primary">
-          {event ? 'Update' : 'Create'}
-        </button>
-        <button type="button" onClick={onClose} className="btn-secondary">
-          Cancel
-        </button>
-      </div>
-      {createMut.isError && <p className="form-error">{(createMut.error as Error).message}</p>}
-    </form>
+            <div className="grid gap-2">
+              <Label>Description</Label>
+              <Textarea value={description} onChange={e => setDescription(e.target.value)} rows={2} />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="form-impl"
+                checked={implemented}
+                onCheckedChange={c => setImplemented(!!c)}
+              />
+              <Label htmlFor="form-impl" className="text-sm cursor-pointer">Implemented</Label>
+            </div>
+
+            {/* Tags */}
+            <div className="grid gap-2">
+              <Label>Tags</Label>
+              <div className="flex gap-1 flex-wrap mb-1">
+                {tags.map(t => (
+                  <Badge key={t} variant="secondary" className="gap-1">
+                    {t}
+                    <button type="button" onClick={() => setTags(tags.filter(x => x !== t))} className="text-muted-foreground hover:text-foreground ml-0.5">&times;</button>
+                  </Badge>
+                ))}
+                {tags.length === 0 && <span className="text-xs text-muted-foreground">No tags</span>}
+              </div>
+              <Input
+                value={tagInput}
+                onChange={e => setTagInput(e.target.value)}
+                onKeyDown={e => {
+                  if ((e.key === 'Enter' || e.key === ',') && tagInput.trim()) {
+                    e.preventDefault()
+                    const t = tagInput.trim().toLowerCase()
+                    if (!tags.includes(t)) setTags([...tags, t])
+                    setTagInput('')
+                  }
+                }}
+                placeholder="Type tag + Enter"
+              />
+            </div>
+
+            {/* Dynamic fields */}
+            {sortedFields.length > 0 && (
+              <div>
+                <Separator className="mb-3" />
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Fields</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {sortedFields.map(f => (
+                    <div key={f.id} className="grid gap-1.5">
+                      <Label className="text-xs">
+                        {f.display_name}
+                        {f.is_required && <span className="text-destructive ml-0.5">*</span>}
+                        <span className="ml-1 text-muted-foreground font-normal">({f.field_type})</span>
+                      </Label>
+                      {f.field_type === 'boolean' ? (
+                        <select
+                          value={fieldValues[f.id] ?? ''}
+                          onChange={e => setFieldValues({ ...fieldValues, [f.id]: e.target.value })}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                          required={f.is_required}
+                        >
+                          <option value="">—</option>
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                      ) : f.field_type === 'enum' && f.enum_options ? (
+                        <select
+                          value={fieldValues[f.id] ?? ''}
+                          onChange={e => setFieldValues({ ...fieldValues, [f.id]: e.target.value })}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                          required={f.is_required}
+                        >
+                          <option value="">—</option>
+                          {f.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                        </select>
+                      ) : f.field_type === 'json' ? (
+                        <JsonEditor
+                          value={fieldValues[f.id] ?? ''}
+                          onChange={v => setFieldValues({ ...fieldValues, [f.id]: v })}
+                          required={f.is_required}
+                          variables={varSuggestions}
+                        />
+                      ) : (
+                        <VariableInput
+                          value={fieldValues[f.id] ?? ''}
+                          onChange={v => setFieldValues({ ...fieldValues, [f.id]: v })}
+                          variables={varSuggestions}
+                          required={f.is_required}
+                          type={f.field_type === 'number' ? 'number' : f.field_type === 'url' ? 'url' : 'text'}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic meta fields */}
+            {metaFields.length > 0 && (
+              <div>
+                <Separator className="mb-3" />
+                <h4 className="text-xs font-semibold text-primary uppercase tracking-wide mb-3">Meta</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {metaFields.map(mf => (
+                    <div key={mf.id} className="grid gap-1.5">
+                      <Label className="text-xs">
+                        {mf.display_name}
+                        {mf.is_required && <span className="text-destructive ml-0.5">*</span>}
+                      </Label>
+                      {mf.field_type === 'boolean' ? (
+                        <select
+                          value={metaValues[mf.id] ?? ''}
+                          onChange={e => setMetaValues({ ...metaValues, [mf.id]: e.target.value })}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                        >
+                          <option value="">—</option>
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                      ) : mf.field_type === 'enum' && mf.enum_options ? (
+                        <select
+                          value={metaValues[mf.id] ?? ''}
+                          onChange={e => setMetaValues({ ...metaValues, [mf.id]: e.target.value })}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs"
+                        >
+                          <option value="">—</option>
+                          {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                        </select>
+                      ) : (
+                        <VariableInput
+                          value={metaValues[mf.id] ?? ''}
+                          onChange={v => setMetaValues({ ...metaValues, [mf.id]: v })}
+                          variables={varSuggestions}
+                          type={mf.field_type === 'url' ? 'url' : mf.field_type === 'date' ? 'date' : 'text'}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
+          </div>
+
+          <SheetFooter className="px-6 pb-6">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={createMut.isPending}>{event ? 'Update' : 'Create'}</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -760,26 +801,25 @@ function VariableInput({
 
   return (
     <div ref={wrapperRef} className="relative">
-      <input
+      <Input
         ref={ref}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        className="input"
         required={required}
         type={type}
       />
       {showMenu && filtered.length > 0 && (
-        <div className="dropdown-menu">
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover p-1 shadow-md">
           {filtered.map((v, i) => (
             <button
               key={v.name}
               type="button"
               onMouseDown={e => { e.preventDefault(); insert(v.name) }}
-              className={i === highlightIdx ? 'dropdown-item-active' : 'dropdown-item-inactive'}
+              className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs ${i === highlightIdx ? 'bg-accent text-accent-foreground' : 'text-popover-foreground hover:bg-accent/50'}`}
             >
-              <code className="var-code">${'{'}${v.name}{'}'}</code>
-              <span className="var-label">{v.label}</span>
+              <code className="font-mono text-primary">${'{'}${v.name}{'}'}</code>
+              <span className="text-muted-foreground">{v.label}</span>
             </button>
           ))}
         </div>
@@ -931,42 +971,43 @@ function JsonEditor({
   return (
     <div className="space-y-1">
       <div ref={wrapperRef} className="relative">
-        <textarea
+        <Textarea
           ref={textareaRef}
           value={raw}
           onChange={e => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          className={`textarea-mono ${error ? 'input-error' : ''}`}
+          className={`font-mono text-xs ${error ? 'border-destructive' : ''}`}
           rows={4}
           placeholder='{ "key": "value" }'
           required={required}
           spellCheck={false}
         />
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={handleFormat}
-          className="json-format-btn"
-          title="Format JSON"
+          className="absolute right-1.5 top-1.5 h-6 text-[10px]"
         >
           Format
-        </button>
+        </Button>
         {showMenu && filtered.length > 0 && (
-          <div className="dropdown-menu">
+          <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover p-1 shadow-md">
             {filtered.map((v, i) => (
               <button
                 key={v.name}
                 type="button"
                 onMouseDown={e => { e.preventDefault(); insertVar(v.name) }}
-                className={i === highlightIdx ? 'dropdown-item-active' : 'dropdown-item-inactive'}
+                className={`flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs ${i === highlightIdx ? 'bg-accent text-accent-foreground' : 'text-popover-foreground hover:bg-accent/50'}`}
               >
-                <code className="var-code">${'{'}${v.name}{'}'}</code>
-                <span className="var-label">{v.label}</span>
+                <code className="font-mono text-primary">${'{'}${v.name}{'}'}</code>
+                <span className="text-muted-foreground">{v.label}</span>
               </button>
             ))}
           </div>
         )}
       </div>
-      {error && <p className="json-error">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   )
 }

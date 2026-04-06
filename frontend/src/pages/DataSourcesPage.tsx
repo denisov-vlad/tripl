@@ -1,23 +1,41 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { dataSourcesApi } from '../api/dataSources'
-import { useConfirm } from '../hooks/useConfirm'
-import type { DataSource, DbType } from '../types'
+import { dataSourcesApi } from '@/api/dataSources'
+import { useConfirm } from '@/hooks/useConfirm'
+import type { DataSource, DbType } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Card, CardContent } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { EmptyState } from '@/components/empty-state'
+import { Database, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle } from 'lucide-react'
 
 export default function DataSourcesPage() {
   return (
     <div>
-      <h1 className="page-title mb-6">Data Sources</h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold tracking-tight">Data Sources</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Manage database connections for event scanning
+        </p>
+      </div>
       <ConnectionsTab />
     </div>
   )
 }
 
-/* ─── Connections ─── */
 function ConnectionsTab() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingDs, setEditingDs] = useState<DataSource | null>(null)
   const { confirm, dialog } = useConfirm()
 
   // form state
@@ -66,7 +84,7 @@ function ConnectionsTab() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dataSources'] })
-      setEditingId(null)
+      setEditingDs(null)
     },
   })
 
@@ -99,7 +117,7 @@ function ConnectionsTab() {
   }
 
   const startEdit = (ds: DataSource) => {
-    setEditingId(ds.id)
+    setEditingDs(ds)
     setEditName(ds.name)
     setEditHost(ds.host)
     setEditPort(ds.port)
@@ -117,133 +135,177 @@ function ConnectionsTab() {
   return (
     <div className="space-y-4">
       {dialog}
-      <div className="flex justify-between items-center">
-        <h2 className="section-title">Connections</h2>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary">
-          + Add Connection
-        </button>
+
+      <div className="flex justify-end">
+        <Button onClick={() => setShowForm(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add Connection
+        </Button>
       </div>
 
-      {showForm && (
-        <form onSubmit={e => { e.preventDefault(); createMut.mutate() }} className="card card-body space-y-3">
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="field-label">Name</label>
-              <input value={name} onChange={e => setName(e.target.value)} className="input" required placeholder="e.g. Production ClickHouse" />
+      {/* Create dialog */}
+      <Dialog open={showForm} onOpenChange={v => { if (!v) resetForm() }}>
+        <DialogContent className="sm:max-w-lg">
+          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader>
+              <DialogTitle>New data source</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2 grid gap-2">
+                  <Label>Name</Label>
+                  <Input value={name} onChange={e => setName(e.target.value)} required placeholder="Production ClickHouse" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Type</Label>
+                  <Input value={dbType} disabled className="bg-muted" />
+                </div>
+              </div>
+              <div className="grid grid-cols-5 gap-3">
+                <div className="col-span-2 grid gap-2">
+                  <Label>Host</Label>
+                  <Input value={host} onChange={e => setHost(e.target.value)} required placeholder="localhost" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Port</Label>
+                  <Input type="number" value={port} onChange={e => setPort(Number(e.target.value))} required />
+                </div>
+                <div className="col-span-2 grid gap-2">
+                  <Label>Database</Label>
+                  <Input value={databaseName} onChange={e => setDatabaseName(e.target.value)} required placeholder="default" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Username</Label>
+                  <Input value={username} onChange={e => setUsername(e.target.value)} placeholder="default" />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Password</Label>
+                  <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+                </div>
+              </div>
+              {createMut.isError && (
+                <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>
+              )}
             </div>
-            <div className="w-36">
-              <label className="field-label">Type</label>
-              <input value={dbType} className="input bg-gray-50" disabled />
-            </div>
-          </div>
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="field-label">Host</label>
-              <input value={host} onChange={e => setHost(e.target.value)} className="input" required placeholder="localhost" />
-            </div>
-            <div className="w-28">
-              <label className="field-label">Port</label>
-              <input type="number" value={port} onChange={e => setPort(Number(e.target.value))} className="input" required />
-            </div>
-            <div className="flex-1">
-              <label className="field-label">Database</label>
-              <input value={databaseName} onChange={e => setDatabaseName(e.target.value)} className="input" required placeholder="default" />
-            </div>
-          </div>
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="field-label">Username</label>
-              <input value={username} onChange={e => setUsername(e.target.value)} className="input" placeholder="default" />
-            </div>
-            <div className="flex-1">
-              <label className="field-label">Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="input" placeholder="••••••••" />
-            </div>
-          </div>
-          <div className="form-actions">
-            <button type="submit" className="btn-primary">Create</button>
-            <button type="button" onClick={resetForm} className="btn-secondary">Cancel</button>
-          </div>
-          {createMut.isError && <p className="form-error-sm">{(createMut.error as Error).message}</p>}
-        </form>
-      )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
+              <Button type="submit" disabled={createMut.isPending}>Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-      {dataSources.length === 0 && !showForm && (
-        <div className="card card-body text-center text-gray-500 py-12">
-          No data sources configured yet. Add a connection to get started.
-        </div>
+      {/* Edit dialog */}
+      <Dialog open={!!editingDs} onOpenChange={v => { if (!v) setEditingDs(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <form onSubmit={e => { e.preventDefault(); if (editingDs) updateMut.mutate(editingDs.id) }}>
+            <DialogHeader>
+              <DialogTitle>Edit data source</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label>Name</Label>
+                <Input value={editName} onChange={e => setEditName(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-5 gap-3">
+                <div className="col-span-2 grid gap-2">
+                  <Label>Host</Label>
+                  <Input value={editHost} onChange={e => setEditHost(e.target.value)} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Port</Label>
+                  <Input type="number" value={editPort} onChange={e => setEditPort(Number(e.target.value))} />
+                </div>
+                <div className="col-span-2 grid gap-2">
+                  <Label>Database</Label>
+                  <Input value={editDatabaseName} onChange={e => setEditDatabaseName(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Username</Label>
+                  <Input value={editUsername} onChange={e => setEditUsername(e.target.value)} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Password</Label>
+                  <Input type="password" value={editPassword} onChange={e => setEditPassword(e.target.value)} placeholder="Leave empty to keep" />
+                </div>
+              </div>
+              {updateMut.isError && (
+                <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditingDs(null)}>Cancel</Button>
+              <Button type="submit" disabled={updateMut.isPending}>Save</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Data source cards */}
+      {dataSources.length === 0 && (
+        <EmptyState
+          icon={Database}
+          title="No data sources"
+          description="Add a database connection to start scanning for events."
+          action={
+            <Button onClick={() => setShowForm(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Connection
+            </Button>
+          }
+        />
       )}
 
       {dataSources.map((ds: DataSource) => (
-        <div key={ds.id} className="card overflow-hidden">
-          <div className="flex items-center justify-between p-4">
-            <div className="flex items-center gap-3">
-              <span className="inline-flex items-center justify-center w-8 h-8 rounded bg-indigo-100 text-indigo-700 text-xs font-bold uppercase">{ds.db_type.slice(0, 2)}</span>
-              <div>
-                <span className="font-semibold text-gray-900">{ds.name}</span>
-                <span className="text-gray-500 text-sm ml-2">{ds.host}:{ds.port}/{ds.database_name}</span>
+        <Card key={ds.id}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary font-bold text-xs uppercase">
+                  {ds.db_type.slice(0, 2)}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm">{ds.name}</span>
+                    <Badge variant="outline" className="text-[10px]">
+                      {ds.host}:{ds.port}/{ds.database_name}
+                    </Badge>
+                    {ds.password_set && (
+                      <Badge variant="secondary" className="text-[10px]">🔒</Badge>
+                    )}
+                  </div>
+                </div>
               </div>
-              <span className="count-pill">{ds.password_set ? '🔒' : '🔓'}</span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => handleTest(ds.id)}
+                  disabled={testingId === ds.id}
+                >
+                  <Plug className="mr-1.5 h-3.5 w-3.5" />
+                  {testingId === ds.id ? 'Testing…' : 'Test'}
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => startEdit(ds)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => handleDelete(ds)}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleTest(ds.id)}
-                disabled={testingId === ds.id}
-                className="btn-secondary text-xs"
-              >
-                {testingId === ds.id ? 'Testing…' : 'Test'}
-              </button>
-              <button onClick={() => startEdit(ds)} className="btn-edit-sm">Edit</button>
-              <button onClick={() => handleDelete(ds)} className="btn-danger-sm">Delete</button>
-            </div>
-          </div>
 
-          {testResult?.id === ds.id && (
-            <div className={`px-4 pb-3 text-sm ${testResult.ok ? 'text-green-700' : 'text-red-600'}`}>
-              {testResult.msg}
-            </div>
-          )}
-
-          {editingId === ds.id && (
-            <div className="border-t bg-indigo-50/30 p-4 space-y-3">
-              <div className="flex gap-3 items-end">
-                <div className="flex-1">
-                  <label className="field-label">Name</label>
-                  <input value={editName} onChange={e => setEditName(e.target.value)} className="input" />
-                </div>
+            {testResult?.id === ds.id && (
+              <div className={`mt-3 flex items-center gap-2 text-sm ${testResult.ok ? 'text-green-600' : 'text-destructive'}`}>
+                {testResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                {testResult.msg}
               </div>
-              <div className="flex gap-3 items-end">
-                <div className="flex-1">
-                  <label className="field-label">Host</label>
-                  <input value={editHost} onChange={e => setEditHost(e.target.value)} className="input" />
-                </div>
-                <div className="w-28">
-                  <label className="field-label">Port</label>
-                  <input type="number" value={editPort} onChange={e => setEditPort(Number(e.target.value))} className="input" />
-                </div>
-                <div className="flex-1">
-                  <label className="field-label">Database</label>
-                  <input value={editDatabaseName} onChange={e => setEditDatabaseName(e.target.value)} className="input" />
-                </div>
-              </div>
-              <div className="flex gap-3 items-end">
-                <div className="flex-1">
-                  <label className="field-label">Username</label>
-                  <input value={editUsername} onChange={e => setEditUsername(e.target.value)} className="input" />
-                </div>
-                <div className="flex-1">
-                  <label className="field-label">Password</label>
-                  <input type="password" value={editPassword} onChange={e => setEditPassword(e.target.value)} className="input" placeholder="Leave empty to keep current" />
-                </div>
-              </div>
-              <div className="form-actions">
-                <button onClick={() => updateMut.mutate(ds.id)} className="btn-primary">Save</button>
-                <button onClick={() => setEditingId(null)} className="btn-secondary">Cancel</button>
-              </div>
-              {updateMut.isError && <p className="form-error-sm">{(updateMut.error as Error).message}</p>}
-            </div>
-          )}
-        </div>
+            )}
+          </CardContent>
+        </Card>
       ))}
     </div>
   )
