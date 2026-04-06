@@ -22,6 +22,7 @@ class VariableCreate(BaseModel):
 
 
 class VariableUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100, pattern=r"^[a-z][a-z0-9_.]*$")
     variable_type: VariableType | None = None
     description: str | None = None
 

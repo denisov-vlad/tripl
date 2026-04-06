@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { dataSourcesApi } from '@/api/dataSources'
 import { useConfirm } from '@/hooks/useConfirm'
@@ -19,6 +20,7 @@ import { EmptyState } from '@/components/empty-state'
 import { Database, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle } from 'lucide-react'
 
 export default function DataSourcesPage() {
+  const { dsId } = useParams<{ dsId?: string }>()
   return (
     <div>
       <div className="mb-6">
@@ -27,12 +29,13 @@ export default function DataSourcesPage() {
           Manage database connections for event scanning
         </p>
       </div>
-      <ConnectionsTab />
+      <ConnectionsTab openDsId={dsId} />
     </div>
   )
 }
 
-function ConnectionsTab() {
+function ConnectionsTab({ openDsId }: { openDsId?: string }) {
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editingDs, setEditingDs] = useState<DataSource | null>(null)
@@ -63,6 +66,14 @@ function ConnectionsTab() {
     queryFn: () => dataSourcesApi.list(),
   })
 
+  // Open data source from URL
+  useEffect(() => {
+    if (openDsId && dataSources.length > 0) {
+      const ds = dataSources.find((d: DataSource) => d.id === openDsId)
+      if (ds && editingDs?.id !== ds.id) startEdit(ds)
+    }
+  }, [openDsId, dataSources])
+
   const createMut = useMutation({
     mutationFn: () =>
       dataSourcesApi.create({
@@ -84,7 +95,7 @@ function ConnectionsTab() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dataSources'] })
-      setEditingDs(null)
+      closeEdit()
     },
   })
 
@@ -124,6 +135,12 @@ function ConnectionsTab() {
     setEditDatabaseName(ds.database_name)
     setEditUsername(ds.username)
     setEditPassword('')
+    navigate(`/data-sources/${ds.id}`, { replace: true })
+  }
+
+  const closeEdit = () => {
+    setEditingDs(null)
+    navigate('/data-sources', { replace: true })
   }
 
   const resetForm = () => {
@@ -198,7 +215,7 @@ function ConnectionsTab() {
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog open={!!editingDs} onOpenChange={v => { if (!v) setEditingDs(null) }}>
+      <Dialog open={!!editingDs} onOpenChange={v => { if (!v) closeEdit() }}>
         <DialogContent className="sm:max-w-lg">
           <form onSubmit={e => { e.preventDefault(); if (editingDs) updateMut.mutate(editingDs.id) }}>
             <DialogHeader>
@@ -238,7 +255,7 @@ function ConnectionsTab() {
               )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setEditingDs(null)}>Cancel</Button>
+              <Button type="button" variant="outline" onClick={() => closeEdit()}>Cancel</Button>
               <Button type="submit" disabled={updateMut.isPending}>Save</Button>
             </DialogFooter>
           </form>

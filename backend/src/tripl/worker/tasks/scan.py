@@ -7,12 +7,11 @@ import uuid
 from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.config import settings
 from tripl.models.data_source import DataSource
-from tripl.models.event import Event
 from tripl.models.event_type import EventType
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob, ScanJobStatus
@@ -89,14 +88,11 @@ def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
         adapter = _build_adapter(ds)
         adapter.test_connection()
 
-        # Get columns from base query
+        # Get columns from base query, excluding the time column
         columns = adapter.get_columns(config.base_query)
+        if config.time_column:
+            columns = [c for c in columns if c.name != config.time_column]
         logger.info(f"Found {len(columns)} columns in base query")
-
-        # Clean up existing scan-generated events for this project
-        deleted = _cleanup_scan_events(session, config.project_id, config.event_type_id)
-        if deleted:
-            logger.info(f"Cleaned up {deleted} existing events before scan")
 
         # Resolve event type: either from config or detect from event_type_column
         event_type_id = config.event_type_id
@@ -129,6 +125,8 @@ def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
                 field_defs,
                 cardinality_threshold=config.cardinality_threshold,
                 event_type_column=config.event_type_column,
+                time_column=config.time_column,
+                event_name_format=config.event_name_format,
             )
         else:
             msg = "Either event_type_id or event_type_column must be specified"
@@ -171,27 +169,6 @@ def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
         if adapter is not None:
             adapter.close()
         session.close()
-
-
-def _cleanup_scan_events(
-    session: Session,
-    project_id: uuid.UUID,
-    event_type_id: uuid.UUID | None,
-) -> int:
-    """Delete existing auto-generated events before a new scan.
-
-    If event_type_id is set, only delete events for that type.
-    Otherwise, delete all events in the project with scan-generated description.
-    """
-    query = delete(Event).where(
-        Event.project_id == project_id,
-        Event.description == "Auto-generated from data source scan",
-    )
-    if event_type_id is not None:
-        query = query.where(Event.event_type_id == event_type_id)
-    result = session.execute(query)
-    session.commit()
-    return result.rowcount  # type: ignore[return-value]
 
 
 def _scan_with_grouping(
@@ -247,6 +224,8 @@ def _scan_with_grouping(
             field_defs,
             cardinality_threshold=config.cardinality_threshold,
             event_type_column=col_name,
+            time_column=config.time_column,
+            event_name_format=config.event_name_format,
         )
         combined.events_created += result.events_created
         combined.events_skipped += result.events_skipped

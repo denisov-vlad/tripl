@@ -118,7 +118,13 @@ async def trigger_scan(
     # Import here to avoid circular imports at module level
     from tripl.worker.tasks.scan import run_scan
 
-    run_scan.delay(str(config.id), str(job.id))
+    try:
+        run_scan.delay(str(config.id), str(job.id))
+    except Exception:
+        job.status = ScanJobStatus.failed.value
+        job.error_message = "Failed to dispatch task to worker (broker unavailable)"
+        await session.commit()
+        await session.refresh(job)
     return job
 
 

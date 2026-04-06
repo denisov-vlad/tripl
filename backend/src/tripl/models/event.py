@@ -18,6 +18,8 @@ class Event(UUIDMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(500))
     description: Mapped[str] = mapped_column(Text, default="")
     implemented: Mapped[bool] = mapped_column(Boolean, default=False)
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     event_type: Mapped[EventType] = relationship(lazy="selectin")  # noqa: F821
     field_values: Mapped[list[EventFieldValue]] = relationship(  # noqa: F821

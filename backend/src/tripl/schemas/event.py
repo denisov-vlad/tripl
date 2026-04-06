@@ -21,6 +21,8 @@ class EventCreate(BaseModel):
     name: str = Field(min_length=1, max_length=500)
     description: str = ""
     implemented: bool = False
+    reviewed: bool = True
+    archived: bool = False
     tags: list[str] = []
     field_values: list[EventFieldValueIn] = []
     meta_values: list[EventMetaValueIn] = []
@@ -30,6 +32,8 @@ class EventUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=500)
     description: str | None = None
     implemented: bool | None = None
+    reviewed: bool | None = None
+    archived: bool | None = None
     tags: list[str] | None = None
     field_values: list[EventFieldValueIn] | None = None
     meta_values: list[EventMetaValueIn] | None = None
@@ -66,6 +70,8 @@ class EventResponse(BaseModel):
     name: str
     description: str
     implemented: bool
+    reviewed: bool
+    archived: bool
     tags: list[EventTagResponse] = []
     field_values: list[EventFieldValueResponse] = []
     meta_values: list[EventMetaValueResponse] = []

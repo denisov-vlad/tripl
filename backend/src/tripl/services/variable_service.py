@@ -48,6 +48,15 @@ async def update_variable(
     if not var:
         raise HTTPException(status_code=404, detail="Variable not found")
     update_data = data.model_dump(exclude_unset=True)
+    if "name" in update_data and update_data["name"] != var.name:
+        dup = await session.execute(
+            select(Variable).where(
+                Variable.project_id == project_id,
+                Variable.name == update_data["name"],
+            )
+        )
+        if dup.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Variable with this name already exists")
     for key, value in update_data.items():
         setattr(var, key, value)
     await session.commit()

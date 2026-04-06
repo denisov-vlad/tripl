@@ -39,8 +39,10 @@ async def list_events(
     search: str | None = None,
     implemented: bool | None = None,
     tag: str | None = None,
+    reviewed: bool | None = None,
+    archived: bool | None = None,
     offset: int = 0,
-    limit: int = 50,
+    limit: int = 10000,
 ) -> tuple[list[Event], int]:
     project_id = await get_project_id_by_slug(session, slug)
     query = select(Event).where(Event.project_id == project_id)
@@ -55,6 +57,12 @@ async def list_events(
     if implemented is not None:
         query = query.where(Event.implemented == implemented)
         count_query = count_query.where(Event.implemented == implemented)
+    if reviewed is not None:
+        query = query.where(Event.reviewed == reviewed)
+        count_query = count_query.where(Event.reviewed == reviewed)
+    if archived is not None:
+        query = query.where(Event.archived == archived)
+        count_query = count_query.where(Event.archived == archived)
     if tag:
         tag_filter = select(EventTag.event_id).where(EventTag.name == tag).correlate(None)
         query = query.where(Event.id.in_(tag_filter))
@@ -100,6 +108,8 @@ async def create_event(session: AsyncSession, slug: str, data: EventCreate) -> E
         name=data.name,
         description=data.description,
         implemented=data.implemented,
+        reviewed=data.reviewed,
+        archived=data.archived,
     )
     session.add(event)
     await session.flush()
@@ -140,6 +150,10 @@ async def update_event(
         event.description = update_data["description"]
     if "implemented" in update_data:
         event.implemented = update_data["implemented"]
+    if "reviewed" in update_data:
+        event.reviewed = update_data["reviewed"]
+    if "archived" in update_data:
+        event.archived = update_data["archived"]
 
     if data.tags is not None:
         for t in list(event.tags):

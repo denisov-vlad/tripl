@@ -87,6 +87,8 @@ export interface Event {
   name: string
   description: string
   implemented: boolean
+  reviewed: boolean
+  archived: boolean
   tags: EventTag[]
   field_values: EventFieldValue[]
   meta_values: EventMetaValue[]
@@ -133,6 +135,8 @@ export interface ScanConfig {
   name: string
   base_query: string
   event_type_column: string | null
+  time_column: string | null
+  event_name_format: string | null
   cardinality_threshold: number
   schedule: string | null
   created_at: string

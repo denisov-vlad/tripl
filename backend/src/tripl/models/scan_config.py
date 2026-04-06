@@ -24,6 +24,8 @@ class ScanConfig(UUIDMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255))
     base_query: Mapped[str] = mapped_column(Text)
     event_type_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    time_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    event_name_format: Mapped[str | None] = mapped_column(String(500), nullable=True)
     cardinality_threshold: Mapped[int] = mapped_column(Integer, default=100)
     schedule: Mapped[str | None] = mapped_column(String(100), nullable=True)
 

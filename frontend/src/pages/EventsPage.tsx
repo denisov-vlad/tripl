@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { eventsApi } from '@/api/events'
 import { eventTypesApi } from '@/api/eventTypes'
@@ -25,21 +25,51 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
-import { Calendar, Plus, Pencil, Trash2, Search, X, Filter } from 'lucide-react'
+import { Calendar, Plus, Pencil, Trash2, Search, X, Filter, Archive, ArchiveRestore } from 'lucide-react'
 
 export default function EventsPage() {
-  const { slug } = useParams<{ slug: string }>()
+  const { slug, tab: urlTab, eventId: urlEventId } = useParams<{ slug: string; tab?: string; eventId?: string }>()
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const qc = useQueryClient()
-  const [activeTab, setActiveTab] = useState<string>('all')
-  const [search, setSearch] = useState('')
-  const [filterImplemented, setFilterImplemented] = useState<boolean | undefined>(undefined)
-  const [filterTag, setFilterTag] = useState<string>('')
+
+  // Derive active tab from URL (default 'all')
+  const activeTab = urlTab || 'all'
+  const setActiveTab = useCallback((tab: string) => {
+    const path = tab === 'all' ? `/p/${slug}/events` : `/p/${slug}/events/${tab}`
+    navigate(path + (searchParams.toString() ? `?${searchParams}` : ''), { replace: true })
+  }, [slug, navigate, searchParams])
+
+  // Derive filters from URL search params
+  const search = searchParams.get('q') || ''
+  const setSearch = useCallback((v: string) => {
+    setSearchParams(prev => { v ? prev.set('q', v) : prev.delete('q'); return prev }, { replace: true })
+  }, [setSearchParams])
+
+  const filterImplemented = searchParams.has('implemented') ? searchParams.get('implemented') === 'true' : undefined
+  const setFilterImplemented = useCallback((v: boolean | undefined) => {
+    setSearchParams(prev => { v !== undefined ? prev.set('implemented', String(v)) : prev.delete('implemented'); return prev }, { replace: true })
+  }, [setSearchParams])
+
+  const filterTag = searchParams.get('tag') || ''
+  const setFilterTag = useCallback((v: string) => {
+    setSearchParams(prev => { v ? prev.set('tag', v) : prev.delete('tag'); return prev }, { replace: true })
+  }, [setSearchParams])
+
+  const filterReviewed = searchParams.has('reviewed') ? searchParams.get('reviewed') === 'true' : undefined
+  const setFilterReviewed = useCallback((v: boolean | undefined) => {
+    setSearchParams(prev => { v !== undefined ? prev.set('reviewed', String(v)) : prev.delete('reviewed'); return prev }, { replace: true })
+  }, [setSearchParams])
+
   const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({})
   const [metaFilters, setMetaFilters] = useState<Record<string, string>>({})
   const [showForm, setShowForm] = useState(false)
   const [editingEvent, setEditingEvent] = useState<TEvent | null>(null)
   const [expandedCell, setExpandedCell] = useState<string | null>(null)
   const { confirm, dialog } = useConfirm()
+
+  // Open event from URL param
+  const openEventId = urlEventId || null
 
   const { data: eventTypes = [] } = useQuery({
     queryKey: ['eventTypes', slug],
@@ -62,18 +92,63 @@ export default function EventsPage() {
     enabled: !!slug,
   })
 
-  const filterEtId = activeTab === 'all' ? undefined : activeTab
+  const filterEtId = activeTab === 'all' || activeTab === 'review' || activeTab === 'archived' ? undefined : activeTab
+  const filterReviewedForQuery = activeTab === 'review' ? false : filterReviewed
+  const filterArchivedForQuery = activeTab === 'archived' ? true : false
 
   const { data: eventsData } = useQuery({
-    queryKey: ['events', slug, filterEtId, search, filterImplemented, filterTag],
+    queryKey: ['events', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
     queryFn: () => eventsApi.list(slug!, {
       event_type_id: filterEtId,
       search: search || undefined,
       implemented: filterImplemented,
+      reviewed: filterReviewedForQuery,
+      archived: filterArchivedForQuery,
       tag: filterTag || undefined,
     }),
     enabled: !!slug,
   })
+
+  const { data: unreviewedData } = useQuery({
+    queryKey: ['events', slug, 'unreviewedCount'],
+    queryFn: () => eventsApi.list(slug!, { reviewed: false, archived: false, limit: 1 }),
+    enabled: !!slug,
+  })
+  const unreviewedCount = unreviewedData?.total ?? 0
+
+  const { data: archivedData } = useQuery({
+    queryKey: ['events', slug, 'archivedCount'],
+    queryFn: () => eventsApi.list(slug!, { archived: true, limit: 1 }),
+    enabled: !!slug,
+  })
+  const archivedCount = archivedData?.total ?? 0
+
+  // Load event from URL if eventId is present
+  const { data: urlEvent } = useQuery({
+    queryKey: ['event', slug, openEventId],
+    queryFn: () => eventsApi.get(slug!, openEventId!),
+    enabled: !!slug && !!openEventId,
+  })
+
+  // Sync URL event to editingEvent state
+  useEffect(() => {
+    if (urlEvent && openEventId) {
+      setEditingEvent(urlEvent)
+    } else if (!openEventId) {
+      setEditingEvent(null)
+    }
+  }, [urlEvent, openEventId])
+
+  const openEvent = useCallback((ev: TEvent) => {
+    navigate(`/p/${slug}/events/${activeTab}/${ev.id}${searchParams.toString() ? `?${searchParams}` : ''}`)
+  }, [slug, activeTab, navigate, searchParams])
+
+  const closeEvent = useCallback(() => {
+    const path = activeTab === 'all' ? `/p/${slug}/events` : `/p/${slug}/events/${activeTab}`
+    navigate(path + (searchParams.toString() ? `?${searchParams}` : ''), { replace: true })
+    setShowForm(false)
+    setEditingEvent(null)
+  }, [slug, activeTab, navigate, searchParams])
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => eventsApi.del(slug!, id),
@@ -83,6 +158,18 @@ export default function EventsPage() {
   const toggleImplementedMut = useMutation({
     mutationFn: ({ id, implemented }: { id: string; implemented: boolean }) =>
       eventsApi.update(slug!, id, { implemented }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
+  })
+
+  const toggleReviewedMut = useMutation({
+    mutationFn: ({ id, reviewed }: { id: string; reviewed: boolean }) =>
+      eventsApi.update(slug!, id, { reviewed }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
+  })
+
+  const toggleArchivedMut = useMutation({
+    mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
+      eventsApi.update(slug!, id, { archived }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
   })
 
@@ -176,12 +263,13 @@ export default function EventsPage() {
     })
   }, [rawEvents, fieldFilters, metaFilters, fieldColumns, metaFields, getFieldValue])
 
-  const hasActiveFilters = filterImplemented !== undefined || filterTag !== '' ||
+  const hasActiveFilters = filterImplemented !== undefined || filterTag !== '' || filterReviewed !== undefined ||
     Object.values(fieldFilters).some(v => v !== '') ||
     Object.values(metaFilters).some(v => v !== '')
 
   const clearAllFilters = () => {
     setFilterImplemented(undefined)
+    setFilterReviewed(undefined)
     setFilterTag('')
     setFieldFilters({})
     setMetaFilters({})
@@ -198,7 +286,15 @@ export default function EventsPage() {
             Events <span className="text-muted-foreground font-normal text-lg">({total})</span>
           </h1>
         </div>
-        <Button onClick={() => { setShowForm(!showForm); setEditingEvent(null) }}>
+        <Button onClick={() => {
+          if (openEventId) {
+            // Navigate away from event URL, then open new form
+            const path = activeTab === 'all' ? `/p/${slug}/events` : `/p/${slug}/events/${activeTab}`
+            navigate(path + (searchParams.toString() ? `?${searchParams}` : ''), { replace: true })
+          }
+          setEditingEvent(null)
+          setShowForm(v => !v)
+        }}>
           <Plus className="mr-2 h-4 w-4" />
           New Event
         </Button>
@@ -209,6 +305,18 @@ export default function EventsPage() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
           <TabsList className="h-9">
             <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+            <TabsTrigger value="review" className="text-xs gap-1.5">
+              Review
+              {unreviewedCount > 0 && (
+                <Badge variant="destructive" className="h-4 min-w-4 px-1 text-[10px] leading-none">{unreviewedCount}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="archived" className="text-xs gap-1.5">
+              Archived
+              {archivedCount > 0 && (
+                <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none">{archivedCount}</Badge>
+              )}
+            </TabsTrigger>
             {eventTypes.map((et: EventType) => (
               <TabsTrigger key={et.id} value={et.id} className="text-xs gap-1.5">
                 <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
@@ -339,7 +447,7 @@ export default function EventsPage() {
           projectVariables={variables}
           event={editingEvent}
           defaultEventTypeId={activeTab !== 'all' ? activeTab : undefined}
-          onClose={() => { setShowForm(false); setEditingEvent(null) }}
+          onClose={closeEvent}
         />
       )}
 
@@ -351,6 +459,7 @@ export default function EventsPage() {
               <TableHead>Name</TableHead>
               <TableHead>Type</TableHead>
               <TableHead className="w-16">Impl</TableHead>
+              <TableHead className="w-16">Rev</TableHead>
               <TableHead>Tags</TableHead>
               {fieldColumns.map(f => (
                 <TableHead key={f.id}>{f.display_name}</TableHead>
@@ -367,7 +476,11 @@ export default function EventsPage() {
 
               return (
                 <TableRow key={ev.id}>
-                  <TableCell className="font-medium">{ev.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <button className="hover:underline underline-offset-4 text-left" onClick={() => openEvent(ev)}>
+                      {ev.name}
+                    </button>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline" className="gap-1.5 font-mono text-[11px]" style={{
                       borderColor: ev.event_type.color + '40',
@@ -387,6 +500,14 @@ export default function EventsPage() {
                     />
                   </TableCell>
                   <TableCell>
+                    <Checkbox
+                      checked={ev.reviewed}
+                      onCheckedChange={checked =>
+                        toggleReviewedMut.mutate({ id: ev.id, reviewed: !!checked })
+                      }
+                    />
+                  </TableCell>
+                  <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {ev.tags.map(t => (
                         <Badge key={t.id} variant="secondary" className="text-[10px]">{t.name}</Badge>
@@ -395,7 +516,9 @@ export default function EventsPage() {
                     </div>
                   </TableCell>
                   {fieldColumns.map(f => {
-                    const val = getFieldValue(ev, f)
+                    let val = getFieldValue(ev, f)
+                    // Format float-like values as integers when no fractional part
+                    if (val && /^-?\d+\.0+$/.test(val)) val = String(parseInt(val, 10))
                     const cellKey = `${ev.id}-${f.id}`
                     const isExpanded = expandedCell === cellKey
                     const isLong = typeof val === 'string' && val.length > 30
@@ -432,9 +555,16 @@ export default function EventsPage() {
                     <div className="flex gap-1">
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7"
-                        onClick={() => { setEditingEvent(ev); setShowForm(false) }}
+                        onClick={() => openEvent(ev)}
                       >
                         <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"
+                        title={ev.archived ? 'Unarchive' : 'Archive'}
+                        onClick={() => toggleArchivedMut.mutate({ id: ev.id, archived: !ev.archived })}
+                      >
+                        {ev.archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
                       </Button>
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"

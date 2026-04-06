@@ -14,9 +14,12 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/data-sources" element={<DataSourcesPage />} />
+          <Route path="/data-sources/:dsId" element={<DataSourcesPage />} />
+          <Route path="/p/:slug/events/:tab/:eventId" element={<EventsPage />} />
+          <Route path="/p/:slug/events/:tab" element={<EventsPage />} />
           <Route path="/p/:slug/events" element={<EventsPage />} />
-          <Route path="/p/:slug/settings" element={<ProjectSettingsPage />} />
           <Route path="/p/:slug/settings/:tab" element={<ProjectSettingsPage />} />
+          <Route path="/p/:slug/settings" element={<ProjectSettingsPage />} />
           <Route path="/p/:slug" element={<EventsPage />} />
         </Route>
       </Routes>

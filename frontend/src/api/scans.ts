@@ -14,6 +14,8 @@ export const scansApi = {
     base_query: string
     event_type_id?: string | null
     event_type_column?: string | null
+    time_column?: string | null
+    event_name_format?: string | null
     cardinality_threshold?: number
     schedule?: string | null
   }) => api.post<ScanConfig>(`/projects/${slug}/scans`, data),
@@ -23,6 +25,8 @@ export const scansApi = {
     base_query?: string
     event_type_id?: string | null
     event_type_column?: string | null
+    time_column?: string | null
+    event_name_format?: string | null
     cardinality_threshold?: number
     schedule?: string | null
   }) => api.patch<ScanConfig>(`/projects/${slug}/scans/${scanId}`, data),

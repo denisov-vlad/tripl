@@ -900,6 +900,7 @@ function VariablesTab({ slug }: { slug: string }) {
   const [varType, setVarType] = useState<VariableType>('string')
   const [description, setDescription] = useState('')
   const [editingVar, setEditingVar] = useState<Variable | null>(null)
+  const [editVarName, setEditVarName] = useState('')
   const [editVarType, setEditVarType] = useState<VariableType>('string')
   const [editDescription, setEditDescription] = useState('')
   const { confirm, dialog } = useConfirm()
@@ -924,7 +925,7 @@ function VariablesTab({ slug }: { slug: string }) {
   })
 
   const updateMut = useMutation({
-    mutationFn: (id: string) => variablesApi.update(slug, id, { variable_type: editVarType, description: editDescription }),
+    mutationFn: (id: string) => variablesApi.update(slug, id, { name: editVarName, variable_type: editVarType, description: editDescription }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['variables', slug] })
       setEditingVar(null)
@@ -948,6 +949,7 @@ function VariablesTab({ slug }: { slug: string }) {
 
   const startEdit = (v: Variable) => {
     setEditingVar(v)
+    setEditVarName(v.name)
     setEditVarType(v.variable_type)
     setEditDescription(v.description)
   }
@@ -1001,6 +1003,10 @@ function VariablesTab({ slug }: { slug: string }) {
           <form onSubmit={e => { e.preventDefault(); if (editingVar) updateMut.mutate(editingVar.id) }}>
             <DialogHeader><DialogTitle>Edit: {editingVar?.name}</DialogTitle></DialogHeader>
             <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label>Name</Label>
+                <Input value={editVarName} onChange={e => setEditVarName(e.target.value)} required pattern="^[a-z][a-z0-9_.]*$" placeholder="variable_name" />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2">
                   <Label>Type</Label>
@@ -1074,6 +1080,8 @@ function ScansTab({ slug }: { slug: string }) {
   const [baseQuery, setBaseQuery] = useState('')
   const [eventTypeId, setEventTypeId] = useState('')
   const [eventTypeColumn, setEventTypeColumn] = useState('')
+  const [timeColumn, setTimeColumn] = useState('')
+  const [eventNameFormat, setEventNameFormat] = useState('')
   const [cardinalityThreshold, setCardinalityThreshold] = useState(100)
   const [schedule, setSchedule] = useState('')
 
@@ -1082,6 +1090,8 @@ function ScansTab({ slug }: { slug: string }) {
   const [editBaseQuery, setEditBaseQuery] = useState('')
   const [editEventTypeId, setEditEventTypeId] = useState('')
   const [editEventTypeColumn, setEditEventTypeColumn] = useState('')
+  const [editTimeColumn, setEditTimeColumn] = useState('')
+  const [editEventNameFormat, setEditEventNameFormat] = useState('')
   const [editCardinalityThreshold, setEditCardinalityThreshold] = useState(100)
   const [editSchedule, setEditSchedule] = useState('')
 
@@ -1110,6 +1120,8 @@ function ScansTab({ slug }: { slug: string }) {
         base_query: baseQuery,
         event_type_id: eventTypeId || null,
         event_type_column: eventTypeColumn || null,
+        time_column: timeColumn || null,
+        event_name_format: eventNameFormat || null,
         cardinality_threshold: cardinalityThreshold,
         schedule: schedule || null,
       }),
@@ -1126,6 +1138,8 @@ function ScansTab({ slug }: { slug: string }) {
         base_query: editBaseQuery,
         event_type_id: editEventTypeId || null,
         event_type_column: editEventTypeColumn || null,
+        time_column: editTimeColumn || null,
+        event_name_format: editEventNameFormat || null,
         cardinality_threshold: editCardinalityThreshold,
         schedule: editSchedule || null,
       }),
@@ -1156,6 +1170,8 @@ function ScansTab({ slug }: { slug: string }) {
     setEditBaseQuery(sc.base_query)
     setEditEventTypeId(sc.event_type_id ?? '')
     setEditEventTypeColumn(sc.event_type_column ?? '')
+    setEditTimeColumn(sc.time_column ?? '')
+    setEditEventNameFormat(sc.event_name_format ?? '')
     setEditCardinalityThreshold(sc.cardinality_threshold)
     setEditSchedule(sc.schedule ?? '')
   }
@@ -1164,6 +1180,7 @@ function ScansTab({ slug }: { slug: string }) {
     setShowForm(false)
     setDsId(''); setScanName(''); setBaseQuery('')
     setEventTypeId(''); setEventTypeColumn('')
+    setTimeColumn(''); setEventNameFormat('')
     setCardinalityThreshold(100); setSchedule('')
   }
 
@@ -1215,6 +1232,10 @@ function ScansTab({ slug }: { slug: string }) {
                 <div className="grid gap-2"><Label>Event Type Column (optional)</Label><Input value={eventTypeColumn} onChange={e => setEventTypeColumn(e.target.value)} placeholder="e.g. event_name" /></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Time Column (optional)</Label><Input value={timeColumn} onChange={e => setTimeColumn(e.target.value)} placeholder="e.g. created_at" /></div>
+                <div className="grid gap-2"><Label>Event Name Format (optional)</Label><Input value={eventNameFormat} onChange={e => setEventNameFormat(e.target.value)} placeholder="e.g. {action}:{category}" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={cardinalityThreshold} onChange={e => setCardinalityThreshold(Number(e.target.value))} min={1} /></div>
                 <div className="grid gap-2"><Label>Schedule (cron, optional)</Label><Input value={schedule} onChange={e => setSchedule(e.target.value)} placeholder="e.g. 0 */6 * * *" /></div>
               </div>
@@ -1248,6 +1269,10 @@ function ScansTab({ slug }: { slug: string }) {
                   </select>
                 </div>
                 <div className="grid gap-2"><Label>Event Type Column (optional)</Label><Input value={editEventTypeColumn} onChange={e => setEditEventTypeColumn(e.target.value)} placeholder="e.g. event_name" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2"><Label>Time Column (optional)</Label><Input value={editTimeColumn} onChange={e => setEditTimeColumn(e.target.value)} placeholder="e.g. created_at" /></div>
+                <div className="grid gap-2"><Label>Event Name Format (optional)</Label><Input value={editEventNameFormat} onChange={e => setEditEventNameFormat(e.target.value)} placeholder="e.g. {action}:{category}" /></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={editCardinalityThreshold} onChange={e => setEditCardinalityThreshold(Number(e.target.value))} min={1} /></div>
@@ -1321,9 +1346,11 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
       <div className="rounded-lg border bg-muted/30 overflow-hidden">
         <div className="px-3 py-2 bg-muted/50 border-b flex items-center justify-between">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Base Query (subquery)</span>
-          <div className="flex gap-3 text-xs text-muted-foreground">
+          <div className="flex gap-3 text-xs text-muted-foreground flex-wrap">
             <span>Threshold: <strong className="text-foreground">{scanConfig.cardinality_threshold}</strong></span>
             {scanConfig.event_type_column && <span>Group by: <strong className="text-foreground">{scanConfig.event_type_column}</strong></span>}
+            {scanConfig.time_column && <span>Time col: <strong className="text-foreground">{scanConfig.time_column}</strong></span>}
+            {scanConfig.event_name_format && <span>Name fmt: <strong className="text-foreground">{scanConfig.event_name_format}</strong></span>}
             {etName && <span>Event Type: <strong className="text-foreground">{etName}</strong></span>}
             {scanConfig.schedule && <span>Schedule: <strong className="text-foreground">{scanConfig.schedule}</strong></span>}
           </div>

@@ -56,7 +56,7 @@ export function AppSidebar() {
           {/* Data Sources */}
           <SidebarLink
             to="/data-sources"
-            active={isActive('/data-sources')}
+            active={location.pathname.startsWith('/data-sources')}
             icon={Database}
           >
             Data Sources

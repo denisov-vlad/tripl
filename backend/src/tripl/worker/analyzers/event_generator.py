@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -28,6 +29,15 @@ from tripl.worker.analyzers.variable_detector import (
 logger = logging.getLogger(__name__)
 
 
+def _format_value(raw_val: object) -> str:
+    """Format a value for display, showing ints without decimal point."""
+    if raw_val is None:
+        return ""
+    if isinstance(raw_val, float) and raw_val.is_integer():
+        return str(int(raw_val))
+    return str(raw_val)
+
+
 @dataclass
 class GenerationResult:
     events_created: int = 0
@@ -45,6 +55,8 @@ def generate_events(
     field_definitions: dict[str, FieldDefinition],
     cardinality_threshold: int = 100,
     event_type_column: str | None = None,
+    time_column: str | None = None,
+    event_name_format: str | None = None,
     max_events: int = 10000,
 ) -> GenerationResult:
     """Generate events from breakdown analysis.
@@ -65,6 +77,8 @@ def generate_events(
 
     for col_name, card_result in cardinality_results.items():
         if col_name == event_type_column:
+            continue
+        if col_name == time_column:
             continue
 
         fd = field_definitions.get(col_name)
@@ -116,9 +130,6 @@ def generate_events(
         return result
 
     # Iterate breakdown rows — each row is one event
-    existing_names = _get_existing_event_names(session, project_id, event_type_id)
-    seen_names: set[str] = set()
-
     for row in analysis.rows:
         if result.events_created >= max_events:
             result.details.append(f"Reached max_events limit ({max_events})")
@@ -146,22 +157,24 @@ def generate_events(
                 if i is None:
                     continue
                 raw_val = row[i]
-                value = str(raw_val) if raw_val is not None else ""
+                value = _format_value(raw_val)
             else:
                 value = meta["template"]
 
             field_values.append((meta["fd_id"], col_name, value))
 
         # Build event name
-        parts = []
-        for _, col_name, value in field_values:
-            display = value if len(value) <= 80 else value[:77] + "..."
-            parts.append(f"{col_name}={display}")
-        event_name = " | ".join(parts)
-
-        if event_name in existing_names or event_name in seen_names:
-            result.events_skipped += 1
-            continue
+        if event_name_format:
+            fmt_kwargs: dict[str, str] = {}
+            for _, col_name, value in field_values:
+                fmt_kwargs[col_name] = value
+            event_name = _apply_name_format(event_name_format, fmt_kwargs)
+        else:
+            parts = []
+            for _, col_name, value in field_values:
+                display = value if len(value) <= 80 else value[:77] + "..."
+                parts.append(f"{col_name}={display}")
+            event_name = " | ".join(parts)
 
         event = Event(
             id=uuid.uuid4(),
@@ -169,7 +182,8 @@ def generate_events(
             event_type_id=event_type_id,
             name=event_name,
             description="Auto-generated from data source scan",
-            implemented=False,
+            implemented=True,
+            reviewed=False,
         )
         session.add(event)
         session.flush()
@@ -183,10 +197,34 @@ def generate_events(
             )
             session.add(fv)
 
-        seen_names.add(event_name)
         result.events_created += 1
 
     session.flush()
+    return result
+
+
+_FMT_PATTERN = re.compile(r"\{([^}]+)\}")
+
+
+def _apply_name_format(fmt: str, kwargs: dict[str, str]) -> str:
+    """Replace {key} placeholders, supporting keys with dots like {event.category}."""
+    missing: list[str] = []
+
+    def _replacer(m: re.Match[str]) -> str:
+        key = m.group(1)
+        if key in kwargs:
+            return kwargs[key]
+        missing.append(key)
+        return m.group(0)
+
+    result = _FMT_PATTERN.sub(_replacer, fmt)
+    if missing:
+        available = ", ".join(sorted(kwargs))
+        msg = (
+            f"event_name_format references unknown keys: {', '.join(missing)}. "
+            f"Available keys: {available}"
+        )
+        raise ValueError(msg)
     return result
 
 
@@ -217,22 +255,3 @@ def _ensure_variable(
     session.add(var)
     session.flush()
     return 1
-
-
-def _get_existing_event_names(
-    session: Session,
-    project_id: uuid.UUID,
-    event_type_id: uuid.UUID,
-) -> set[str]:
-    """Get all existing event names for dedup."""
-    rows = (
-        session.execute(
-            select(Event.name).where(
-                Event.project_id == project_id,
-                Event.event_type_id == event_type_id,
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return set(rows)
