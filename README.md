@@ -1,12 +1,37 @@
 # tripl
 
-Analytics tracking plan service. Create projects, define configurable event types with fields and relations, maintain an event catalog, and track implementation metadata.
+Analytics tracking plan service — a single source of truth for what your product tracks and why.
+
+## What it does
+
+tripl helps teams manage their analytics tracking plan: define event schemas, track implementation status, and keep the catalog in sync with real data flowing through your analytics pipeline.
+
+### Event Catalog
+
+Create **projects**, each with its own set of **event types** (e.g. page views, clicks, transactions). Each event type has configurable **field definitions** (with types like string, enum, boolean, JSON) and **relations** to other event types. Individual **events** are instances within a type, carrying field values, tags, meta values, and implementation/review status.
+
+### Data Source Scanning
+
+Connect to analytics databases (currently ClickHouse) and let tripl analyze what's actually being tracked. The scan system:
+
+- Runs a configurable SQL query against your data source
+- Analyzes column cardinality to distinguish categorical fields from high-cardinality ones
+- Auto-generates events with proper field values, deduplicating against existing entries
+- Detects variable patterns in high-cardinality columns and creates `${variable}` placeholders
+- Parses JSON columns and maps their key paths
+
+Scans run asynchronously via Celery workers, so the API stays responsive.
+
+### Review Workflow
+
+Events have `implemented` and `reviewed` flags. Scan-generated events land as implemented but unreviewed, with a dedicated **Review** tab to triage new entries. Events can also be **archived** to keep the catalog clean without losing history.
 
 ## Stack
 
 - **Backend**: Python 3.13 · FastAPI · SQLAlchemy (async) · Alembic · PostgreSQL
-- **Frontend**: React 19 · TypeScript · Vite · Tailwind CSS · TanStack React Query
-- **Infrastructure**: Docker Compose
+- **Worker**: Celery · RabbitMQ · ClickHouse integration
+- **Frontend**: React 19 · TypeScript · Vite · Tailwind CSS · TanStack React Query · React Router
+- **Infrastructure**: Docker Compose (postgres, rabbitmq, api, celery-worker, celery-beat, frontend/nginx)
 
 ## Quick Start
 
@@ -19,70 +44,4 @@ docker compose up -d --build
 - **API** → http://localhost:8000
 - **API docs** → http://localhost:8000/docs
 
-## Development
-
-### Backend
-
-```bash
-cd backend
-uv sync                              # install deps
-uv run python -m pytest -v           # run tests (45 tests)
-uv run ruff check                    # lint
-uv run ruff format --check           # format check
-uv run python -m alembic upgrade head  # run migrations
-```
-
-### Frontend
-
-```bash
-cd frontend
-pnpm install                         # install deps
-pnpm dev                             # dev server
-pnpm test                            # run tests
-pnpm exec tsc --noEmit               # type check
-pnpm build                           # production build
-```
-
-## Project Structure
-
-```
-tripl/
-├── compose.yaml              # Docker Compose (postgres, api, frontend)
-├── .env.example              # Environment variables template
-├── backend/
-│   ├── Dockerfile
-│   ├── pyproject.toml
-│   ├── alembic/              # Database migrations
-│   └── src/tripl/
-│       ├── main.py           # FastAPI application
-│       ├── config.py         # Settings (pydantic-settings)
-│       ├── database.py       # Async SQLAlchemy engine
-│       ├── models/           # 10 SQLAlchemy models
-│       ├── schemas/          # Pydantic request/response schemas
-│       ├── services/         # Business logic layer
-│       ├── api/v1/           # REST endpoints (7 routers)
-│       └── tests/            # pytest (45 tests)
-└── frontend/
-    ├── Dockerfile
-    ├── package.json
-    └── src/
-        ├── api/              # Typed API client modules
-        ├── types/            # TypeScript interfaces
-        ├── components/       # Layout, ConfirmDialog
-        ├── pages/            # ProjectsPage, EventsPage, ProjectSettingsPage
-        └── hooks/            # useConfirm
-```
-
-## API Overview
-
-All endpoints are under `/api/v1/`. See `/docs` for the full OpenAPI spec.
-
-| Resource | Endpoints |
-|---|---|
-| Projects | CRUD (`/projects`) |
-| Event Types | CRUD (`/projects/{slug}/event-types`) |
-| Field Definitions | CRUD + reorder (`/projects/{slug}/event-types/{id}/fields`) |
-| Meta Field Definitions | CRUD (`/projects/{slug}/meta-fields`) |
-| Event Type Relations | CRD (`/projects/{slug}/relations`) |
-| Events | CRUD + bulk + filtering (`/projects/{slug}/events`) |
-| Variables | CRUD (`/projects/{slug}/variables`) |
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, project structure, and API reference.

@@ -2,20 +2,21 @@
 
 ## Project overview
 - **tripl** — analytics tracking plan service. See [PLAN.md](PLAN.md) for full architecture, data model, API spec, and implementation roadmap.
-- Phase 1 (current): event catalog — CRUD for projects, event types, configurable fields, meta fields, relations, and events.
-- Phase 2 (future): analytics DB integration, Celery+RabbitMQ validation checks, alerting.
+- Phase 1 (done): event catalog — CRUD for projects, event types, configurable fields, meta fields, relations, events, variables.
+- Phase 2 (in progress): analytics DB integration (ClickHouse via data sources), Celery+RabbitMQ scan pipeline, auto-generated events from cardinality analysis.
+- Phase 3 (future): validation checks, alerting, scheduled scans.
 
 ## Project scope
 - This project is an analytics tracking platform.
-- The backend standard is `uv` with Python `3.14`.
+- The backend standard is `uv` with Python `3.13`.
 - The API standard is FastAPI, and agents should prefer the latest stable FastAPI-compatible patterns already supported by the lockfile.
 - The frontend standard is a modern `pnpm`-managed TypeScript stack. Prefer current stable tooling such as Vite, React, and Vitest unless the repo already establishes a different frontend baseline.
 - The full local runtime should be defined in Docker Compose. Prefer running services through `docker compose` instead of ad hoc local processes when possible.
-- Background jobs and scheduled workloads should use Celery with RabbitMQ (Phase 2 only — not needed yet).
+- Background jobs and scheduled workloads should use Celery with RabbitMQ. The scan pipeline is already implemented with a Celery worker and beat scheduler.
 
 ## Dev environment tips
 - Use `uv` for all backend package management, virtualenv management, and command execution. Do not introduce `pipenv`, `poetry`, or bare `pip` workflows unless the repo already requires them.
-- Pin and verify Python `3.14` in backend config files such as `.python-version`, `pyproject.toml`, Dockerfiles, and Compose services when those files exist.
+- Pin and verify Python `3.13` in backend config files such as `.python-version`, `pyproject.toml`, Dockerfiles, and Compose services when those files exist.
 - For backend dependencies, prefer commands like `uv add <package>` and `uv sync`.
 - For backend commands, prefer `uv run <command>` such as `uv run uvicorn ...`, `uv run pytest`, or `uv run alembic upgrade head`.
 - For frontend package management, use `pnpm` only.
