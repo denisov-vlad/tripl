@@ -129,6 +129,20 @@ def generate_events(
         result.details.append("No columns matched field definitions")
         return result
 
+    # Load existing events for dedup by name
+    existing_events_list = (
+        session.execute(
+            select(Event).where(
+                Event.project_id == project_id,
+                Event.event_type_id == event_type_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_by_name: dict[str, Event] = {ev.name: ev for ev in existing_events_list}
+    logger.info(f"Loaded {len(existing_by_name)} existing events for dedup")
+
     # Iterate breakdown rows — each row is one event
     for row in analysis.rows:
         if result.events_created >= max_events:
@@ -176,6 +190,23 @@ def generate_events(
                 parts.append(f"{col_name}={display}")
             event_name = " | ".join(parts)
 
+        existing = existing_by_name.get(event_name)
+        if existing is not None:
+            # Update field values on existing event
+            fv_by_fd = {fv.field_definition_id: fv for fv in existing.field_values}
+            for fd_id, _, value in field_values:
+                if fd_id in fv_by_fd:
+                    fv_by_fd[fd_id].value = value
+                else:
+                    session.add(EventFieldValue(
+                        id=uuid.uuid4(),
+                        event_id=existing.id,
+                        field_definition_id=fd_id,
+                        value=value,
+                    ))
+            result.events_skipped += 1
+            continue
+
         event = Event(
             id=uuid.uuid4(),
             project_id=project_id,
@@ -197,9 +228,12 @@ def generate_events(
             )
             session.add(fv)
 
+        existing_by_name[event_name] = event
         result.events_created += 1
 
     session.flush()
+    if result.events_skipped:
+        logger.info(f"Skipped {result.events_skipped} existing events (field values updated)")
     return result
 
 

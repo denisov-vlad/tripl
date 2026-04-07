@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
-import { Calendar, Plus, Pencil, Trash2, Search, X, Filter, Archive, ArchiveRestore } from 'lucide-react'
+import { Calendar, Plus, Pencil, Trash2, Search, X, Filter, Archive, ArchiveRestore, CircleCheck, Eye } from 'lucide-react'
 
 export default function EventsPage() {
   const { slug, tab: urlTab, eventId: urlEventId } = useParams<{ slug: string; tab?: string; eventId?: string }>()
@@ -43,26 +43,50 @@ export default function EventsPage() {
   // Derive filters from URL search params
   const search = searchParams.get('q') || ''
   const setSearch = useCallback((v: string) => {
-    setSearchParams(prev => { v ? prev.set('q', v) : prev.delete('q'); return prev }, { replace: true })
+    setSearchParams(prev => { const next = new URLSearchParams(prev); v ? next.set('q', v) : next.delete('q'); return next }, { replace: true })
   }, [setSearchParams])
 
   const filterImplemented = searchParams.has('implemented') ? searchParams.get('implemented') === 'true' : undefined
   const setFilterImplemented = useCallback((v: boolean | undefined) => {
-    setSearchParams(prev => { v !== undefined ? prev.set('implemented', String(v)) : prev.delete('implemented'); return prev }, { replace: true })
+    setSearchParams(prev => { const next = new URLSearchParams(prev); v !== undefined ? next.set('implemented', String(v)) : next.delete('implemented'); return next }, { replace: true })
   }, [setSearchParams])
 
   const filterTag = searchParams.get('tag') || ''
   const setFilterTag = useCallback((v: string) => {
-    setSearchParams(prev => { v ? prev.set('tag', v) : prev.delete('tag'); return prev }, { replace: true })
+    setSearchParams(prev => { const next = new URLSearchParams(prev); v ? next.set('tag', v) : next.delete('tag'); return next }, { replace: true })
   }, [setSearchParams])
 
   const filterReviewed = searchParams.has('reviewed') ? searchParams.get('reviewed') === 'true' : undefined
-  const setFilterReviewed = useCallback((v: boolean | undefined) => {
-    setSearchParams(prev => { v !== undefined ? prev.set('reviewed', String(v)) : prev.delete('reviewed'); return prev }, { replace: true })
+
+  // Derive field/meta filters from URL (prefixed f. and m.) — keyed by name
+  const fieldFilters = useMemo(() => {
+    const out: Record<string, string> = {}
+    searchParams.forEach((v, k) => { if (k.startsWith('f.')) out[k.slice(2)] = v })
+    return out
+  }, [searchParams])
+
+  const updateFieldFilter = useCallback((name: string, value: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      value ? next.set(`f.${name}`, value) : next.delete(`f.${name}`)
+      return next
+    }, { replace: true })
   }, [setSearchParams])
 
-  const [fieldFilters, setFieldFilters] = useState<Record<string, string>>({})
-  const [metaFilters, setMetaFilters] = useState<Record<string, string>>({})
+  const metaFilters = useMemo(() => {
+    const out: Record<string, string> = {}
+    searchParams.forEach((v, k) => { if (k.startsWith('m.')) out[k.slice(2)] = v })
+    return out
+  }, [searchParams])
+
+  const updateMetaFilter = useCallback((name: string, value: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      value ? next.set(`m.${name}`, value) : next.delete(`m.${name}`)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
   const [showForm, setShowForm] = useState(false)
   const [editingEvent, setEditingEvent] = useState<TEvent | null>(null)
   const [expandedCell, setExpandedCell] = useState<string | null>(null)
@@ -92,7 +116,8 @@ export default function EventsPage() {
     enabled: !!slug,
   })
 
-  const filterEtId = activeTab === 'all' || activeTab === 'review' || activeTab === 'archived' ? undefined : activeTab
+  const specialTabs = ['all', 'review', 'archived']
+  const filterEtId = specialTabs.includes(activeTab) ? undefined : eventTypes.find((e: EventType) => e.name === activeTab)?.id
   const filterReviewedForQuery = activeTab === 'review' ? false : filterReviewed
   const filterArchivedForQuery = activeTab === 'archived' ? true : false
 
@@ -186,7 +211,7 @@ export default function EventsPage() {
   const rawEvents = eventsData?.items ?? []
   const total = eventsData?.total ?? 0
 
-  const activeEt = eventTypes.find((e: EventType) => e.id === activeTab) ?? null
+  const activeEt = eventTypes.find((e: EventType) => e.name === activeTab) ?? null
 
   const fieldColumns: FieldDefinition[] = useMemo(() => {
     if (activeEt) return [...activeEt.field_definitions].sort((a, b) => a.order - b.order)
@@ -240,7 +265,7 @@ export default function EventsPage() {
 
     return rawEvents.filter(ev => {
       for (const col of fieldColumns) {
-        const fv = fieldFilters[col.id]
+        const fv = fieldFilters[col.name]
         if (!fv) continue
         const val = getFieldValue(ev, col)
         if (col.field_type === 'enum' || col.field_type === 'boolean') {
@@ -250,7 +275,7 @@ export default function EventsPage() {
         }
       }
       for (const mf of metaFields) {
-        const mv = metaFilters[mf.id]
+        const mv = metaFilters[mf.name]
         if (!mv) continue
         const val = ev.meta_values.find(m => m.meta_field_definition_id === mf.id)?.value ?? ''
         if (mf.field_type === 'enum' || mf.field_type === 'boolean') {
@@ -268,11 +293,14 @@ export default function EventsPage() {
     Object.values(metaFilters).some(v => v !== '')
 
   const clearAllFilters = () => {
-    setFilterImplemented(undefined)
-    setFilterReviewed(undefined)
-    setFilterTag('')
-    setFieldFilters({})
-    setMetaFilters({})
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('implemented')
+      next.delete('reviewed')
+      next.delete('tag')
+      Array.from(next.keys()).filter(k => k.startsWith('f.') || k.startsWith('m.')).forEach(k => next.delete(k))
+      return next
+    }, { replace: true })
   }
 
   return (
@@ -318,7 +346,7 @@ export default function EventsPage() {
               )}
             </TabsTrigger>
             {eventTypes.map((et: EventType) => (
-              <TabsTrigger key={et.id} value={et.id} className="text-xs gap-1.5">
+              <TabsTrigger key={et.id} value={et.name} className="text-xs gap-1.5">
                 <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
                 {et.display_name}
               </TabsTrigger>
@@ -370,8 +398,8 @@ export default function EventsPage() {
             return (
               <select
                 key={f.id}
-                value={fieldFilters[f.id] ?? ''}
-                onChange={e => setFieldFilters({ ...fieldFilters, [f.id]: e.target.value })}
+                value={fieldFilters[f.name] ?? ''}
+                onChange={e => updateFieldFilter(f.name, e.target.value)}
                 className="h-8 rounded-md border border-input bg-background px-2 text-xs"
               >
                 <option value="">{f.display_name}: All</option>
@@ -383,8 +411,8 @@ export default function EventsPage() {
             return (
               <Input
                 key={f.id}
-                value={fieldFilters[f.id] ?? ''}
-                onChange={e => setFieldFilters({ ...fieldFilters, [f.id]: e.target.value })}
+                value={fieldFilters[f.name] ?? ''}
+                onChange={e => updateFieldFilter(f.name, e.target.value)}
                 className="h-8 w-28 text-xs"
                 placeholder={f.display_name}
               />
@@ -397,8 +425,8 @@ export default function EventsPage() {
             return (
               <select
                 key={mf.id}
-                value={metaFilters[mf.id] ?? ''}
-                onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
+                value={metaFilters[mf.name] ?? ''}
+                onChange={e => updateMetaFilter(mf.name, e.target.value)}
                 className="h-8 rounded-md border border-input bg-background px-2 text-xs"
               >
                 <option value="">{mf.display_name}: All</option>
@@ -410,8 +438,8 @@ export default function EventsPage() {
             return (
               <select
                 key={mf.id}
-                value={metaFilters[mf.id] ?? ''}
-                onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
+                value={metaFilters[mf.name] ?? ''}
+                onChange={e => updateMetaFilter(mf.name, e.target.value)}
                 className="h-8 rounded-md border border-input bg-background px-2 text-xs"
               >
                 <option value="">{mf.display_name}: All</option>
@@ -423,8 +451,8 @@ export default function EventsPage() {
           return (
             <Input
               key={mf.id}
-              value={metaFilters[mf.id] ?? ''}
-              onChange={e => setMetaFilters({ ...metaFilters, [mf.id]: e.target.value })}
+              value={metaFilters[mf.name] ?? ''}
+              onChange={e => updateMetaFilter(mf.name, e.target.value)}
               className="h-8 w-28 text-xs"
               placeholder={mf.display_name}
             />
@@ -446,7 +474,7 @@ export default function EventsPage() {
           metaFields={metaFields}
           projectVariables={variables}
           event={editingEvent}
-          defaultEventTypeId={activeTab !== 'all' ? activeTab : undefined}
+          defaultEventTypeId={activeEt?.id}
           onClose={closeEvent}
         />
       )}
@@ -457,9 +485,7 @@ export default function EventsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead className="w-16">Impl</TableHead>
-              <TableHead className="w-16">Rev</TableHead>
+              {!activeEt && <TableHead>Type</TableHead>}
               <TableHead>Tags</TableHead>
               {fieldColumns.map(f => (
                 <TableHead key={f.id}>{f.display_name}</TableHead>
@@ -467,7 +493,7 @@ export default function EventsPage() {
               {metaFields.map((mf: MetaFieldDefinition) => (
                 <TableHead key={mf.id} className="text-muted-foreground">{mf.display_name}</TableHead>
               ))}
-              <TableHead className="w-24"></TableHead>
+              <TableHead className="w-36"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -481,32 +507,18 @@ export default function EventsPage() {
                       {ev.name}
                     </button>
                   </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="gap-1.5 font-mono text-[11px]" style={{
-                      borderColor: ev.event_type.color + '40',
-                      color: ev.event_type.color,
-                      backgroundColor: ev.event_type.color + '0a',
-                    }}>
-                      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ev.event_type.color }} />
-                      {ev.event_type.name}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Checkbox
-                      checked={ev.implemented}
-                      onCheckedChange={checked =>
-                        toggleImplementedMut.mutate({ id: ev.id, implemented: !!checked })
-                      }
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Checkbox
-                      checked={ev.reviewed}
-                      onCheckedChange={checked =>
-                        toggleReviewedMut.mutate({ id: ev.id, reviewed: !!checked })
-                      }
-                    />
-                  </TableCell>
+                  {!activeEt && (
+                    <TableCell>
+                      <Badge variant="outline" className="gap-1.5 font-mono text-[11px]" style={{
+                        borderColor: ev.event_type.color + '40',
+                        color: ev.event_type.color,
+                        backgroundColor: ev.event_type.color + '0a',
+                      }}>
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ev.event_type.color }} />
+                        {ev.event_type.name}
+                      </Badge>
+                    </TableCell>
+                  )}
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {ev.tags.map(t => (
@@ -552,7 +564,25 @@ export default function EventsPage() {
                     </TableCell>
                   ))}
                   <TableCell>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 items-center">
+                      <Button
+                        variant={ev.implemented ? 'default' : 'ghost'}
+                        size="icon"
+                        className="h-7 w-7"
+                        title={ev.implemented ? 'Implemented' : 'Not implemented'}
+                        onClick={() => toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })}
+                      >
+                        <CircleCheck className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant={ev.reviewed ? 'default' : 'ghost'}
+                        size="icon"
+                        className="h-7 w-7"
+                        title={ev.reviewed ? 'Reviewed' : 'Not reviewed'}
+                        onClick={() => toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </Button>
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7"
                         onClick={() => openEvent(ev)}

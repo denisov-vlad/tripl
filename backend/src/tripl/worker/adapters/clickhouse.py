@@ -77,7 +77,7 @@ class ClickHouseAdapter(BaseAdapter):
         for c in reg_cols:
             select_parts.append(f"`{c}`")
         for c in json_cols:
-            select_parts.append(f"JSONAllPaths(`{c}`)")
+            select_parts.append(f"arraySort(JSONAllPaths(`{c}`))")
         select_parts.append("count() AS _cnt")
 
         sql = (
