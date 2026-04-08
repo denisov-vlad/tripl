@@ -1083,7 +1083,7 @@ function ScansTab({ slug }: { slug: string }) {
   const [timeColumn, setTimeColumn] = useState('')
   const [eventNameFormat, setEventNameFormat] = useState('')
   const [cardinalityThreshold, setCardinalityThreshold] = useState(100)
-  const [schedule, setSchedule] = useState('')
+  const [interval, setInterval] = useState('')
 
   // Edit state
   const [editName, setEditName] = useState('')
@@ -1093,7 +1093,7 @@ function ScansTab({ slug }: { slug: string }) {
   const [editTimeColumn, setEditTimeColumn] = useState('')
   const [editEventNameFormat, setEditEventNameFormat] = useState('')
   const [editCardinalityThreshold, setEditCardinalityThreshold] = useState(100)
-  const [editSchedule, setEditSchedule] = useState('')
+  const [editInterval, setEditInterval] = useState('')
 
   const { data: dataSources = [] } = useQuery({
     queryKey: ['dataSources'],
@@ -1123,7 +1123,7 @@ function ScansTab({ slug }: { slug: string }) {
         time_column: timeColumn || null,
         event_name_format: eventNameFormat || null,
         cardinality_threshold: cardinalityThreshold,
-        schedule: schedule || null,
+        interval: interval || null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scans', slug] })
@@ -1141,7 +1141,7 @@ function ScansTab({ slug }: { slug: string }) {
         time_column: editTimeColumn || null,
         event_name_format: editEventNameFormat || null,
         cardinality_threshold: editCardinalityThreshold,
-        schedule: editSchedule || null,
+        interval: editInterval || null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scans', slug] })
@@ -1173,7 +1173,7 @@ function ScansTab({ slug }: { slug: string }) {
     setEditTimeColumn(sc.time_column ?? '')
     setEditEventNameFormat(sc.event_name_format ?? '')
     setEditCardinalityThreshold(sc.cardinality_threshold)
-    setEditSchedule(sc.schedule ?? '')
+    setEditInterval(sc.interval ?? '')
   }
 
   const resetForm = () => {
@@ -1181,7 +1181,7 @@ function ScansTab({ slug }: { slug: string }) {
     setDsId(''); setScanName(''); setBaseQuery('')
     setEventTypeId(''); setEventTypeColumn('')
     setTimeColumn(''); setEventNameFormat('')
-    setCardinalityThreshold(100); setSchedule('')
+    setCardinalityThreshold(100); setInterval('')
   }
 
   const selectClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
@@ -1237,7 +1237,17 @@ function ScansTab({ slug }: { slug: string }) {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={cardinalityThreshold} onChange={e => setCardinalityThreshold(Number(e.target.value))} min={1} /></div>
-                <div className="grid gap-2"><Label>Schedule (cron, optional)</Label><Input value={schedule} onChange={e => setSchedule(e.target.value)} placeholder="e.g. 0 */6 * * *" /></div>
+                <div className="grid gap-2">
+                  <Label>Collection Interval</Label>
+                  <select value={interval} onChange={e => setInterval(e.target.value)} className={selectClass}>
+                    <option value="">No schedule</option>
+                    <option value="15m">Every 15 min</option>
+                    <option value="1h">Every hour</option>
+                    <option value="6h">Every 6 hours</option>
+                    <option value="1d">Every day</option>
+                    <option value="1w">Every week</option>
+                  </select>
+                </div>
               </div>
               {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
@@ -1276,7 +1286,17 @@ function ScansTab({ slug }: { slug: string }) {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={editCardinalityThreshold} onChange={e => setEditCardinalityThreshold(Number(e.target.value))} min={1} /></div>
-                <div className="grid gap-2"><Label>Schedule (cron, optional)</Label><Input value={editSchedule} onChange={e => setEditSchedule(e.target.value)} placeholder="e.g. 0 */6 * * *" /></div>
+                <div className="grid gap-2">
+                  <Label>Collection Interval</Label>
+                  <select value={editInterval} onChange={e => setEditInterval(e.target.value)} className={selectClass}>
+                    <option value="">No schedule</option>
+                    <option value="15m">Every 15 min</option>
+                    <option value="1h">Every hour</option>
+                    <option value="6h">Every 6 hours</option>
+                    <option value="1d">Every day</option>
+                    <option value="1w">Every week</option>
+                  </select>
+                </div>
               </div>
               {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
             </div>
@@ -1296,7 +1316,7 @@ function ScansTab({ slug }: { slug: string }) {
                 <div className="flex items-center gap-3">
                   <span className="font-semibold">{sc.name}</span>
                   <span className="text-muted-foreground text-sm">{dsMap.get(sc.data_source_id) ?? 'Unknown'}</span>
-                  {sc.schedule && <Badge variant="outline" className="text-xs">⏱ {sc.schedule}</Badge>}
+                  {sc.interval && <Badge variant="outline" className="text-xs">⏱ {sc.interval}</Badge>}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); startEditScan(sc) }}><Pencil className="h-3 w-3" /></Button>
@@ -1352,7 +1372,7 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
             {scanConfig.time_column && <span>Time col: <strong className="text-foreground">{scanConfig.time_column}</strong></span>}
             {scanConfig.event_name_format && <span>Name fmt: <strong className="text-foreground">{scanConfig.event_name_format}</strong></span>}
             {etName && <span>Event Type: <strong className="text-foreground">{etName}</strong></span>}
-            {scanConfig.schedule && <span>Schedule: <strong className="text-foreground">{scanConfig.schedule}</strong></span>}
+            {scanConfig.interval && <span>Interval: <strong className="text-foreground">{scanConfig.interval}</strong></span>}
           </div>
         </div>
         <pre className="p-3 text-xs font-mono text-foreground/80 whitespace-pre-wrap overflow-x-auto">{scanConfig.base_query}</pre>

@@ -4,6 +4,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl.models.event import Event
+from tripl.models.event_field_value import EventFieldValue
 from tripl.models.variable import Variable
 from tripl.schemas.variable import VariableCreate, VariableUpdate
 from tripl.services.project_service import get_project_id_by_slug
@@ -57,6 +59,25 @@ async def update_variable(
         )
         if dup.scalar_one_or_none():
             raise HTTPException(status_code=409, detail="Variable with this name already exists")
+
+        # Replace ${old_name} → ${new_name} in all event field values for this project
+        old_name = var.name
+        new_name = update_data["name"]
+        old_ref = f"${{{old_name}}}"
+        new_ref = f"${{{new_name}}}"
+
+        # Get all event_field_values for events in this project that contain the old ref
+        fv_result = await session.execute(
+            select(EventFieldValue)
+            .join(Event, EventFieldValue.event_id == Event.id)
+            .where(
+                Event.project_id == project_id,
+                EventFieldValue.value.contains(old_ref),
+            )
+        )
+        for fv in fv_result.scalars().all():
+            fv.value = fv.value.replace(old_ref, new_ref)
+
     for key, value in update_data.items():
         setattr(var, key, value)
     await session.commit()

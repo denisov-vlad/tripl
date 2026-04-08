@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { eventsApi } from '@/api/events'
 import { eventTypesApi } from '@/api/eventTypes'
@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
-import { Calendar, Plus, Pencil, Trash2, Search, X, Filter, Archive, ArchiveRestore, CircleCheck, Eye } from 'lucide-react'
+import { Calendar, Plus, Pencil, Trash2, Search, X, Filter, Archive, ArchiveRestore, CircleCheck, Eye, BarChart3 } from 'lucide-react'
 
 export default function EventsPage() {
   const { slug, tab: urlTab, eventId: urlEventId } = useParams<{ slug: string; tab?: string; eventId?: string }>()
@@ -503,9 +503,15 @@ export default function EventsPage() {
               return (
                 <TableRow key={ev.id}>
                   <TableCell className="font-medium">
-                    <button className="hover:underline underline-offset-4 text-left" onClick={() => openEvent(ev)}>
-                      {ev.name}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button className="hover:underline underline-offset-4 text-left" onClick={() => openEvent(ev)}>
+                        {ev.name}
+                      </button>
+                      <Link to={`/p/${slug}/events/detail/${ev.id}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors" title="View details & metrics">
+                        <BarChart3 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Metrics</span>
+                      </Link>
+                    </div>
                   </TableCell>
                   {!activeEt && (
                     <TableCell>

@@ -31,6 +31,7 @@ class VariableResponse(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     name: str
+    source_name: str | None
     variable_type: VariableType
     description: str
 

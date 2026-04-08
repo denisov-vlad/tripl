@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+VALID_INTERVALS = ("15m", "1h", "6h", "1d", "1w")
+
 
 class ScanConfigCreate(BaseModel):
     data_source_id: uuid.UUID
@@ -13,7 +15,7 @@ class ScanConfigCreate(BaseModel):
     time_column: str | None = None
     event_name_format: str | None = None
     cardinality_threshold: int = Field(default=100, ge=1)
-    schedule: str | None = None
+    interval: str | None = Field(None, pattern=r"^(15m|1h|6h|1d|1w)$")
 
 
 class ScanConfigUpdate(BaseModel):
@@ -24,7 +26,7 @@ class ScanConfigUpdate(BaseModel):
     time_column: str | None = None
     event_name_format: str | None = None
     cardinality_threshold: int | None = Field(None, ge=1)
-    schedule: str | None = None
+    interval: str | None = Field(None, pattern=r"^(15m|1h|6h|1d|1w)$")
 
 
 class ScanConfigResponse(BaseModel):
@@ -38,7 +40,7 @@ class ScanConfigResponse(BaseModel):
     time_column: str | None
     event_name_format: str | None
     cardinality_threshold: int
-    schedule: str | None
+    interval: str | None
     created_at: datetime
     updated_at: datetime
 

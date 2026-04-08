@@ -1,6 +1,7 @@
 """Unit tests for the event generator module."""
 
 import uuid
+from itertools import product
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -14,8 +15,37 @@ from tripl.models.field_definition import FieldDefinition
 from tripl.models.project import Project
 from tripl.models.variable import Variable
 from tripl.worker.adapters.base import ColumnInfo
-from tripl.worker.analyzers.cardinality import CardinalityResult
+from tripl.worker.analyzers.cardinality import BreakdownAnalysis, CardinalityResult
 from tripl.worker.analyzers.event_generator import generate_events
+
+
+def _make_analysis(
+    cardinality: dict[str, CardinalityResult],
+) -> BreakdownAnalysis:
+    """Build a BreakdownAnalysis with all row combinations from sample_values."""
+    reg_names = [
+        name for name, cr in cardinality.items() if cr.json_path_combos is None
+    ]
+    json_names = [
+        name for name, cr in cardinality.items() if cr.json_path_combos is not None
+    ]
+
+    # Build rows as cartesian product of sample values (regular) / path combos (json)
+    value_lists: list[list] = []
+    for name in reg_names:
+        value_lists.append(cardinality[name].sample_values)
+    for name in json_names:
+        combos = cardinality[name].json_path_combos or [()]
+        value_lists.append(combos)
+
+    rows = [tuple(combo) for combo in product(*value_lists)] if value_lists else []
+
+    return BreakdownAnalysis(
+        results=cardinality,
+        rows=rows,
+        reg_names=reg_names,
+        json_names=json_names,
+    )
 
 
 @pytest.fixture
@@ -92,11 +122,12 @@ class TestEventGeneration:
                 sample_values=["click", "view"],
             ),
         }
+        analysis = _make_analysis(cardinality)
         result = generate_events(
             sync_session,
             project.id,
             et.id,
-            cardinality,
+            analysis,
             fds,
         )
         sync_session.commit()
@@ -129,11 +160,12 @@ class TestEventGeneration:
                 sample_values=["click", "view"],
             ),
         }
+        analysis = _make_analysis(cardinality)
         result = generate_events(
             sync_session,
             project.id,
             et.id,
-            cardinality,
+            analysis,
             fds,
         )
         sync_session.commit()
@@ -160,13 +192,14 @@ class TestEventGeneration:
                 sample_values=["/home", "/about"],
             ),
         }
+        analysis = _make_analysis(cardinality)
         # First run
-        result1 = generate_events(sync_session, project.id, et.id, cardinality, fds)
+        result1 = generate_events(sync_session, project.id, et.id, analysis, fds)
         sync_session.commit()
         assert result1.events_created == 2
 
         # Second run — same data — should skip
-        result2 = generate_events(sync_session, project.id, et.id, cardinality, fds)
+        result2 = generate_events(sync_session, project.id, et.id, analysis, fds)
         sync_session.commit()
         assert result2.events_created == 0
         assert result2.events_skipped == 2
@@ -187,11 +220,12 @@ class TestEventGeneration:
                 sample_values=[f"act_{i}" for i in range(50)],
             ),
         }
+        analysis = _make_analysis(cardinality)
         result = generate_events(
             sync_session,
             project.id,
             et.id,
-            cardinality,
+            analysis,
             fds,
             max_events=10,
         )
@@ -208,7 +242,8 @@ class TestEventGeneration:
                 sample_values=["a", "b"],
             ),
         }
-        result = generate_events(sync_session, project.id, et.id, cardinality, fds)
+        analysis = _make_analysis(cardinality)
+        result = generate_events(sync_session, project.id, et.id, analysis, fds)
         assert result.events_created == 0
         assert "no matching field definition" in result.details[0].lower()
 
@@ -228,11 +263,12 @@ class TestEventGeneration:
                 sample_values=["/home", "/about"],
             ),
         }
+        analysis = _make_analysis(cardinality)
         gen_result = generate_events(
             sync_session,
             project.id,
             et.id,
-            cardinality,
+            analysis,
             fds,
             event_type_column="event_type",
         )
@@ -250,7 +286,8 @@ class TestEventGeneration:
                 sample_values=["/home"],
             ),
         }
-        generate_events(sync_session, project.id, et.id, cardinality, fds)
+        analysis = _make_analysis(cardinality)
+        generate_events(sync_session, project.id, et.id, analysis, fds)
         sync_session.commit()
 
         events = (

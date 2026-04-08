@@ -107,6 +107,7 @@ export interface Variable {
   id: string
   project_id: string
   name: string
+  source_name: string | null
   variable_type: VariableType
   description: string
 }
@@ -127,6 +128,8 @@ export interface DataSource {
   updated_at: string
 }
 
+export type IntervalCode = '15m' | '1h' | '6h' | '1d' | '1w'
+
 export interface ScanConfig {
   id: string
   data_source_id: string
@@ -138,7 +141,7 @@ export interface ScanConfig {
   time_column: string | null
   event_name_format: string | null
   cardinality_threshold: number
-  schedule: string | null
+  interval: IntervalCode | null
   created_at: string
   updated_at: string
 }
@@ -159,4 +162,16 @@ export interface ScanJob {
   error_message: string | null
   created_at: string
   updated_at: string
+}
+
+export interface EventMetricPoint {
+  bucket: string
+  count: number
+}
+
+export interface EventMetricsResponse {
+  event_id: string | null
+  event_type_id: string | null
+  interval: string | null
+  data: EventMetricPoint[]
 }

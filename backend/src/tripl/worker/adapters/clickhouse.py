@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from datetime import datetime
 
 import clickhouse_connect
 
@@ -97,3 +98,55 @@ class ClickHouseAdapter(BaseAdapter):
         logger.info(f"CH breakdown done in {elapsed:.2f}s, {n_rows} rows")
 
         return reg_cols, json_cols, result.result_rows
+
+    def get_time_bucketed_counts(
+        self,
+        base_query: str,
+        time_column: str,
+        ch_interval: str,
+        regular_columns: list[str],
+        json_columns: list[str],
+        time_from: datetime,
+        time_to: datetime,
+        limit: int = 100000,
+    ) -> tuple[list[str], list[tuple]]:
+        """Time-bucketed GROUP BY ALL with all columns, like get_full_breakdown.
+
+        Returns (column_names, rows).
+        Row layout: (_bucket, col1_val, ..., json_paths1, ..., count).
+        """
+        tc = self._validate_column(time_column)
+        reg_cols = [self._validate_column(c) for c in regular_columns]
+        json_cols = [self._validate_column(c) for c in json_columns]
+
+        select_parts = [f"toStartOfInterval(`{tc}`, INTERVAL {ch_interval}) AS _bucket"]
+        col_names: list[str] = []
+        for c in reg_cols:
+            select_parts.append(f"`{c}`")
+            col_names.append(c)
+        for c in json_cols:
+            select_parts.append(f"arraySort(JSONAllPaths(`{c}`))")
+            col_names.append(c)
+        select_parts.append("count() AS _cnt")
+
+        # Format timestamps for ClickHouse
+        t_from = time_from.strftime("%Y-%m-%d %H:%M:%S")
+        t_to = time_to.strftime("%Y-%m-%d %H:%M:%S")
+
+        sql = (
+            f"SELECT {', '.join(select_parts)} "
+            f"FROM ({base_query}) AS _src "
+            f"WHERE `{tc}` >= '{t_from}' AND `{tc}` < '{t_to}' "
+            f"GROUP BY ALL "
+            f"ORDER BY _bucket "
+            f"LIMIT {int(limit)}"
+        )
+
+        logger.info(f"CH bucketed query: {sql}")
+        t0 = time.monotonic()
+        result = self._client.query(sql)
+        elapsed = time.monotonic() - t0
+        n_rows = len(result.result_rows)
+        logger.info(f"CH bucketed done in {elapsed:.2f}s, {n_rows} rows")
+
+        return col_names, result.result_rows

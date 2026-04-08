@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import ProjectsPage from './pages/ProjectsPage'
 import EventsPage from './pages/EventsPage'
+import EventDetailPage from './pages/EventDetailPage'
 import ProjectSettingsPage from './pages/ProjectSettingsPage'
 import DataSourcesPage from './pages/DataSourcesPage'
 import { ThemeProvider } from './components/theme-provider'
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/data-sources" element={<DataSourcesPage />} />
           <Route path="/data-sources/:dsId" element={<DataSourcesPage />} />
+          <Route path="/p/:slug/events/detail/:eventId" element={<EventDetailPage />} />
           <Route path="/p/:slug/events/:tab/:eventId" element={<EventsPage />} />
           <Route path="/p/:slug/events/:tab" element={<EventsPage />} />
           <Route path="/p/:slug/events" element={<EventsPage />} />

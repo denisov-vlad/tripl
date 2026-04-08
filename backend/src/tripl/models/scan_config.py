@@ -27,7 +27,7 @@ class ScanConfig(UUIDMixin, TimestampMixin, Base):
     time_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_name_format: Mapped[str | None] = mapped_column(String(500), nullable=True)
     cardinality_threshold: Mapped[int] = mapped_column(Integer, default=100)
-    schedule: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    interval: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     data_source: Mapped[DataSource] = relationship(back_populates="scan_configs")  # noqa: F821
     event_type: Mapped[EventType | None] = relationship()  # noqa: F821

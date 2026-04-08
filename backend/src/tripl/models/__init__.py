@@ -3,6 +3,7 @@ from tripl.models.data_source import DataSource
 from tripl.models.event import Event
 from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
+from tripl.models.event_metric import EventMetric
 from tripl.models.event_tag import EventTag
 from tripl.models.event_type import EventType
 from tripl.models.event_type_relation import EventTypeRelation
@@ -24,6 +25,7 @@ __all__ = [
     "EventFieldValue",
     "EventMetaValue",
     "EventTag",
+    "EventMetric",
     "Variable",
     "DataSource",
     "ScanConfig",

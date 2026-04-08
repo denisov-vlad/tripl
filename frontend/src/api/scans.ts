@@ -17,7 +17,7 @@ export const scansApi = {
     time_column?: string | null
     event_name_format?: string | null
     cardinality_threshold?: number
-    schedule?: string | null
+    interval?: string | null
   }) => api.post<ScanConfig>(`/projects/${slug}/scans`, data),
 
   update: (slug: string, scanId: string, data: {
@@ -28,7 +28,7 @@ export const scansApi = {
     time_column?: string | null
     event_name_format?: string | null
     cardinality_threshold?: number
-    schedule?: string | null
+    interval?: string | null
   }) => api.patch<ScanConfig>(`/projects/${slug}/scans/${scanId}`, data),
 
   del: (slug: string, scanId: string) =>

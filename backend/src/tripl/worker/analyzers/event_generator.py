@@ -45,6 +45,8 @@ class GenerationResult:
     variables_created: int = 0
     columns_analyzed: int = 0
     details: list[str] = field(default_factory=list)
+    col_meta: dict[str, dict] = field(default_factory=dict)
+    events_by_name: dict[str, object] = field(default_factory=dict)
 
 
 def generate_events(
@@ -234,6 +236,8 @@ def generate_events(
     session.flush()
     if result.events_skipped:
         logger.info(f"Skipped {result.events_skipped} existing events (field values updated)")
+    result.col_meta = col_meta
+    result.events_by_name = existing_by_name
     return result
 
 
@@ -268,21 +272,41 @@ def _ensure_variable(
     name: str,
     inferred_type: str,
 ) -> int:
-    """Create a Variable if it doesn't exist. Returns 1 if created, 0 if already exists."""
+    """Create a Variable if it doesn't exist. Returns 1 if created, 0 if already exists.
+
+    Looks up by source_name (the original scan-detected name) so that
+    user renames of the display ``name`` don't cause duplicates.
+    """
     existing = session.execute(
         select(Variable).where(
             Variable.project_id == project_id,
-            Variable.name == name,
+            Variable.source_name == name,
         )
     ).scalar_one_or_none()
 
     if existing is not None:
         return 0
 
+    # Also check by name (covers manually created variables)
+    existing_by_name = session.execute(
+        select(Variable).where(
+            Variable.project_id == project_id,
+            Variable.name == name,
+        )
+    ).scalar_one_or_none()
+
+    if existing_by_name is not None:
+        # Backfill source_name if missing
+        if existing_by_name.source_name is None:
+            existing_by_name.source_name = name
+            session.flush()
+        return 0
+
     var = Variable(
         id=uuid.uuid4(),
         project_id=project_id,
         name=name,
+        source_name=name,
         variable_type=inferred_type,
         description="Auto-detected variable from data source scan",
     )
