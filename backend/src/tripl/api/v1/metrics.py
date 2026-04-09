@@ -15,6 +15,36 @@ TimeTo = Annotated[datetime | None, Query(alias="to")]
 
 
 @router.get(
+    "/projects/{slug}/events-metrics",
+    response_model=EventMetricsResponse,
+)
+async def get_events_metrics(
+    session: SessionDep,
+    slug: str,
+    event_type_id: uuid.UUID | None = None,
+    search: str | None = None,
+    implemented: bool | None = None,
+    tag: str | None = None,
+    reviewed: bool | None = None,
+    archived: bool | None = None,
+    time_from: TimeFrom = None,
+    time_to: TimeTo = None,
+) -> EventMetricsResponse:
+    return await metrics_service.get_events_metrics(
+        session,
+        slug,
+        event_type_id=event_type_id,
+        search=search,
+        implemented=implemented,
+        tag=tag,
+        reviewed=reviewed,
+        archived=archived,
+        time_from=time_from,
+        time_to=time_to,
+    )
+
+
+@router.get(
     "/projects/{slug}/events/{event_id}/metrics",
     response_model=EventMetricsResponse,
 )
@@ -24,7 +54,7 @@ async def get_event_metrics(
     event_id: uuid.UUID,
     time_from: TimeFrom = None,
     time_to: TimeTo = None,
-):
+) -> EventMetricsResponse:
     return await metrics_service.get_event_metrics(session, slug, event_id, time_from, time_to)
 
 
@@ -38,7 +68,7 @@ async def get_event_type_metrics(
     event_type_id: uuid.UUID,
     time_from: TimeFrom = None,
     time_to: TimeTo = None,
-):
+) -> EventMetricsResponse:
     return await metrics_service.get_event_type_metrics(
         session, slug, event_type_id, time_from, time_to
     )

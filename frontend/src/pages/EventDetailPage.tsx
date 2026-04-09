@@ -9,8 +9,12 @@ import type { EventType, FieldDefinition, MetaFieldDefinition } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { MetricsChart } from '@/components/ui/chart'
+import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
 import { ArrowLeft, CircleCheck, Eye, Tag } from 'lucide-react'
 
 const RANGE_OPTIONS = [
@@ -19,10 +23,18 @@ const RANGE_OPTIONS = [
   { label: '90d', days: 90 },
 ] as const
 
+const GRANULARITY_OPTIONS: { value: MetricsGranularity; label: string }[] = [
+  { value: 'hour', label: 'Hours' },
+  { value: 'day', label: 'Days' },
+  { value: 'week', label: 'Weeks' },
+  { value: 'month', label: 'Months' },
+]
+
 export default function EventDetailPage() {
   const { slug, eventId } = useParams<{ slug: string; eventId: string }>()
   const navigate = useNavigate()
   const [rangeDays, setRangeDays] = useState(30)
+  const [granularity, setGranularity] = useState<MetricsGranularity>('hour')
 
   const { data: event, isLoading: eventLoading } = useQuery({
     queryKey: ['event', slug, eventId],
@@ -54,13 +66,10 @@ export default function EventDetailPage() {
     enabled: !!slug && !!eventId,
     refetchInterval: 60000,
   })
-
-  const { data: typeMetrics } = useQuery({
-    queryKey: ['eventTypeMetrics', slug, event?.event_type_id, rangeDays],
-    queryFn: () => metricsApi.getEventTypeMetrics(slug!, event!.event_type_id, timeRange),
-    enabled: !!slug && !!event?.event_type_id,
-    refetchInterval: 60000,
-  })
+  const chartData = useMemo(
+    () => aggregateMetricPoints(metrics?.data ?? [], granularity),
+    [granularity, metrics?.data],
+  )
 
   if (eventLoading) {
     return <div className="p-6 text-muted-foreground">Loading…</div>
@@ -123,23 +132,41 @@ export default function EventDetailPage() {
         <CardContent className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Event Volume</h2>
-            <div className="flex gap-1">
-              {RANGE_OPTIONS.map(opt => (
-                <Button
-                  key={opt.days}
-                  variant={rangeDays === opt.days ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setRangeDays(opt.days)}
-                >
-                  {opt.label}
-                </Button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex gap-1">
+                {RANGE_OPTIONS.map(opt => (
+                  <Button
+                    key={opt.days}
+                    variant={rangeDays === opt.days ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setRangeDays(opt.days)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+              <Select
+                value={granularity}
+                onValueChange={(value: MetricsGranularity) => setGranularity(value)}
+              >
+                <SelectTrigger className="h-8 w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GRANULARITY_OPTIONS.map(option => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <MetricsChart
-            data={metrics?.data ?? []}
+            data={chartData}
             height={280}
             color={eventType?.color || undefined}
+            granularity={granularity}
           />
           {metrics?.interval && (
             <p className="text-xs text-muted-foreground mt-2">
@@ -148,24 +175,6 @@ export default function EventDetailPage() {
           )}
         </CardContent>
       </Card>
-
-      {/* Metrics Chart — Event Type Level */}
-      {typeMetrics && typeMetrics.data.length > 0 && (
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">
-                {eventType?.display_name ?? 'Event Type'} — Total Volume
-              </h2>
-            </div>
-            <MetricsChart
-              data={typeMetrics.data}
-              height={200}
-              color="var(--chart-2)"
-            />
-          </CardContent>
-        </Card>
-      )}
 
       {/* Field Values */}
       {event.field_values.length > 0 && (

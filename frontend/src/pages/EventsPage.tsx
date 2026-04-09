@@ -2,12 +2,16 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { eventsApi } from '@/api/events'
+import { metricsApi } from '@/api/metrics'
 import { eventTypesApi } from '@/api/eventTypes'
 import { metaFieldsApi } from '@/api/metaFields'
 import { variablesApi } from '@/api/variables'
 import { useConfirm } from '@/hooks/useConfirm'
 import type { Event as TEvent, EventType, FieldDefinition, MetaFieldDefinition, Variable } from '@/types'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { MetricsChart } from '@/components/ui/chart'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -25,7 +29,10 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
-import { Calendar, Plus, Pencil, Trash2, Search, X, Filter, Archive, ArchiveRestore, CircleCheck, Eye, BarChart3 } from 'lucide-react'
+import { aggregateMetricPoints } from '@/lib/metrics'
+import { Archive, ArchiveRestore, BarChart3, Calendar, ChevronDown, CircleCheck, Eye, Filter, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+
+const TAB_METRICS_RANGE_DAYS = 30
 
 export default function EventsPage() {
   const { slug, tab: urlTab, eventId: urlEventId } = useParams<{ slug: string; tab?: string; eventId?: string }>()
@@ -43,17 +50,41 @@ export default function EventsPage() {
   // Derive filters from URL search params
   const search = searchParams.get('q') || ''
   const setSearch = useCallback((v: string) => {
-    setSearchParams(prev => { const next = new URLSearchParams(prev); v ? next.set('q', v) : next.delete('q'); return next }, { replace: true })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (v) {
+        next.set('q', v)
+      } else {
+        next.delete('q')
+      }
+      return next
+    }, { replace: true })
   }, [setSearchParams])
 
   const filterImplemented = searchParams.has('implemented') ? searchParams.get('implemented') === 'true' : undefined
   const setFilterImplemented = useCallback((v: boolean | undefined) => {
-    setSearchParams(prev => { const next = new URLSearchParams(prev); v !== undefined ? next.set('implemented', String(v)) : next.delete('implemented'); return next }, { replace: true })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (v !== undefined) {
+        next.set('implemented', String(v))
+      } else {
+        next.delete('implemented')
+      }
+      return next
+    }, { replace: true })
   }, [setSearchParams])
 
   const filterTag = searchParams.get('tag') || ''
   const setFilterTag = useCallback((v: string) => {
-    setSearchParams(prev => { const next = new URLSearchParams(prev); v ? next.set('tag', v) : next.delete('tag'); return next }, { replace: true })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (v) {
+        next.set('tag', v)
+      } else {
+        next.delete('tag')
+      }
+      return next
+    }, { replace: true })
   }, [setSearchParams])
 
   const filterReviewed = searchParams.has('reviewed') ? searchParams.get('reviewed') === 'true' : undefined
@@ -68,7 +99,11 @@ export default function EventsPage() {
   const updateFieldFilter = useCallback((name: string, value: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
-      value ? next.set(`f.${name}`, value) : next.delete(`f.${name}`)
+      if (value) {
+        next.set(`f.${name}`, value)
+      } else {
+        next.delete(`f.${name}`)
+      }
       return next
     }, { replace: true })
   }, [setSearchParams])
@@ -82,7 +117,11 @@ export default function EventsPage() {
   const updateMetaFilter = useCallback((name: string, value: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
-      value ? next.set(`m.${name}`, value) : next.delete(`m.${name}`)
+      if (value) {
+        next.set(`m.${name}`, value)
+      } else {
+        next.delete(`m.${name}`)
+      }
       return next
     }, { replace: true })
   }, [setSearchParams])
@@ -90,6 +129,7 @@ export default function EventsPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingEvent, setEditingEvent] = useState<TEvent | null>(null)
   const [expandedCell, setExpandedCell] = useState<string | null>(null)
+  const [openCharts, setOpenCharts] = useState<Record<string, boolean>>({})
   const { confirm, dialog } = useConfirm()
 
   // Open event from URL param
@@ -120,6 +160,11 @@ export default function EventsPage() {
   const filterEtId = specialTabs.includes(activeTab) ? undefined : eventTypes.find((e: EventType) => e.name === activeTab)?.id
   const filterReviewedForQuery = activeTab === 'review' ? false : filterReviewed
   const filterArchivedForQuery = activeTab === 'archived' ? true : false
+  const tabMetricsRange = useMemo(() => {
+    const to = new Date()
+    const from = new Date(to.getTime() - TAB_METRICS_RANGE_DAYS * 24 * 60 * 60 * 1000)
+    return { from: from.toISOString(), to: to.toISOString() }
+  }, [])
 
   const { data: eventsData } = useQuery({
     queryKey: ['events', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
@@ -132,6 +177,22 @@ export default function EventsPage() {
       tag: filterTag || undefined,
     }),
     enabled: !!slug,
+  })
+
+  const { data: tabMetrics, isLoading: tabMetricsLoading } = useQuery({
+    queryKey: ['eventsMetrics', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
+    queryFn: () => metricsApi.getEventsMetrics(slug!, {
+      event_type_id: filterEtId,
+      search: search || undefined,
+      implemented: filterImplemented,
+      reviewed: filterReviewedForQuery,
+      archived: filterArchivedForQuery,
+      tag: filterTag || undefined,
+      from: tabMetricsRange.from,
+      to: tabMetricsRange.to,
+    }),
+    enabled: !!slug,
+    refetchInterval: 60000,
   })
 
   const { data: unreviewedData } = useQuery({
@@ -154,15 +215,6 @@ export default function EventsPage() {
     queryFn: () => eventsApi.get(slug!, openEventId!),
     enabled: !!slug && !!openEventId,
   })
-
-  // Sync URL event to editingEvent state
-  useEffect(() => {
-    if (urlEvent && openEventId) {
-      setEditingEvent(urlEvent)
-    } else if (!openEventId) {
-      setEditingEvent(null)
-    }
-  }, [urlEvent, openEventId])
 
   const openEvent = useCallback((ev: TEvent) => {
     navigate(`/p/${slug}/events/${activeTab}/${ev.id}${searchParams.toString() ? `?${searchParams}` : ''}`)
@@ -208,10 +260,25 @@ export default function EventsPage() {
     if (ok) deleteMut.mutate(ev.id)
   }
 
-  const rawEvents = eventsData?.items ?? []
+  const rawEvents = useMemo(() => eventsData?.items ?? [], [eventsData?.items])
   const total = eventsData?.total ?? 0
 
   const activeEt = eventTypes.find((e: EventType) => e.name === activeTab) ?? null
+  const openedEvent = openEventId ? (urlEvent ?? null) : editingEvent
+  const isTabChartOpen = openCharts[activeTab] ?? false
+  const setIsTabChartOpen = useCallback((open: boolean) => {
+    setOpenCharts(prev => ({ ...prev, [activeTab]: open }))
+  }, [activeTab])
+  const tabMetricsData = useMemo(
+    () => aggregateMetricPoints(tabMetrics?.data ?? [], 'day'),
+    [tabMetrics?.data],
+  )
+  const activeTabLabel = useMemo(() => {
+    if (activeEt) return activeEt.display_name
+    if (activeTab === 'review') return 'Review Queue'
+    if (activeTab === 'archived') return 'Archived Events'
+    return 'All Events'
+  }, [activeEt, activeTab])
 
   const fieldColumns: FieldDefinition[] = useMemo(() => {
     if (activeEt) return [...activeEt.field_definitions].sort((a, b) => a.order - b.order)
@@ -467,17 +534,59 @@ export default function EventsPage() {
       </div>
 
       {/* Event Form (Sheet) */}
-      {(showForm || editingEvent) && slug && (
+      {(showForm || openedEvent) && slug && (
         <EventForm
           slug={slug}
           eventTypes={eventTypes}
           metaFields={metaFields}
           projectVariables={variables}
-          event={editingEvent}
+          event={openedEvent}
           defaultEventTypeId={activeEt?.id}
           onClose={closeEvent}
         />
       )}
+
+      <Collapsible open={isTabChartOpen} onOpenChange={setIsTabChartOpen}>
+        <Card className="mb-4">
+          <div className="flex items-center justify-between gap-4 px-5 py-4">
+            <div>
+              <h2 className="text-sm font-semibold">{activeTabLabel} Dynamics</h2>
+              <p className="text-xs text-muted-foreground">
+                Last {TAB_METRICS_RANGE_DAYS} days, grouped by day.
+              </p>
+            </div>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm">
+                {isTabChartOpen ? 'Hide chart' : 'Show chart'}
+                <ChevronDown className={`h-4 w-4 transition-transform ${isTabChartOpen ? 'rotate-180' : ''}`} />
+              </Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent>
+            <CardContent className="border-t px-5 py-5">
+              {tabMetricsLoading ? (
+                <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">
+                  Loading metrics…
+                </div>
+              ) : (
+                <>
+                  <MetricsChart
+                    data={tabMetricsData}
+                    height={240}
+                    color={activeEt?.color || 'var(--chart-3)'}
+                    granularity="day"
+                  />
+                  {tabMetrics?.interval && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Collection interval: {tabMetrics.interval}
+                    </p>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
       {/* Events Table */}
       <div className="rounded-lg border overflow-x-auto">
@@ -507,10 +616,6 @@ export default function EventsPage() {
                       <button className="hover:underline underline-offset-4 text-left" onClick={() => openEvent(ev)}>
                         {ev.name}
                       </button>
-                      <Link to={`/p/${slug}/events/detail/${ev.id}`} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors" title="View details & metrics">
-                        <BarChart3 className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Metrics</span>
-                      </Link>
                     </div>
                   </TableCell>
                   {!activeEt && (
@@ -588,6 +693,17 @@ export default function EventsPage() {
                         onClick={() => toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })}
                       >
                         <Eye className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        title="View metrics"
+                        asChild
+                      >
+                        <Link to={`/p/${slug}/events/detail/${ev.id}`}>
+                          <BarChart3 className="h-3.5 w-3.5" />
+                        </Link>
                       </Button>
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7"
