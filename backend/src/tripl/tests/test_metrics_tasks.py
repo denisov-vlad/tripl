@@ -1,13 +1,12 @@
+import uuid
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-import uuid
 
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
-
-from _pytest.monkeypatch import MonkeyPatch
 
 from tripl.models import Base
 from tripl.models.data_source import DataSource

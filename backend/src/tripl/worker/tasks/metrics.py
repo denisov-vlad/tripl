@@ -189,7 +189,7 @@ def _build_event_name_from_row(
         else:
             # High-cardinality: use template
             template = meta.get("template")
-            if template is None:
+            if not isinstance(template, str):
                 continue
             value = template
 
@@ -208,7 +208,11 @@ def _build_event_name_from_row(
     return " | ".join(parts)
 
 
-@celery_app.task(name="tripl.worker.tasks.metrics.collect_metrics", bind=True, max_retries=0)  # type: ignore[misc]
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="tripl.worker.tasks.metrics.collect_metrics",
+    bind=True,
+    max_retries=0,
+)
 def collect_metrics(
     self: object,
     scan_config_id: str,
@@ -466,11 +470,11 @@ def collect_metrics(
                 if event_type is None:
                     continue
                 event_type_id = event_type.id
-                gr = gen_results.get(et_name)
-                if gr is None:
+                gen_result: GenerationResult | None = gen_results.get(et_name)
+                if gen_result is None:
                     continue
-                col_meta = gr.col_meta
-                events_by_name = gr.events_by_name
+                col_meta = gen_result.col_meta
+                events_by_name = gen_result.events_by_name
             else:
                 event_type_id = config.event_type_id
                 if single_result is None:
@@ -581,7 +585,7 @@ def collect_metrics(
         session.close()
 
 
-@celery_app.task(name="tripl.worker.tasks.metrics.check_metrics_due")  # type: ignore[misc]
+@celery_app.task(name="tripl.worker.tasks.metrics.check_metrics_due")  # type: ignore[untyped-decorator]
 def check_metrics_due() -> dict[str, int]:
     """Check which scan configs are due for metrics collection and dispatch tasks."""
     session = _get_sync_session()
