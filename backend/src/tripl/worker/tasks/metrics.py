@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import create_engine, select
@@ -19,12 +20,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.config import settings
 from tripl.models.data_source import DataSource
+from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
 from tripl.models.event_type import EventType
 from tripl.models.field_definition import FieldDefinition
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob, ScanJobStatus
-from tripl.worker.adapters.base import ColumnInfo
+from tripl.worker.adapters.base import BaseAdapter, ColumnInfo
 from tripl.worker.analyzers.cardinality import (
     _is_json_type,
     analyze_cardinality,
@@ -40,6 +42,10 @@ from tripl.worker.celery_app import celery_app
 from tripl.worker.utils.intervals import get_interval
 
 logger = logging.getLogger(__name__)
+ACTIVE_SCAN_JOB_STATUSES = (
+    ScanJobStatus.pending.value,
+    ScanJobStatus.running.value,
+)
 
 
 def _get_sync_session() -> Session:
@@ -59,7 +65,7 @@ def _decrypt_password(encrypted: str) -> str:
     return f.decrypt(encrypted.encode()).decode()
 
 
-def _build_adapter(ds: DataSource):
+def _build_adapter(ds: DataSource) -> BaseAdapter:
     from tripl.worker.adapters.clickhouse import ClickHouseAdapter
 
     password = _decrypt_password(ds.password_encrypted)
@@ -82,6 +88,19 @@ def _floor_to_interval(dt: datetime, delta: timedelta) -> datetime:
     elapsed = (dt - epoch).total_seconds()
     floored = int(elapsed // total_seconds) * total_seconds
     return epoch + timedelta(seconds=floored)
+
+
+def _get_active_scan_job(session: Session, scan_config_id: uuid.UUID) -> ScanJob | None:
+    """Return the newest pending/running job for a scan config, if any."""
+    return session.execute(
+        select(ScanJob)
+        .where(
+            ScanJob.scan_config_id == scan_config_id,
+            ScanJob.status.in_(ACTIVE_SCAN_JOB_STATUSES),
+        )
+        .order_by(ScanJob.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 def _ensure_event_type_with_fields(
@@ -134,8 +153,8 @@ def _ensure_event_type_with_fields(
 
 
 def _build_event_name_from_row(
-    data_row: tuple,
-    col_meta: dict[str, dict],
+    data_row: Sequence[object],
+    col_meta: dict[str, dict[str, object]],
     reg_index: dict[str, int],
     json_index: dict[str, int],
     n_reg: int,
@@ -189,8 +208,12 @@ def _build_event_name_from_row(
     return " | ".join(parts)
 
 
-@celery_app.task(name="tripl.worker.tasks.metrics.collect_metrics", bind=True, max_retries=0)
-def collect_metrics(self: object, scan_config_id: str) -> dict:
+@celery_app.task(name="tripl.worker.tasks.metrics.collect_metrics", bind=True, max_retries=0)  # type: ignore[misc]
+def collect_metrics(
+    self: object,
+    scan_config_id: str,
+    job_id: str | None = None,
+) -> dict[str, object]:
     """Collect time-bucketed event counts from ClickHouse and store in event_metrics.
 
     Phase 1: sync events using the exact same pipeline as the manual scan
@@ -211,14 +234,27 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
             logger.info(f"ScanConfig {scan_config_id}: time_column or interval not set, skipping")
             return {"skipped": True}
 
-        # Create a ScanJob to track this metrics collection
-        job = ScanJob(
-            id=uuid.uuid4(),
-            scan_config_id=config.id,
-            status=ScanJobStatus.running.value,
-            started_at=datetime.now(UTC),
-        )
-        session.add(job)
+        if job_id is not None:
+            job = session.get(ScanJob, uuid.UUID(job_id))
+            if job is None:
+                msg = f"ScanJob {job_id} not found"
+                raise ValueError(msg)
+            if job.scan_config_id != config.id:
+                msg = f"ScanJob {job_id} does not belong to ScanConfig {scan_config_id}"
+                raise ValueError(msg)
+
+            job.status = ScanJobStatus.running.value
+            job.started_at = job.started_at or datetime.now(UTC)
+            job.completed_at = None
+            job.error_message = None
+        else:
+            job = ScanJob(
+                id=uuid.uuid4(),
+                scan_config_id=config.id,
+                status=ScanJobStatus.running.value,
+                started_at=datetime.now(UTC),
+            )
+            session.add(job)
         session.commit()
 
         ds = session.get(DataSource, config.data_source_id)
@@ -261,7 +297,11 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
 
             for et_name in group_values:
                 et = _ensure_event_type_with_fields(
-                    session, config.project_id, et_name, columns, skip_cols,
+                    session,
+                    config.project_id,
+                    et_name,
+                    columns,
+                    skip_cols,
                 )
                 field_defs = {fd.name: fd for fd in et.field_definitions}
                 result = generate_events(
@@ -290,12 +330,12 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
                 threshold=config.cardinality_threshold,
             )
 
-            et = session.get(EventType, config.event_type_id)
-            if et is None:
+            event_type = session.get(EventType, config.event_type_id)
+            if event_type is None:
                 msg = f"EventType {config.event_type_id} not found"
                 raise ValueError(msg)
 
-            field_defs = {fd.name: fd for fd in et.field_definitions}
+            field_defs = {fd.name: fd for fd in event_type.field_definitions}
             single_result = generate_events(
                 session,
                 config.project_id,
@@ -319,6 +359,7 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
 
         # ---- PHASE 2: Collect time-bucketed metrics ----
 
+        assert config.interval is not None
         interval_spec = get_interval(config.interval)
         delta = interval_spec.delta
         now = datetime.now(UTC)
@@ -396,34 +437,35 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
         # Event type lookup (for grouped mode)
         et_by_name: dict[str, EventType] = {}
         if config.event_type_column:
-            all_ets = session.execute(
-                select(EventType).where(EventType.project_id == config.project_id)
-            ).scalars().all()
+            all_ets = (
+                session.execute(select(EventType).where(EventType.project_id == config.project_id))
+                .scalars()
+                .all()
+            )
             et_by_name = {et.name: et for et in all_ets}
 
         # Aggregate metrics: (scan_config_id, event_id, bucket) -> count
-        event_agg: dict[tuple, int] = {}
+        event_agg: dict[tuple[uuid.UUID, uuid.UUID, datetime], int] = {}
         # (scan_config_id, event_type_id, bucket) -> count
-        type_agg: dict[tuple, int] = {}
+        type_agg: dict[tuple[uuid.UUID, uuid.UUID, datetime], int] = {}
 
-        et_col_idx = (
-            reg_index.get(config.event_type_column)
-            if config.event_type_column
-            else None
-        )
+        et_col_idx = reg_index.get(config.event_type_column) if config.event_type_column else None
 
         for row in rows:
             bucket = row[0]
             data_row = row[1:]  # strip _bucket; _cnt is at the end but not indexed by col_meta
             cnt = row[-1]
+            col_meta: dict[str, dict[str, object]]
+            events_by_name: dict[str, object]
+            event_type_id: uuid.UUID | None
 
             # Determine event type and get the matching gen result
             if config.event_type_column and et_col_idx is not None:
                 et_name = str(data_row[et_col_idx])
-                et = et_by_name.get(et_name)
-                if et is None:
+                event_type = et_by_name.get(et_name)
+                if event_type is None:
                     continue
-                event_type_id = et.id
+                event_type_id = event_type.id
                 gr = gen_results.get(et_name)
                 if gr is None:
                     continue
@@ -438,13 +480,17 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
 
             # Build event name from row (same logic as generate_events)
             event_name = _build_event_name_from_row(
-                data_row, col_meta, reg_index, json_index, n_reg,
+                data_row,
+                col_meta,
+                reg_index,
+                json_index,
+                n_reg,
                 config.event_name_format,
             )
 
             if event_name:
                 ev = events_by_name.get(event_name)
-                if ev:
+                if isinstance(ev, Event):
                     key = (config.id, ev.id, bucket)
                     event_agg[key] = event_agg.get(key, 0) + cnt
 
@@ -535,20 +581,33 @@ def collect_metrics(self: object, scan_config_id: str) -> dict:
         session.close()
 
 
-@celery_app.task(name="tripl.worker.tasks.metrics.check_metrics_due")
-def check_metrics_due() -> dict:
+@celery_app.task(name="tripl.worker.tasks.metrics.check_metrics_due")  # type: ignore[misc]
+def check_metrics_due() -> dict[str, int]:
     """Check which scan configs are due for metrics collection and dispatch tasks."""
     session = _get_sync_session()
     try:
-        configs = session.execute(
-            select(ScanConfig).where(
-                ScanConfig.interval.isnot(None),
-                ScanConfig.time_column.isnot(None),
+        configs = (
+            session.execute(
+                select(ScanConfig).where(
+                    ScanConfig.interval.isnot(None),
+                    ScanConfig.time_column.isnot(None),
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         dispatched = 0
         for config in configs:
+            active_job = _get_active_scan_job(session, config.id)
+            if active_job is not None:
+                logger.info(
+                    f"Skipping collect_metrics for {config.name!r}: "
+                    f"active job {active_job.id} is {active_job.status}"
+                )
+                continue
+
+            assert config.interval is not None
             interval_spec = get_interval(config.interval)
             delta = interval_spec.delta
 
@@ -573,11 +632,25 @@ def check_metrics_due() -> dict:
                     should_run = True
 
             if should_run:
-                logger.info(
-                    f"Dispatching collect_metrics for {config.name!r} "
-                    f"(interval={config.interval})"
+                job = ScanJob(
+                    id=uuid.uuid4(),
+                    scan_config_id=config.id,
+                    status=ScanJobStatus.pending.value,
                 )
-                collect_metrics.delay(str(config.id))
+                session.add(job)
+                session.commit()
+
+                logger.info(
+                    f"Dispatching collect_metrics for {config.name!r} (interval={config.interval})"
+                )
+                try:
+                    collect_metrics.delay(str(config.id), str(job.id))
+                except Exception as exc:
+                    job.status = ScanJobStatus.failed.value
+                    job.completed_at = datetime.now(UTC)
+                    job.error_message = f"Failed to dispatch collect_metrics: {exc}"
+                    session.commit()
+                    raise
                 dispatched += 1
 
         logger.info(f"check_metrics_due: {len(configs)} configs checked, {dispatched} dispatched")
