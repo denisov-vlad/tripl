@@ -146,6 +146,21 @@ export interface ScanConfig {
   updated_at: string
 }
 
+export interface ProjectAnomalySettings {
+  id: string
+  project_id: string
+  anomaly_detection_enabled: boolean
+  detect_project_total: boolean
+  detect_event_types: boolean
+  detect_events: boolean
+  baseline_window_buckets: number
+  min_history_buckets: number
+  sigma_threshold: number
+  min_expected_count: number
+  created_at: string
+  updated_at: string
+}
+
 export interface ScanJob {
   id: string
   scan_config_id: string
@@ -157,6 +172,10 @@ export interface ScanJob {
     events_skipped?: number
     variables_created?: number
     columns_analyzed?: number
+    event_metrics?: number
+    type_metrics?: number
+    anomalies_detected?: number
+    signals_added?: number
     details?: string[]
   } | null
   error_message: string | null
@@ -167,11 +186,32 @@ export interface ScanJob {
 export interface EventMetricPoint {
   bucket: string
   count: number
+  expected_count: number | null
+  is_anomaly: boolean
+  anomaly_direction: 'spike' | 'drop' | null
+  z_score: number | null
+}
+
+export interface MonitoringSignal {
+  scan_config_id: string
+  scope_type: 'project_total' | 'event_type' | 'event'
+  scope_ref: string
+  event_id: string | null
+  event_type_id: string | null
+  bucket: string
+  actual_count: number
+  expected_count: number
+  stddev: number
+  z_score: number
+  direction: 'spike' | 'drop'
 }
 
 export interface EventMetricsResponse {
+  scope: 'project_total' | 'event_type' | 'event' | 'events_total'
+  scan_config_id: string | null
   event_id: string | null
   event_type_id: string | null
   interval: string | null
+  latest_signal: MonitoringSignal | null
   data: EventMetricPoint[]
 }

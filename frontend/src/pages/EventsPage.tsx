@@ -7,7 +7,14 @@ import { eventTypesApi } from '@/api/eventTypes'
 import { metaFieldsApi } from '@/api/metaFields'
 import { variablesApi } from '@/api/variables'
 import { useConfirm } from '@/hooks/useConfirm'
-import type { Event as TEvent, EventType, FieldDefinition, MetaFieldDefinition, Variable } from '@/types'
+import type {
+  Event as TEvent,
+  EventType,
+  FieldDefinition,
+  MetaFieldDefinition,
+  MonitoringSignal,
+  Variable,
+} from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { MetricsChart } from '@/components/ui/chart'
@@ -30,9 +37,76 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
 import { aggregateMetricPoints } from '@/lib/metrics'
-import { Archive, ArchiveRestore, BarChart3, Calendar, ChevronDown, CircleCheck, Eye, Filter, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  BarChart3,
+  Calendar,
+  ChevronDown,
+  CircleCheck,
+  Eye,
+  Filter,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react'
 
 const TAB_METRICS_RANGE_DAYS = 30
+
+function getMonitoringPath(slug: string, signal: MonitoringSignal) {
+  if (signal.scope_type === 'project_total') {
+    return `/p/${slug}/monitoring/project-total/${signal.scope_ref}`
+  }
+  if (signal.scope_type === 'event_type') {
+    return `/p/${slug}/monitoring/event-type/${signal.scope_ref}`
+  }
+  return `/p/${slug}/monitoring/event/${signal.scope_ref}`
+}
+
+function pickLatestSignal(signals: MonitoringSignal[], scopeType: MonitoringSignal['scope_type']) {
+  return signals
+    .filter(signal => signal.scope_type === scopeType)
+    .sort((left, right) => right.bucket.localeCompare(left.bucket))[0] ?? null
+}
+
+function mapLatestSignals(signals: MonitoringSignal[], scopeType: MonitoringSignal['scope_type']) {
+  const entries = new Map<string, MonitoringSignal>()
+  signals
+    .filter(signal => signal.scope_type === scopeType)
+    .sort((left, right) => right.bucket.localeCompare(left.bucket))
+    .forEach(signal => {
+      if (!entries.has(signal.scope_ref)) entries.set(signal.scope_ref, signal)
+    })
+  return entries
+}
+
+function SignalLink({
+  slug,
+  signal,
+  compact = false,
+}: {
+  slug: string
+  signal: MonitoringSignal | null | undefined
+  compact?: boolean
+}) {
+  if (!signal) return null
+
+  return (
+    <Link
+      to={getMonitoringPath(slug, signal)}
+      className={compact
+        ? 'inline-flex h-2.5 w-2.5 rounded-full bg-destructive align-middle'
+        : 'inline-flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground'}
+      title="Open anomaly detail"
+      aria-label="Open anomaly detail"
+    >
+      {compact ? null : <AlertTriangle className="h-3 w-3" />}
+    </Link>
+  )
+}
 
 export default function EventsPage() {
   const { slug, tab: urlTab, eventId: urlEventId } = useParams<{ slug: string; tab?: string; eventId?: string }>()
@@ -195,6 +269,18 @@ export default function EventsPage() {
     refetchInterval: 60000,
   })
 
+  const eventIdsForSignals = useMemo(
+    () => (eventsData?.items ?? []).map(event => event.id),
+    [eventsData?.items],
+  )
+
+  const { data: activeSignals = [] } = useQuery({
+    queryKey: ['activeSignals', slug, eventIdsForSignals],
+    queryFn: () => metricsApi.getActiveSignals(slug!, eventIdsForSignals),
+    enabled: !!slug,
+    refetchInterval: 60000,
+  })
+
   const { data: unreviewedData } = useQuery({
     queryKey: ['events', slug, 'unreviewedCount'],
     queryFn: () => eventsApi.list(slug!, { reviewed: false, archived: false, limit: 1 }),
@@ -273,6 +359,23 @@ export default function EventsPage() {
     () => aggregateMetricPoints(tabMetrics?.data ?? [], 'day'),
     [tabMetrics?.data],
   )
+  const projectTotalSignal = useMemo(
+    () => pickLatestSignal(activeSignals, 'project_total'),
+    [activeSignals],
+  )
+  const eventTypeSignals = useMemo(
+    () => mapLatestSignals(activeSignals, 'event_type'),
+    [activeSignals],
+  )
+  const eventSignals = useMemo(
+    () => mapLatestSignals(activeSignals, 'event'),
+    [activeSignals],
+  )
+  const activeTabSignal = useMemo(() => {
+    if (activeTab === 'all') return projectTotalSignal
+    if (!activeEt) return null
+    return eventTypeSignals.get(activeEt.id) ?? null
+  }, [activeEt, activeTab, eventTypeSignals, projectTotalSignal])
   const activeTabLabel = useMemo(() => {
     if (activeEt) return activeEt.display_name
     if (activeTab === 'review') return 'Review Queue'
@@ -399,7 +502,10 @@ export default function EventsPage() {
       <div className="flex items-end gap-4 mb-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
           <TabsList className="h-9">
-            <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+            <div className="flex items-center gap-1">
+              <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+              <SignalLink slug={slug!} signal={projectTotalSignal} />
+            </div>
             <TabsTrigger value="review" className="text-xs gap-1.5">
               Review
               {unreviewedCount > 0 && (
@@ -413,10 +519,13 @@ export default function EventsPage() {
               )}
             </TabsTrigger>
             {eventTypes.map((et: EventType) => (
-              <TabsTrigger key={et.id} value={et.name} className="text-xs gap-1.5">
-                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
-                {et.display_name}
-              </TabsTrigger>
+              <div key={et.id} className="flex items-center gap-1">
+                <TabsTrigger value={et.name} className="text-xs gap-1.5">
+                  <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
+                  {et.display_name}
+                </TabsTrigger>
+                <SignalLink slug={slug!} signal={eventTypeSignals.get(et.id)} />
+              </div>
             ))}
           </TabsList>
         </Tabs>
@@ -555,12 +664,22 @@ export default function EventsPage() {
                 Last {TAB_METRICS_RANGE_DAYS} days, grouped by day.
               </p>
             </div>
-            <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm">
-                {isTabChartOpen ? 'Hide chart' : 'Show chart'}
-                <ChevronDown className={`h-4 w-4 transition-transform ${isTabChartOpen ? 'rotate-180' : ''}`} />
-              </Button>
-            </CollapsibleTrigger>
+            <div className="flex items-center gap-2">
+              {activeTabSignal && (
+                <Button variant="destructive" size="sm" asChild>
+                  <Link to={getMonitoringPath(slug!, activeTabSignal)}>
+                    <AlertTriangle className="mr-1 h-3.5 w-3.5" />
+                    View signal
+                  </Link>
+                </Button>
+              )}
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  {isTabChartOpen ? 'Hide chart' : 'Show chart'}
+                  <ChevronDown className={`h-4 w-4 transition-transform ${isTabChartOpen ? 'rotate-180' : ''}`} />
+                </Button>
+              </CollapsibleTrigger>
+            </div>
           </div>
           <CollapsibleContent>
             <CardContent className="border-t px-5 py-5">
@@ -612,10 +731,14 @@ export default function EventsPage() {
               return (
                 <TableRow key={ev.id}>
                   <TableCell className="font-medium">
-                    <div className="flex items-center gap-1.5">
-                      <button className="hover:underline underline-offset-4 text-left" onClick={() => openEvent(ev)}>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="hover:underline underline-offset-4 text-left"
+                        onClick={() => navigate(`/p/${slug}/monitoring/event/${ev.id}`)}
+                      >
                         {ev.name}
                       </button>
+                      <SignalLink slug={slug!} signal={eventSignals.get(ev.id)} compact />
                     </div>
                   </TableCell>
                   {!activeEt && (
@@ -701,7 +824,7 @@ export default function EventsPage() {
                         title="View metrics"
                         asChild
                       >
-                        <Link to={`/p/${slug}/events/detail/${ev.id}`}>
+                        <Link to={`/p/${slug}/monitoring/event/${ev.id}`}>
                           <BarChart3 className="h-3.5 w-3.5" />
                         </Link>
                       </Button>

@@ -49,14 +49,32 @@ export function aggregateMetricPoints(
   points: EventMetricPoint[],
   granularity: MetricsGranularity,
 ): EventMetricPoint[] {
-  const grouped = new Map<string, number>()
+  const grouped = new Map<string, EventMetricPoint[]>()
 
   for (const point of points) {
     const bucket = getBucketStart(point.bucket, granularity)
-    grouped.set(bucket, (grouped.get(bucket) ?? 0) + point.count)
+    const existing = grouped.get(bucket) ?? []
+    existing.push(point)
+    grouped.set(bucket, existing)
   }
 
   return Array.from(grouped.entries())
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([bucket, count]) => ({ bucket, count }))
+    .map(([bucket, bucketPoints]) => {
+      const strongestAnomaly = bucketPoints
+        .filter(point => point.is_anomaly)
+        .sort((left, right) => Math.abs(right.z_score ?? 0) - Math.abs(left.z_score ?? 0))[0]
+      const expectedCount = bucketPoints.every(point => point.expected_count === null)
+        ? null
+        : bucketPoints.reduce((sum, point) => sum + (point.expected_count ?? 0), 0)
+
+      return {
+        bucket,
+        count: bucketPoints.reduce((sum, point) => sum + point.count, 0),
+        expected_count: expectedCount,
+        is_anomaly: strongestAnomaly !== undefined,
+        anomaly_direction: strongestAnomaly?.anomaly_direction ?? null,
+        z_score: strongestAnomaly?.z_score ?? null,
+      }
+    })
 }

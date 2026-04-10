@@ -7,6 +7,8 @@ from httpx import AsyncClient
 
 from tripl.models.data_source import DataSource
 from tripl.models.event_metric import EventMetric
+from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
 from tripl.tests.conftest import TestSessionLocal
 
@@ -14,6 +16,17 @@ from tripl.tests.conftest import TestSessionLocal
 class EventMetricSeedRow(TypedDict):
     event_id: str
     counts: list[int]
+
+
+def _plain_point(bucket: str, count: int) -> dict[str, object]:
+    return {
+        "bucket": bucket,
+        "count": count,
+        "expected_count": None,
+        "is_anomaly": False,
+        "anomaly_direction": None,
+        "z_score": None,
+    }
 
 
 async def _setup_metrics_project(
@@ -100,6 +113,115 @@ async def _seed_group_metrics(project_id: str, event_rows: list[EventMetricSeedR
         await session.commit()
 
 
+async def _seed_monitoring_metrics(
+    *,
+    project_id: str,
+    page_type_id: str,
+    event_id: str,
+) -> str:
+    stable_bucket = datetime(2026, 1, 1, 10, tzinfo=UTC)
+    anomaly_bucket = datetime(2026, 1, 1, 11, tzinfo=UTC)
+
+    async with TestSessionLocal() as session:
+        data_source = DataSource(
+            id=uuid.uuid4(),
+            name=f"Monitoring DS {uuid.uuid4().hex[:8]}",
+            db_type="clickhouse",
+            host="localhost",
+            port=8123,
+            database_name="default",
+            username="default",
+            password_encrypted="",
+        )
+        scan_config = ScanConfig(
+            id=uuid.uuid4(),
+            data_source_id=data_source.id,
+            project_id=uuid.UUID(project_id),
+            event_type_id=uuid.UUID(page_type_id),
+            name="Monitoring Config",
+            base_query="SELECT time, event_name FROM events",
+            time_column="time",
+            cardinality_threshold=100,
+            interval="1h",
+        )
+        session.add_all([
+            data_source,
+            scan_config,
+            ProjectAnomalySettings(
+                project_id=uuid.UUID(project_id),
+                anomaly_detection_enabled=True,
+            ),
+        ])
+        session.add_all(
+            [
+                EventMetric(
+                    id=uuid.uuid4(),
+                    scan_config_id=scan_config.id,
+                    event_id=uuid.UUID(event_id),
+                    event_type_id=None,
+                    bucket=stable_bucket,
+                    count=10,
+                ),
+                EventMetric(
+                    id=uuid.uuid4(),
+                    scan_config_id=scan_config.id,
+                    event_id=None,
+                    event_type_id=uuid.UUID(page_type_id),
+                    bucket=stable_bucket,
+                    count=15,
+                ),
+            ]
+        )
+        session.add_all(
+            [
+                MetricAnomaly(
+                    id=uuid.uuid4(),
+                    scan_config_id=scan_config.id,
+                    scope_type="event",
+                    scope_ref=event_id,
+                    event_id=uuid.UUID(event_id),
+                    event_type_id=None,
+                    bucket=anomaly_bucket,
+                    actual_count=0,
+                    expected_count=10,
+                    stddev=0,
+                    z_score=-10,
+                    direction="drop",
+                ),
+                MetricAnomaly(
+                    id=uuid.uuid4(),
+                    scan_config_id=scan_config.id,
+                    scope_type="event_type",
+                    scope_ref=page_type_id,
+                    event_id=None,
+                    event_type_id=uuid.UUID(page_type_id),
+                    bucket=anomaly_bucket,
+                    actual_count=0,
+                    expected_count=15,
+                    stddev=0,
+                    z_score=-15,
+                    direction="drop",
+                ),
+                MetricAnomaly(
+                    id=uuid.uuid4(),
+                    scan_config_id=scan_config.id,
+                    scope_type="project_total",
+                    scope_ref=str(scan_config.id),
+                    event_id=None,
+                    event_type_id=None,
+                    bucket=anomaly_bucket,
+                    actual_count=0,
+                    expected_count=15,
+                    stddev=0,
+                    z_score=-15,
+                    direction="drop",
+                ),
+            ]
+        )
+        await session.commit()
+        return str(scan_config.id)
+
+
 @pytest.mark.asyncio
 async def test_get_events_metrics_aggregates_matching_events(client: AsyncClient) -> None:
     setup = await _setup_metrics_project(client, "metrics-group")
@@ -154,8 +276,8 @@ async def test_get_events_metrics_aggregates_matching_events(client: AsyncClient
     body = resp.json()
     assert body["interval"] == "1h"
     assert body["data"] == [
-        {"bucket": "2026-01-01T10:00:00", "count": 35},
-        {"bucket": "2026-01-01T11:00:00", "count": 52},
+        _plain_point("2026-01-01T10:00:00", 35),
+        _plain_point("2026-01-01T11:00:00", 52),
     ]
 
 
@@ -212,8 +334,8 @@ async def test_get_events_metrics_applies_event_filters(client: AsyncClient) -> 
     )
     assert reviewed_resp.status_code == 200
     assert reviewed_resp.json()["data"] == [
-        {"bucket": "2026-01-01T10:00:00", "count": 5},
-        {"bucket": "2026-01-01T11:00:00", "count": 7},
+        _plain_point("2026-01-01T10:00:00", 5),
+        _plain_point("2026-01-01T11:00:00", 7),
     ]
 
     archived_resp = await client.get(
@@ -221,8 +343,8 @@ async def test_get_events_metrics_applies_event_filters(client: AsyncClient) -> 
     )
     assert archived_resp.status_code == 200
     assert archived_resp.json()["data"] == [
-        {"bucket": "2026-01-01T10:00:00", "count": 20},
-        {"bucket": "2026-01-01T11:00:00", "count": 30},
+        _plain_point("2026-01-01T10:00:00", 20),
+        _plain_point("2026-01-01T11:00:00", 30),
     ]
 
     type_resp = await client.get(
@@ -230,6 +352,103 @@ async def test_get_events_metrics_applies_event_filters(client: AsyncClient) -> 
     )
     assert type_resp.status_code == 200
     assert type_resp.json()["data"] == [
-        {"bucket": "2026-01-01T10:00:00", "count": 15},
-        {"bucket": "2026-01-01T11:00:00", "count": 22},
+        _plain_point("2026-01-01T10:00:00", 15),
+        _plain_point("2026-01-01T11:00:00", 22),
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_event_metrics_returns_enriched_monitoring_series(client: AsyncClient) -> None:
+    setup = await _setup_metrics_project(client, "monitoring-event")
+
+    event_resp = await client.post(
+        "/api/v1/projects/monitoring-event/events",
+        json={
+            "event_type_id": setup["page_type_id"],
+            "name": "event_name=Login",
+            "implemented": True,
+            "reviewed": True,
+            "field_values": [{"field_definition_id": setup["page_field_id"], "value": "home"}],
+        },
+    )
+    event_id = event_resp.json()["id"]
+
+    await _seed_monitoring_metrics(
+        project_id=setup["project_id"],
+        page_type_id=setup["page_type_id"],
+        event_id=event_id,
+    )
+
+    resp = await client.get(f"/api/v1/projects/monitoring-event/events/{event_id}/metrics")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["scope"] == "event"
+    assert body["latest_signal"]["scope_type"] == "event"
+    assert body["data"] == [
+        {
+            "bucket": "2026-01-01T10:00:00",
+            "count": 10,
+            "expected_count": None,
+            "is_anomaly": False,
+            "anomaly_direction": None,
+            "z_score": None,
+        },
+        {
+            "bucket": "2026-01-01T11:00:00",
+            "count": 0,
+            "expected_count": 10.0,
+            "is_anomaly": True,
+            "anomaly_direction": "drop",
+            "z_score": -10.0,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_project_total_metrics_and_active_signals(client: AsyncClient) -> None:
+    setup = await _setup_metrics_project(client, "monitoring-total")
+
+    event_resp = await client.post(
+        "/api/v1/projects/monitoring-total/events",
+        json={
+            "event_type_id": setup["page_type_id"],
+            "name": "event_name=Checkout",
+            "implemented": True,
+            "reviewed": True,
+            "field_values": [{"field_definition_id": setup["page_field_id"], "value": "pricing"}],
+        },
+    )
+    event_id = event_resp.json()["id"]
+
+    scan_config_id = await _seed_monitoring_metrics(
+        project_id=setup["project_id"],
+        page_type_id=setup["page_type_id"],
+        event_id=event_id,
+    )
+
+    total_resp = await client.get(
+        f"/api/v1/projects/monitoring-total/metrics/total?scan_config_id={scan_config_id}"
+    )
+    assert total_resp.status_code == 200
+    total_body = total_resp.json()
+    assert total_body["scope"] == "project_total"
+    assert total_body["latest_signal"]["scope_ref"] == scan_config_id
+    assert total_body["data"][-1]["is_anomaly"] is True
+
+    type_resp = await client.get(
+        f"/api/v1/projects/monitoring-total/event-types/{setup['page_type_id']}/metrics"
+    )
+    assert type_resp.status_code == 200
+    assert type_resp.json()["latest_signal"]["scope_type"] == "event_type"
+
+    signals_resp = await client.get(
+        f"/api/v1/projects/monitoring-total/anomalies/signals?event_id={event_id}"
+    )
+    assert signals_resp.status_code == 200
+    signals = signals_resp.json()
+    assert {(signal["scope_type"], signal["scope_ref"]) for signal in signals} == {
+        ("project_total", scan_config_id),
+        ("event_type", setup["page_type_id"]),
+        ("event", event_id),
+    }

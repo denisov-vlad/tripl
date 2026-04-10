@@ -13,9 +13,10 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy import func as sa_func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.config import settings
@@ -24,9 +25,20 @@ from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
 from tripl.models.event_type import EventType
 from tripl.models.field_definition import FieldDefinition
+from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob, ScanJobStatus
 from tripl.worker.adapters.base import BaseAdapter, ColumnInfo
+from tripl.worker.analyzers.anomaly_detector import (
+    SCOPE_EVENT,
+    SCOPE_EVENT_TYPE,
+    SCOPE_PROJECT_TOTAL,
+    AnomalyDetectionSettings,
+    DetectedAnomaly,
+    SeriesPoint,
+    detect_anomalies,
+)
 from tripl.worker.analyzers.cardinality import (
     _is_json_type,
     analyze_cardinality,
@@ -208,6 +220,407 @@ def _build_event_name_from_row(
     return " | ".join(parts)
 
 
+def _build_anomaly_settings(
+    settings: ProjectAnomalySettings,
+) -> AnomalyDetectionSettings:
+    return AnomalyDetectionSettings(
+        baseline_window_buckets=settings.baseline_window_buckets,
+        min_history_buckets=settings.min_history_buckets,
+        sigma_threshold=settings.sigma_threshold,
+        min_expected_count=settings.min_expected_count,
+    )
+
+
+def _get_project_anomaly_settings(
+    session: Session,
+    project_id: uuid.UUID,
+) -> ProjectAnomalySettings | None:
+    return session.execute(
+        select(ProjectAnomalySettings).where(ProjectAnomalySettings.project_id == project_id)
+    ).scalar_one_or_none()
+
+
+def _load_scope_points(
+    session: Session,
+    *,
+    scan_config_id: uuid.UUID,
+    scope_type: str,
+    scope_ref: str,
+    history_from: datetime,
+    time_to: datetime,
+) -> list[SeriesPoint]:
+    if scope_type == SCOPE_PROJECT_TOTAL:
+        rows = session.execute(
+            select(EventMetric.bucket, sa_func.sum(EventMetric.count))
+            .where(
+                EventMetric.scan_config_id == scan_config_id,
+                EventMetric.event_id.is_(None),
+                EventMetric.event_type_id.is_not(None),
+                EventMetric.bucket >= history_from,
+                EventMetric.bucket < time_to,
+            )
+            .group_by(EventMetric.bucket)
+            .order_by(EventMetric.bucket)
+        ).all()
+        return [SeriesPoint(bucket=bucket, count=int(count)) for bucket, count in rows]
+
+    if scope_type == SCOPE_EVENT_TYPE:
+        event_type_id = uuid.UUID(scope_ref)
+        rows = session.execute(
+            select(EventMetric.bucket, EventMetric.count)
+            .where(
+                EventMetric.scan_config_id == scan_config_id,
+                EventMetric.event_id.is_(None),
+                EventMetric.event_type_id == event_type_id,
+                EventMetric.bucket >= history_from,
+                EventMetric.bucket < time_to,
+            )
+            .order_by(EventMetric.bucket)
+        ).all()
+        return [SeriesPoint(bucket=bucket, count=count) for bucket, count in rows]
+
+    event_id = uuid.UUID(scope_ref)
+    rows = session.execute(
+        select(EventMetric.bucket, EventMetric.count)
+        .where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id == event_id,
+            EventMetric.bucket >= history_from,
+            EventMetric.bucket < time_to,
+        )
+        .order_by(EventMetric.bucket)
+    ).all()
+    return [SeriesPoint(bucket=bucket, count=count) for bucket, count in rows]
+
+
+def _replace_scope_anomalies(
+    session: Session,
+    *,
+    scan_config_id: uuid.UUID,
+    scope_type: str,
+    scope_ref: str,
+    evaluation_start: datetime,
+    evaluation_end: datetime,
+    event_id: uuid.UUID | None,
+    event_type_id: uuid.UUID | None,
+    anomalies: list[DetectedAnomaly],
+) -> int:
+    session.execute(
+        delete(MetricAnomaly).where(
+            MetricAnomaly.scan_config_id == scan_config_id,
+            MetricAnomaly.scope_type == scope_type,
+            MetricAnomaly.scope_ref == scope_ref,
+            MetricAnomaly.bucket >= evaluation_start,
+            MetricAnomaly.bucket < evaluation_end,
+        )
+    )
+
+    for anomaly in anomalies:
+        session.add(
+            MetricAnomaly(
+                id=uuid.uuid4(),
+                scan_config_id=scan_config_id,
+                scope_type=scope_type,
+                scope_ref=scope_ref,
+                event_id=event_id,
+                event_type_id=event_type_id,
+                bucket=anomaly.bucket,
+                actual_count=anomaly.actual_count,
+                expected_count=anomaly.expected_count,
+                stddev=anomaly.stddev,
+                z_score=anomaly.z_score,
+                direction=anomaly.direction,
+            )
+        )
+
+    return len(anomalies)
+
+
+def _collect_scope_ids(
+    session: Session,
+    *,
+    scan_config_id: uuid.UUID,
+    history_from: datetime,
+    evaluation_start: datetime,
+    evaluation_end: datetime,
+    scope_type: str,
+) -> set[uuid.UUID]:
+    metric_column = (
+        EventMetric.event_type_id if scope_type == SCOPE_EVENT_TYPE else EventMetric.event_id
+    )
+    anomaly_column = (
+        MetricAnomaly.event_type_id if scope_type == SCOPE_EVENT_TYPE else MetricAnomaly.event_id
+    )
+
+    ids = {
+        value
+        for value in session.execute(
+            select(metric_column)
+            .where(
+                EventMetric.scan_config_id == scan_config_id,
+                metric_column.is_not(None),
+                EventMetric.bucket >= history_from,
+                EventMetric.bucket < evaluation_end,
+            )
+        ).scalars()
+        if value is not None
+    }
+    ids.update(
+        value
+        for value in session.execute(
+            select(anomaly_column)
+            .where(
+                MetricAnomaly.scan_config_id == scan_config_id,
+                MetricAnomaly.scope_type == scope_type,
+                anomaly_column.is_not(None),
+                MetricAnomaly.bucket >= evaluation_start,
+                MetricAnomaly.bucket < evaluation_end,
+            )
+        ).scalars()
+        if value is not None
+    )
+    return ids
+
+
+def _get_active_signal_scope_keys(
+    session: Session,
+    scan_config_id: uuid.UUID,
+) -> set[tuple[str, str]]:
+    latest_metrics: dict[tuple[str, str], datetime] = {}
+
+    latest_project_total_bucket = session.execute(
+        select(sa_func.max(EventMetric.bucket)).where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id.is_not(None),
+        )
+    ).scalar_one_or_none()
+    if latest_project_total_bucket is not None:
+        latest_metrics[(SCOPE_PROJECT_TOTAL, str(scan_config_id))] = latest_project_total_bucket
+
+    for event_type_id, bucket in session.execute(
+        select(EventMetric.event_type_id, sa_func.max(EventMetric.bucket))
+        .where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id.is_not(None),
+        )
+        .group_by(EventMetric.event_type_id)
+    ).all():
+        if event_type_id is not None:
+            latest_metrics[(SCOPE_EVENT_TYPE, str(event_type_id))] = bucket
+
+    for event_id, bucket in session.execute(
+        select(EventMetric.event_id, sa_func.max(EventMetric.bucket))
+        .where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id.is_not(None),
+        )
+        .group_by(EventMetric.event_id)
+    ).all():
+        if event_id is not None:
+            latest_metrics[(SCOPE_EVENT, str(event_id))] = bucket
+
+    latest_anomalies: dict[tuple[str, str], MetricAnomaly] = {}
+    for anomaly in session.execute(
+        select(MetricAnomaly)
+        .where(MetricAnomaly.scan_config_id == scan_config_id)
+        .order_by(MetricAnomaly.bucket.desc())
+    ).scalars():
+        key = (anomaly.scope_type, anomaly.scope_ref)
+        latest_anomalies.setdefault(key, anomaly)
+
+    return {
+        key
+        for key, anomaly in latest_anomalies.items()
+        if (latest_metric_bucket := latest_metrics.get(key)) is None
+        or anomaly.bucket >= latest_metric_bucket
+    }
+
+
+def _recalculate_metric_anomalies(
+    session: Session,
+    config: ScanConfig,
+    *,
+    evaluation_start: datetime,
+    evaluation_end: datetime,
+) -> int:
+    project_settings = _get_project_anomaly_settings(session, config.project_id)
+    if project_settings is None or not project_settings.anomaly_detection_enabled:
+        session.execute(
+            delete(MetricAnomaly).where(MetricAnomaly.scan_config_id == config.id)
+        )
+        session.flush()
+        return 0
+
+    if not config.interval:
+        return 0
+
+    interval_spec = get_interval(config.interval)
+    history_from = (
+        evaluation_start - interval_spec.delta * project_settings.baseline_window_buckets
+    )
+    settings = _build_anomaly_settings(project_settings)
+    anomalies_detected = 0
+
+    if project_settings.detect_project_total:
+        points = _load_scope_points(
+            session,
+            scan_config_id=config.id,
+            scope_type=SCOPE_PROJECT_TOTAL,
+            scope_ref=str(config.id),
+            history_from=history_from,
+            time_to=evaluation_end,
+        )
+        anomalies_detected += _replace_scope_anomalies(
+            session,
+            scan_config_id=config.id,
+            scope_type=SCOPE_PROJECT_TOTAL,
+            scope_ref=str(config.id),
+            evaluation_start=evaluation_start,
+            evaluation_end=evaluation_end,
+            event_id=None,
+            event_type_id=None,
+            anomalies=detect_anomalies(
+                points,
+                interval=interval_spec.delta,
+                evaluation_start=evaluation_start,
+                evaluation_end=evaluation_end,
+                settings=settings,
+            ),
+        )
+    else:
+        session.execute(
+            delete(MetricAnomaly).where(
+                MetricAnomaly.scan_config_id == config.id,
+                MetricAnomaly.scope_type == SCOPE_PROJECT_TOTAL,
+                MetricAnomaly.bucket >= evaluation_start,
+                MetricAnomaly.bucket < evaluation_end,
+            )
+        )
+
+    if project_settings.detect_event_types:
+        for event_type_id in _collect_scope_ids(
+            session,
+            scan_config_id=config.id,
+            history_from=history_from,
+            evaluation_start=evaluation_start,
+            evaluation_end=evaluation_end,
+            scope_type=SCOPE_EVENT_TYPE,
+        ):
+            scope_ref = str(event_type_id)
+            points = _load_scope_points(
+                session,
+                scan_config_id=config.id,
+                scope_type=SCOPE_EVENT_TYPE,
+                scope_ref=scope_ref,
+                history_from=history_from,
+                time_to=evaluation_end,
+            )
+            anomalies_detected += _replace_scope_anomalies(
+                session,
+                scan_config_id=config.id,
+                scope_type=SCOPE_EVENT_TYPE,
+                scope_ref=scope_ref,
+                evaluation_start=evaluation_start,
+                evaluation_end=evaluation_end,
+                event_id=None,
+                event_type_id=event_type_id,
+                anomalies=detect_anomalies(
+                    points,
+                    interval=interval_spec.delta,
+                    evaluation_start=evaluation_start,
+                    evaluation_end=evaluation_end,
+                    settings=settings,
+                ),
+            )
+    else:
+        session.execute(
+            delete(MetricAnomaly).where(
+                MetricAnomaly.scan_config_id == config.id,
+                MetricAnomaly.scope_type == SCOPE_EVENT_TYPE,
+                MetricAnomaly.bucket >= evaluation_start,
+                MetricAnomaly.bucket < evaluation_end,
+            )
+        )
+
+    if project_settings.detect_events:
+        for event_id in _collect_scope_ids(
+            session,
+            scan_config_id=config.id,
+            history_from=history_from,
+            evaluation_start=evaluation_start,
+            evaluation_end=evaluation_end,
+            scope_type=SCOPE_EVENT,
+        ):
+            scope_ref = str(event_id)
+            points = _load_scope_points(
+                session,
+                scan_config_id=config.id,
+                scope_type=SCOPE_EVENT,
+                scope_ref=scope_ref,
+                history_from=history_from,
+                time_to=evaluation_end,
+            )
+            anomalies_detected += _replace_scope_anomalies(
+                session,
+                scan_config_id=config.id,
+                scope_type=SCOPE_EVENT,
+                scope_ref=scope_ref,
+                evaluation_start=evaluation_start,
+                evaluation_end=evaluation_end,
+                event_id=event_id,
+                event_type_id=None,
+                anomalies=detect_anomalies(
+                    points,
+                    interval=interval_spec.delta,
+                    evaluation_start=evaluation_start,
+                    evaluation_end=evaluation_end,
+                    settings=settings,
+                ),
+            )
+    else:
+        session.execute(
+            delete(MetricAnomaly).where(
+                MetricAnomaly.scan_config_id == config.id,
+                MetricAnomaly.scope_type == SCOPE_EVENT,
+                MetricAnomaly.bucket >= evaluation_start,
+                MetricAnomaly.bucket < evaluation_end,
+            )
+        )
+
+    session.flush()
+    return anomalies_detected
+
+
+def _upsert_event_metrics_rows(
+    session: Session,
+    *,
+    rows: list[dict[str, object]],
+    constraint: str,
+) -> None:
+    if not rows:
+        return
+
+    if session.bind is not None and session.bind.dialect.name == "sqlite":
+        stmt = sqlite_insert(EventMetric).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["scan_config_id", "event_id", "bucket"]
+            if constraint == "uq_event_metric_config_event_bucket"
+            else ["scan_config_id", "event_type_id", "bucket"],
+            set_={"count": stmt.excluded.count},
+        )
+        session.execute(stmt)
+        return
+
+    stmt = pg_insert(EventMetric).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint=constraint,
+        set_={"count": stmt.excluded.count},
+    )
+    session.execute(stmt)
+
+
 @celery_app.task(  # type: ignore[untyped-decorator]
     name="tripl.worker.tasks.metrics.collect_metrics",
     bind=True,
@@ -260,6 +673,8 @@ def collect_metrics(
             )
             session.add(job)
         session.commit()
+
+        active_signals_before = _get_active_signal_scope_keys(session, config.id)
 
         ds = session.get(DataSource, config.data_source_id)
         if ds is None:
@@ -417,6 +832,15 @@ def collect_metrics(
             all_details.extend(gr.details)
 
         if not rows:
+            anomalies_detected = _recalculate_metric_anomalies(
+                session,
+                config,
+                evaluation_start=time_from,
+                evaluation_end=time_to,
+            )
+            signals_added = len(
+                _get_active_signal_scope_keys(session, config.id) - active_signals_before
+            )
             result_summary = {
                 "events_created": total_created,
                 "events_skipped": total_skipped,
@@ -424,6 +848,8 @@ def collect_metrics(
                 "columns_analyzed": total_cols,
                 "event_metrics": 0,
                 "type_metrics": 0,
+                "anomalies_detected": anomalies_detected,
+                "signals_added": signals_added,
                 "details": all_details,
             }
             if job:
@@ -526,27 +952,31 @@ def collect_metrics(
             for (sc_id, et_id, bucket), total in type_agg.items()
         ]
 
-        if event_rows:
-            stmt = pg_insert(EventMetric).values(event_rows)
-            stmt = stmt.on_conflict_do_update(
-                constraint="uq_event_metric_config_event_bucket",
-                set_={"count": stmt.excluded.count},
-            )
-            session.execute(stmt)
-
-        if type_rows:
-            stmt = pg_insert(EventMetric).values(type_rows)
-            stmt = stmt.on_conflict_do_update(
-                constraint="uq_event_metric_config_type_bucket",
-                set_={"count": stmt.excluded.count},
-            )
-            session.execute(stmt)
+        _upsert_event_metrics_rows(
+            session,
+            rows=event_rows,
+            constraint="uq_event_metric_config_event_bucket",
+        )
+        _upsert_event_metrics_rows(
+            session,
+            rows=type_rows,
+            constraint="uq_event_metric_config_type_bucket",
+        )
 
         session.commit()
 
         n_ev = len(event_rows)
         n_tp = len(type_rows)
         logger.info(f"Upserted {n_ev} event metrics + {n_tp} type metrics")
+        anomalies_detected = _recalculate_metric_anomalies(
+            session,
+            config,
+            evaluation_start=time_from,
+            evaluation_end=time_to,
+        )
+        signals_added = len(
+            _get_active_signal_scope_keys(session, config.id) - active_signals_before
+        )
 
         result_summary = {
             "events_created": total_created,
@@ -555,6 +985,8 @@ def collect_metrics(
             "columns_analyzed": total_cols,
             "event_metrics": n_ev,
             "type_metrics": n_tp,
+            "anomalies_detected": anomalies_detected,
+            "signals_added": signals_added,
             "details": all_details,
         }
 

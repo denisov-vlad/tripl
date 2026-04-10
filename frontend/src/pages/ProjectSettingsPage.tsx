@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { eventTypesApi } from '@/api/eventTypes'
@@ -6,15 +6,28 @@ import { fieldsApi } from '@/api/fields'
 import { metaFieldsApi } from '@/api/metaFields'
 import { relationsApi } from '@/api/relations'
 import { variablesApi } from '@/api/variables'
+import { anomalySettingsApi } from '@/api/anomalySettings'
 import { dataSourcesApi } from '@/api/dataSources'
 import { scansApi } from '@/api/scans'
 import { useConfirm } from '@/hooks/useConfirm'
-import type { EventType, FieldDefinition, MetaFieldDefinition, EventTypeRelation, Variable, VariableType, DataSource, ScanConfig, ScanJob } from '@/types'
+import type {
+  EventType,
+  FieldDefinition,
+  MetaFieldDefinition,
+  EventTypeRelation,
+  Variable,
+  VariableType,
+  DataSource,
+  ProjectAnomalySettings,
+  ScanConfig,
+  ScanJob,
+} from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Switch } from '@/components/ui/switch'
 import { Card, CardContent } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -30,12 +43,12 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
 import { Plus, Pencil, Trash2, ChevronDown, ArrowUp, ArrowDown, Play, Layers, Link2, Variable as VariableIcon, List, Search } from 'lucide-react'
 
-type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'scans'
+type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'monitoring' | 'scans'
 
 export default function ProjectSettingsPage() {
   const { slug, tab: urlTab } = useParams<{ slug: string; tab?: string }>()
   const navigate = useNavigate()
-  const validTabs: SettingsTab[] = ['event-types', 'meta-fields', 'relations', 'variables', 'scans']
+  const validTabs: SettingsTab[] = ['event-types', 'meta-fields', 'relations', 'variables', 'monitoring', 'scans']
   const tab: SettingsTab = validTabs.includes(urlTab as SettingsTab) ? (urlTab as SettingsTab) : 'event-types'
 
   const changeTab = (t: string) => {
@@ -46,7 +59,7 @@ export default function ProjectSettingsPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Project Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Configure event types, fields, and scanning</p>
+        <p className="text-sm text-muted-foreground mt-1">Configure event types, monitoring, and scanning</p>
       </div>
 
       <Tabs value={tab} onValueChange={changeTab} className="mb-6">
@@ -55,6 +68,7 @@ export default function ProjectSettingsPage() {
           <TabsTrigger value="meta-fields">Meta Fields</TabsTrigger>
           <TabsTrigger value="relations">Relations</TabsTrigger>
           <TabsTrigger value="variables">Variables</TabsTrigger>
+          <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
           <TabsTrigger value="scans">Scans</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -63,6 +77,7 @@ export default function ProjectSettingsPage() {
       {tab === 'meta-fields' && slug && <MetaFieldsTab slug={slug} />}
       {tab === 'relations' && slug && <RelationsTab slug={slug} />}
       {tab === 'variables' && slug && <VariablesTab slug={slug} />}
+      {tab === 'monitoring' && slug && <MonitoringTab slug={slug} />}
       {tab === 'scans' && slug && <ScansTab slug={slug} />}
     </div>
   )
@@ -1066,6 +1081,133 @@ function VariablesTab({ slug }: { slug: string }) {
   )
 }
 
+function MonitoringTab({ slug }: { slug: string }) {
+  const qc = useQueryClient()
+  const { data: settings } = useQuery({
+    queryKey: ['projectAnomalySettings', slug],
+    queryFn: () => anomalySettingsApi.get(slug),
+  })
+
+  const updateMut = useMutation({
+    mutationFn: (data: Partial<ProjectAnomalySettings>) => anomalySettingsApi.update(slug, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projectAnomalySettings', slug] })
+    },
+  })
+
+  if (!settings) {
+    return <div className="text-sm text-muted-foreground">Loading monitoring settings…</div>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Monitoring</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Shared anomaly detection settings for all scans in this project.
+          Scans use them automatically when they have both a time column and a collection interval.
+        </p>
+      </div>
+
+      <Card>
+        <CardContent className="p-6 space-y-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <Label className="text-sm font-medium">Anomaly Detection</Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Scans inherit these settings. Notification delivery comes in the next phase.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-medium text-muted-foreground min-w-16 text-right">
+                {settings.anomaly_detection_enabled ? 'Enabled' : 'Disabled'}
+              </span>
+              <Switch
+                checked={settings.anomaly_detection_enabled}
+                onCheckedChange={checked => updateMut.mutate({ anomaly_detection_enabled: checked })}
+                aria-label="Toggle anomaly detection"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={settings.detect_project_total}
+                onCheckedChange={checked => updateMut.mutate({ detect_project_total: !!checked })}
+              />
+              Project total
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={settings.detect_event_types}
+                onCheckedChange={checked => updateMut.mutate({ detect_event_types: !!checked })}
+              />
+              Event types
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={settings.detect_events}
+                onCheckedChange={checked => updateMut.mutate({ detect_events: !!checked })}
+              />
+              Events
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label>Baseline Window</Label>
+              <Input
+                type="number"
+                min={1}
+                value={settings.baseline_window_buckets}
+                onChange={e => updateMut.mutate({ baseline_window_buckets: Number(e.target.value) })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Min History</Label>
+              <Input
+                type="number"
+                min={1}
+                value={settings.min_history_buckets}
+                onChange={e => updateMut.mutate({ min_history_buckets: Number(e.target.value) })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Sigma Threshold</Label>
+              <Input
+                type="number"
+                min={0.1}
+                step="0.1"
+                value={settings.sigma_threshold}
+                onChange={e => updateMut.mutate({ sigma_threshold: Number(e.target.value) })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Min Expected Count</Label>
+              <Input
+                type="number"
+                min={0}
+                value={settings.min_expected_count}
+                onChange={e => updateMut.mutate({ min_expected_count: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground">
+            Markers appear only when the latest bucket for a scope is anomalous.
+            After changing these settings, run the next metrics collection to recalculate signals.
+          </div>
+
+          {updateMut.isError && (
+            <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 /* ─── Scans Tab ─── */
 function ScansTab({ slug }: { slug: string }) {
   const qc = useQueryClient()
@@ -1319,7 +1461,7 @@ function ScansTab({ slug }: { slug: string }) {
                   {sc.interval && <Badge variant="outline" className="text-xs">⏱ {sc.interval}</Badge>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => { e.stopPropagation(); startEditScan(sc) }}><Pencil className="h-3 w-3" /></Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" title="Edit scan config" onClick={e => { e.stopPropagation(); startEditScan(sc) }}><Pencil className="h-3 w-3" /></Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={e => { e.stopPropagation(); handleDelete(sc) }}><Trash2 className="h-3 w-3" /></Button>
                   <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${expandedId === sc.id ? 'rotate-180' : ''}`} />
                 </div>
@@ -1373,6 +1515,13 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
             {scanConfig.event_name_format && <span>Name fmt: <strong className="text-foreground">{scanConfig.event_name_format}</strong></span>}
             {etName && <span>Event Type: <strong className="text-foreground">{etName}</strong></span>}
             {scanConfig.interval && <span>Interval: <strong className="text-foreground">{scanConfig.interval}</strong></span>}
+            <span>
+              Monitoring:
+              <strong className="text-foreground">
+                {' '}
+                {scanConfig.time_column && scanConfig.interval ? 'shared project settings' : 'requires time column + interval'}
+              </strong>
+            </span>
           </div>
         </div>
         <pre className="p-3 text-xs font-mono text-foreground/80 whitespace-pre-wrap overflow-x-auto">{scanConfig.base_query}</pre>
@@ -1436,6 +1585,9 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                           {job.result_summary.events_skipped != null && job.result_summary.events_skipped > 0 && (
                             <Badge variant="outline" className="text-[10px]">{job.result_summary.events_skipped} skipped</Badge>
                           )}
+                          {job.result_summary.signals_added != null && job.result_summary.signals_added > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-destructive">+{job.result_summary.signals_added} signals</Badge>
+                          )}
                           {job.result_summary.columns_analyzed != null && (
                             <span className="text-muted-foreground text-[10px]">{job.result_summary.columns_analyzed} cols</span>
                           )}
@@ -1462,11 +1614,17 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                             </div>
                           )}
                           {job.result_summary && (
-                            <div className="grid grid-cols-4 gap-3 text-xs">
+                            <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-3 xl:grid-cols-5">
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-green-600">{job.result_summary.events_created ?? 0}</div><div className="text-muted-foreground">Events created</div></Card>
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-blue-600">{job.result_summary.variables_created ?? 0}</div><div className="text-muted-foreground">Variables created</div></Card>
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-foreground">{job.result_summary.events_skipped ?? 0}</div><div className="text-muted-foreground">Events skipped</div></Card>
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-primary">{job.result_summary.columns_analyzed ?? 0}</div><div className="text-muted-foreground">Columns analyzed</div></Card>
+                              {job.result_summary.signals_added != null && (
+                                <Card className="p-3 text-center">
+                                  <div className="text-lg font-bold text-destructive">{job.result_summary.signals_added}</div>
+                                  <div className="text-muted-foreground">Signals added</div>
+                                </Card>
+                              )}
                             </div>
                           )}
                           {job.result_summary?.details && job.result_summary.details.length > 0 && (

@@ -1,8 +1,9 @@
 import { useId } from 'react'
 import {
   Area,
-  AreaChart,
+  ComposedChart,
   CartesianGrid,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -10,9 +11,10 @@ import {
 } from 'recharts'
 import { cn } from '@/lib/utils'
 import type { MetricsGranularity } from '@/lib/metrics'
+import type { EventMetricPoint } from '@/types'
 
 interface MetricsChartProps {
-  data: { bucket: string; count: number }[]
+  data: EventMetricPoint[]
   className?: string
   color?: string
   height?: number
@@ -80,16 +82,30 @@ function CustomTooltip({
   seriesLabel,
 }: {
   active?: boolean
-  payload?: { value: number }[]
+  payload?: Array<{ value: number; dataKey?: string; payload: EventMetricPoint }>
   label?: string | number
   granularity: MetricsGranularity
   seriesLabel: string
 }) {
   if (!active || !payload?.length) return null
+  const point = payload[0].payload
+  const expectedCount = point.expected_count
+  const deviation = expectedCount === null ? null : point.count - expectedCount
+
   return (
     <div className="rounded-lg border bg-background px-3 py-2 shadow-md">
       <p className="text-xs text-muted-foreground">{formatTooltipLabel(String(label ?? ''), granularity)}</p>
       <p className="text-sm font-semibold">{payload[0].value.toLocaleString()} {seriesLabel}</p>
+      {expectedCount !== null && (
+        <p className="text-xs text-muted-foreground">
+          Expected: {Math.round(expectedCount).toLocaleString()}
+        </p>
+      )}
+      {deviation !== null && (
+        <p className={cn('text-xs', point.is_anomaly ? 'text-destructive' : 'text-muted-foreground')}>
+          Deviation: {deviation > 0 ? '+' : ''}{Math.round(deviation).toLocaleString()}
+        </p>
+      )}
     </div>
   )
 }
@@ -115,8 +131,15 @@ export function MetricsChart({
 
   return (
     <div className={cn('w-full', className)} style={{ height }}>
+      <div className="sr-only">
+        {data.filter(point => point.is_anomaly).map(point => (
+          <span key={point.bucket} data-testid="anomaly-dot">
+            {point.bucket}
+          </span>
+        ))}
+      </div>
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+        <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor={chartColor} stopOpacity={0.3} />
@@ -141,16 +164,38 @@ export function MetricsChart({
             width={48}
           />
           <Tooltip content={<CustomTooltip granularity={granularity} seriesLabel={seriesLabel} />} />
+          <Line
+            type="monotone"
+            dataKey="expected_count"
+            stroke="var(--muted-foreground)"
+            strokeDasharray="4 4"
+            strokeWidth={1.5}
+            dot={false}
+            connectNulls={false}
+          />
           <Area
             type="monotone"
             dataKey="count"
             stroke={chartColor}
             fill={`url(#${gradientId})`}
             strokeWidth={2}
-            dot={false}
+            dot={props => {
+              if (!props.payload?.is_anomaly) return <></>
+              return (
+                <circle
+                  cx={props.cx}
+                  cy={props.cy}
+                  r={4}
+                  fill="var(--destructive)"
+                  stroke="var(--background)"
+                  strokeWidth={2}
+                  data-testid="anomaly-dot"
+                />
+              )
+            }}
             activeDot={{ r: 4, strokeWidth: 0 }}
           />
-        </AreaChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   )

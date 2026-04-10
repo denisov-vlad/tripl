@@ -1,39 +1,331 @@
-"""Service for querying event metrics from PostgreSQL."""
+"""Service for querying event metrics and anomaly signals from PostgreSQL."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
 from tripl.models.event_tag import EventTag
+from tripl.models.event_type import EventType
+from tripl.models.metric_anomaly import MetricAnomaly
 from tripl.models.project import Project
 from tripl.models.scan_config import ScanConfig
-from tripl.schemas.event_metric import EventMetricPoint, EventMetricsResponse
+from tripl.schemas.event_metric import EventMetricPoint, EventMetricsResponse, MetricSignalResponse
+from tripl.worker.analyzers.anomaly_detector import (
+    SCOPE_EVENT,
+    SCOPE_EVENT_TYPE,
+    SCOPE_PROJECT_TOTAL,
+    SeriesPoint,
+    expand_series,
+)
+from tripl.worker.utils.intervals import get_interval
 
 
 async def _resolve_project(session: AsyncSession, slug: str) -> Project:
     result = await session.execute(select(Project).where(Project.slug == slug))
     project = result.scalar_one_or_none()
     if project is None:
-        from fastapi import HTTPException
-
         raise HTTPException(404, f"Project '{slug}' not found")
     return project
 
 
+async def _resolve_event(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    event_id: uuid.UUID,
+) -> Event:
+    event = await session.get(Event, event_id)
+    if event is None or event.project_id != project_id:
+        raise HTTPException(404, "Event not found")
+    return event
+
+
+async def _resolve_event_type(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    event_type_id: uuid.UUID,
+) -> EventType:
+    event_type = await session.get(EventType, event_type_id)
+    if event_type is None or event_type.project_id != project_id:
+        raise HTTPException(404, "Event type not found")
+    return event_type
+
+
 async def _get_project_interval(session: AsyncSession, project_id: uuid.UUID) -> str | None:
     result = await session.execute(
-        select(ScanConfig.interval).where(
+        select(ScanConfig.interval)
+        .where(
             ScanConfig.project_id == project_id,
             ScanConfig.interval.isnot(None),
-        ).limit(1)
+        )
+        .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _get_scan_config_interval(
+    session: AsyncSession,
+    scan_config_id: uuid.UUID | None,
+) -> str | None:
+    if scan_config_id is None:
+        return None
+    result = await session.execute(
+        select(ScanConfig.interval).where(ScanConfig.id == scan_config_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_default_scan_config_id(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+) -> uuid.UUID | None:
+    result = await session.execute(
+        select(ScanConfig.id)
+        .where(
+            ScanConfig.project_id == project_id,
+            ScanConfig.interval.isnot(None),
+            ScanConfig.time_column.isnot(None),
+        )
+        .order_by(ScanConfig.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _resolve_scope_scan_config_id(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    event_id: uuid.UUID | None = None,
+    event_type_id: uuid.UUID | None = None,
+) -> uuid.UUID | None:
+    metric_query = (
+        select(EventMetric.scan_config_id, EventMetric.bucket)
+        .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+        .where(ScanConfig.project_id == project_id)
+    )
+    anomaly_query = (
+        select(MetricAnomaly.scan_config_id, MetricAnomaly.bucket)
+        .join(ScanConfig, ScanConfig.id == MetricAnomaly.scan_config_id)
+        .where(ScanConfig.project_id == project_id)
+    )
+
+    if event_id is not None:
+        metric_query = metric_query.where(EventMetric.event_id == event_id)
+        anomaly_query = anomaly_query.where(MetricAnomaly.event_id == event_id)
+    elif event_type_id is not None:
+        metric_query = metric_query.where(
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id == event_type_id,
+        )
+        anomaly_query = anomaly_query.where(MetricAnomaly.event_type_id == event_type_id)
+    else:
+        return await _get_default_scan_config_id(session, project_id)
+
+    metric_row = (
+        await session.execute(metric_query.order_by(EventMetric.bucket.desc()).limit(1))
+    ).first()
+    anomaly_row = (
+        await session.execute(anomaly_query.order_by(MetricAnomaly.bucket.desc()).limit(1))
+    ).first()
+
+    candidates = [row for row in (metric_row, anomaly_row) if row is not None]
+    if not candidates:
+        return await _get_default_scan_config_id(session, project_id)
+
+    scan_config_id, _bucket = max(candidates, key=lambda row: row[1])
+    return scan_config_id
+
+
+async def _get_metric_rows(
+    session: AsyncSession,
+    *,
+    scope: str,
+    scan_config_id: uuid.UUID,
+    scope_ref: str,
+    time_from: datetime | None,
+    time_to: datetime | None,
+) -> list[tuple[datetime, int]]:
+    if scope == SCOPE_PROJECT_TOTAL:
+        query = (
+            select(EventMetric.bucket, func.sum(EventMetric.count))
+            .where(
+                EventMetric.scan_config_id == scan_config_id,
+                EventMetric.event_id.is_(None),
+                EventMetric.event_type_id.is_not(None),
+            )
+            .group_by(EventMetric.bucket)
+            .order_by(EventMetric.bucket)
+        )
+    elif scope == SCOPE_EVENT_TYPE:
+        query = (
+            select(EventMetric.bucket, EventMetric.count)
+            .where(
+                EventMetric.scan_config_id == scan_config_id,
+                EventMetric.event_id.is_(None),
+                EventMetric.event_type_id == uuid.UUID(scope_ref),
+            )
+            .order_by(EventMetric.bucket)
+        )
+    else:
+        query = (
+            select(EventMetric.bucket, EventMetric.count)
+            .where(
+                EventMetric.scan_config_id == scan_config_id,
+                EventMetric.event_id == uuid.UUID(scope_ref),
+            )
+            .order_by(EventMetric.bucket)
+        )
+
+    if time_from is not None:
+        query = query.where(EventMetric.bucket >= time_from)
+    if time_to is not None:
+        query = query.where(EventMetric.bucket < time_to)
+
+    result = await session.execute(query)
+    return [(bucket, int(count)) for bucket, count in result.all()]
+
+
+async def _get_anomaly_rows(
+    session: AsyncSession,
+    *,
+    scan_config_id: uuid.UUID,
+    scope: str,
+    scope_ref: str,
+    time_from: datetime | None,
+    time_to: datetime | None,
+) -> list[MetricAnomaly]:
+    query = (
+        select(MetricAnomaly)
+        .where(
+            MetricAnomaly.scan_config_id == scan_config_id,
+            MetricAnomaly.scope_type == scope,
+            MetricAnomaly.scope_ref == scope_ref,
+        )
+        .order_by(MetricAnomaly.bucket)
+    )
+    if time_from is not None:
+        query = query.where(MetricAnomaly.bucket >= time_from)
+    if time_to is not None:
+        query = query.where(MetricAnomaly.bucket < time_to)
+
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
+def _signal_from_anomaly(anomaly: MetricAnomaly) -> MetricSignalResponse:
+    return MetricSignalResponse(
+        scan_config_id=anomaly.scan_config_id,
+        scope_type=anomaly.scope_type,
+        scope_ref=anomaly.scope_ref,
+        event_id=anomaly.event_id,
+        event_type_id=anomaly.event_type_id,
+        bucket=anomaly.bucket,
+        actual_count=anomaly.actual_count,
+        expected_count=anomaly.expected_count,
+        stddev=anomaly.stddev,
+        z_score=anomaly.z_score,
+        direction=anomaly.direction,
+    )
+
+
+def _build_metrics_response(
+    *,
+    scope: str,
+    scan_config_id: uuid.UUID | None,
+    scope_ref: str | None,
+    interval: str | None,
+    metric_rows: list[tuple[datetime, int]],
+    anomalies: list[MetricAnomaly],
+    event_id: uuid.UUID | None = None,
+    event_type_id: uuid.UUID | None = None,
+) -> EventMetricsResponse:
+    counts_by_bucket = {bucket: count for bucket, count in metric_rows}
+    anomalies_by_bucket = {anomaly.bucket: anomaly for anomaly in anomalies}
+
+    for anomaly in anomalies:
+        counts_by_bucket.setdefault(anomaly.bucket, anomaly.actual_count)
+
+    if interval and counts_by_bucket:
+        delta = get_interval(interval).delta
+        expanded = expand_series(
+            [
+                SeriesPoint(bucket=bucket, count=count)
+                for bucket, count in sorted(counts_by_bucket.items())
+            ],
+            interval=delta,
+            end_exclusive=max(counts_by_bucket) + delta,
+        )
+        data = [
+            EventMetricPoint(
+                bucket=point.bucket,
+                count=point.count,
+                expected_count=(
+                    anomalies_by_bucket[point.bucket].expected_count
+                    if point.bucket in anomalies_by_bucket
+                    else None
+                ),
+                is_anomaly=point.bucket in anomalies_by_bucket,
+                anomaly_direction=(
+                    anomalies_by_bucket[point.bucket].direction
+                    if point.bucket in anomalies_by_bucket
+                    else None
+                ),
+                z_score=(
+                    anomalies_by_bucket[point.bucket].z_score
+                    if point.bucket in anomalies_by_bucket
+                    else None
+                ),
+            )
+            for point in expanded
+        ]
+    else:
+        data = [
+            EventMetricPoint(
+                bucket=bucket,
+                count=count,
+                expected_count=(
+                    anomalies_by_bucket[bucket].expected_count
+                    if bucket in anomalies_by_bucket
+                    else None
+                ),
+                is_anomaly=bucket in anomalies_by_bucket,
+                anomaly_direction=(
+                    anomalies_by_bucket[bucket].direction
+                    if bucket in anomalies_by_bucket
+                    else None
+                ),
+                z_score=(
+                    anomalies_by_bucket[bucket].z_score
+                    if bucket in anomalies_by_bucket
+                    else None
+                ),
+            )
+            for bucket, count in sorted(counts_by_bucket.items())
+        ]
+
+    latest_signal = None
+    if data:
+        last_bucket = data[-1].bucket
+        last_anomaly = anomalies_by_bucket.get(last_bucket)
+        if last_anomaly is not None:
+            latest_signal = _signal_from_anomaly(last_anomaly)
+
+    return EventMetricsResponse(
+        scope=scope,
+        scan_config_id=scan_config_id,
+        event_id=event_id,
+        event_type_id=event_type_id,
+        interval=interval,
+        latest_signal=latest_signal,
+        data=data,
+    )
 
 
 async def get_event_metrics(
@@ -44,34 +336,45 @@ async def get_event_metrics(
     time_to: datetime | None = None,
 ) -> EventMetricsResponse:
     project = await _resolve_project(session, slug)
-
-    # Verify event belongs to this project
-    event = await session.get(Event, event_id)
-    if event is None or event.project_id != project.id:
-        from fastapi import HTTPException
-
-        raise HTTPException(404, "Event not found")
-
-    query = (
-        select(EventMetric.bucket, EventMetric.count)
-        .where(EventMetric.event_id == event_id)
-        .order_by(EventMetric.bucket)
+    event = await _resolve_event(session, project.id, event_id)
+    scan_config_id = await _resolve_scope_scan_config_id(
+        session,
+        project.id,
+        event_id=event.id,
     )
-    if time_from:
-        query = query.where(EventMetric.bucket >= time_from)
-    if time_to:
-        query = query.where(EventMetric.bucket < time_to)
+    interval = await _get_scan_config_interval(session, scan_config_id)
+    if scan_config_id is None:
+        return EventMetricsResponse(
+            scope=SCOPE_EVENT,
+            event_id=event.id,
+            interval=interval,
+            data=[],
+        )
 
-    result = await session.execute(query)
-    rows = result.all()
-
-    # Find interval from scan config
-    interval = await _get_project_interval(session, project.id) if rows else None
-
-    return EventMetricsResponse(
-        event_id=event_id,
+    metric_rows = await _get_metric_rows(
+        session,
+        scope=SCOPE_EVENT,
+        scan_config_id=scan_config_id,
+        scope_ref=str(event.id),
+        time_from=time_from,
+        time_to=time_to,
+    )
+    anomalies = await _get_anomaly_rows(
+        session,
+        scan_config_id=scan_config_id,
+        scope=SCOPE_EVENT,
+        scope_ref=str(event.id),
+        time_from=time_from,
+        time_to=time_to,
+    )
+    return _build_metrics_response(
+        scope=SCOPE_EVENT,
+        scan_config_id=scan_config_id,
+        scope_ref=str(event.id),
         interval=interval,
-        data=[EventMetricPoint(bucket=r[0], count=r[1]) for r in rows],
+        metric_rows=metric_rows,
+        anomalies=anomalies,
+        event_id=event.id,
     )
 
 
@@ -116,16 +419,15 @@ async def get_events_metrics(
     if time_to:
         query = query.where(EventMetric.bucket < time_to)
 
-    result = await session.execute(
-        query.group_by(EventMetric.bucket).order_by(EventMetric.bucket)
-    )
-    rows = result.all()
+    result = await session.execute(query.group_by(EventMetric.bucket).order_by(EventMetric.bucket))
+    rows = [(bucket, int(count)) for bucket, count in result.all()]
 
     interval = await _get_project_interval(session, project.id) if rows else None
 
     return EventMetricsResponse(
+        scope="events_total",
         interval=interval,
-        data=[EventMetricPoint(bucket=r[0], count=r[1]) for r in rows],
+        data=[EventMetricPoint(bucket=bucket, count=count) for bucket, count in rows],
     )
 
 
@@ -137,27 +439,231 @@ async def get_event_type_metrics(
     time_to: datetime | None = None,
 ) -> EventMetricsResponse:
     project = await _resolve_project(session, slug)
+    event_type = await _resolve_event_type(session, project.id, event_type_id)
+    scan_config_id = await _resolve_scope_scan_config_id(
+        session,
+        project.id,
+        event_type_id=event_type.id,
+    )
+    interval = await _get_scan_config_interval(session, scan_config_id)
+    if scan_config_id is None:
+        return EventMetricsResponse(
+            scope=SCOPE_EVENT_TYPE,
+            event_type_id=event_type.id,
+            interval=interval,
+            data=[],
+        )
+
+    metric_rows = await _get_metric_rows(
+        session,
+        scope=SCOPE_EVENT_TYPE,
+        scan_config_id=scan_config_id,
+        scope_ref=str(event_type.id),
+        time_from=time_from,
+        time_to=time_to,
+    )
+    anomalies = await _get_anomaly_rows(
+        session,
+        scan_config_id=scan_config_id,
+        scope=SCOPE_EVENT_TYPE,
+        scope_ref=str(event_type.id),
+        time_from=time_from,
+        time_to=time_to,
+    )
+    return _build_metrics_response(
+        scope=SCOPE_EVENT_TYPE,
+        scan_config_id=scan_config_id,
+        scope_ref=str(event_type.id),
+        interval=interval,
+        metric_rows=metric_rows,
+        anomalies=anomalies,
+        event_type_id=event_type.id,
+    )
+
+
+async def get_project_total_metrics(
+    session: AsyncSession,
+    slug: str,
+    scan_config_id: uuid.UUID | None = None,
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+) -> EventMetricsResponse:
+    project = await _resolve_project(session, slug)
+    resolved_scan_config_id = (
+        scan_config_id or await _get_default_scan_config_id(session, project.id)
+    )
+    if resolved_scan_config_id is None:
+        return EventMetricsResponse(scope=SCOPE_PROJECT_TOTAL, data=[])
+
+    config = await session.get(ScanConfig, resolved_scan_config_id)
+    if config is None or config.project_id != project.id:
+        raise HTTPException(404, "Scan config not found")
+
+    metric_rows = await _get_metric_rows(
+        session,
+        scope=SCOPE_PROJECT_TOTAL,
+        scan_config_id=resolved_scan_config_id,
+        scope_ref=str(resolved_scan_config_id),
+        time_from=time_from,
+        time_to=time_to,
+    )
+    anomalies = await _get_anomaly_rows(
+        session,
+        scan_config_id=resolved_scan_config_id,
+        scope=SCOPE_PROJECT_TOTAL,
+        scope_ref=str(resolved_scan_config_id),
+        time_from=time_from,
+        time_to=time_to,
+    )
+    return _build_metrics_response(
+        scope=SCOPE_PROJECT_TOTAL,
+        scan_config_id=resolved_scan_config_id,
+        scope_ref=str(resolved_scan_config_id),
+        interval=config.interval,
+        metric_rows=metric_rows,
+        anomalies=anomalies,
+    )
+
+
+async def _get_latest_anomaly_rows(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    scope_type: str,
+    event_ids: list[uuid.UUID] | None = None,
+) -> list[MetricAnomaly]:
+    latest_subquery = (
+        select(
+            MetricAnomaly.scan_config_id.label("scan_config_id"),
+            MetricAnomaly.scope_type.label("scope_type"),
+            MetricAnomaly.scope_ref.label("scope_ref"),
+            func.max(MetricAnomaly.bucket).label("bucket"),
+        )
+        .join(ScanConfig, ScanConfig.id == MetricAnomaly.scan_config_id)
+        .where(
+            ScanConfig.project_id == project_id,
+            MetricAnomaly.scope_type == scope_type,
+        )
+        .group_by(
+            MetricAnomaly.scan_config_id,
+            MetricAnomaly.scope_type,
+            MetricAnomaly.scope_ref,
+        )
+        .subquery()
+    )
 
     query = (
-        select(EventMetric.bucket, EventMetric.count)
-        .where(
-            EventMetric.event_type_id == event_type_id,
-            EventMetric.event_id.is_(None),  # type-level aggregates only
+        select(MetricAnomaly)
+        .join(
+            latest_subquery,
+            (MetricAnomaly.scan_config_id == latest_subquery.c.scan_config_id)
+            & (MetricAnomaly.scope_type == latest_subquery.c.scope_type)
+            & (MetricAnomaly.scope_ref == latest_subquery.c.scope_ref)
+            & (MetricAnomaly.bucket == latest_subquery.c.bucket),
         )
-        .order_by(EventMetric.bucket)
+        .order_by(MetricAnomaly.bucket.desc())
     )
-    if time_from:
-        query = query.where(EventMetric.bucket >= time_from)
-    if time_to:
-        query = query.where(EventMetric.bucket < time_to)
+    if scope_type == SCOPE_EVENT and event_ids is not None:
+        query = query.where(MetricAnomaly.event_id.in_(event_ids))
 
     result = await session.execute(query)
-    rows = result.all()
+    return list(result.scalars().all())
 
-    interval = await _get_project_interval(session, project.id)
 
-    return EventMetricsResponse(
-        event_type_id=event_type_id,
-        interval=interval,
-        data=[EventMetricPoint(bucket=r[0], count=r[1]) for r in rows],
+async def _get_latest_metric_bucket_map(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    scope_type: str,
+    event_ids: list[uuid.UUID] | None = None,
+) -> dict[tuple[uuid.UUID, str, str], datetime]:
+    if scope_type == SCOPE_PROJECT_TOTAL:
+        query = (
+            select(EventMetric.scan_config_id, func.max(EventMetric.bucket))
+            .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+            .where(
+                ScanConfig.project_id == project_id,
+                EventMetric.event_id.is_(None),
+                EventMetric.event_type_id.is_not(None),
+            )
+            .group_by(EventMetric.scan_config_id)
+        )
+        rows = (await session.execute(query)).all()
+        return {
+            (scan_config_id, SCOPE_PROJECT_TOTAL, str(scan_config_id)): bucket
+            for scan_config_id, bucket in rows
+        }
+
+    if scope_type == SCOPE_EVENT_TYPE:
+        query = (
+            select(
+                EventMetric.scan_config_id,
+                EventMetric.event_type_id,
+                func.max(EventMetric.bucket),
+            )
+            .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+            .where(
+                ScanConfig.project_id == project_id,
+                EventMetric.event_id.is_(None),
+                EventMetric.event_type_id.is_not(None),
+            )
+            .group_by(EventMetric.scan_config_id, EventMetric.event_type_id)
+        )
+        rows = (await session.execute(query)).all()
+        return {
+            (scan_config_id, SCOPE_EVENT_TYPE, str(event_type_id)): bucket
+            for scan_config_id, event_type_id, bucket in rows
+            if event_type_id is not None
+        }
+
+    query = (
+        select(EventMetric.scan_config_id, EventMetric.event_id, func.max(EventMetric.bucket))
+        .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+        .where(
+            ScanConfig.project_id == project_id,
+            EventMetric.event_id.is_not(None),
+        )
     )
+    if event_ids:
+        query = query.where(EventMetric.event_id.in_(event_ids))
+    query = query.group_by(EventMetric.scan_config_id, EventMetric.event_id)
+    rows = (await session.execute(query)).all()
+    return {
+        (scan_config_id, SCOPE_EVENT, str(event_id)): bucket
+        for scan_config_id, event_id, bucket in rows
+        if event_id is not None
+    }
+
+
+async def get_active_signals(
+    session: AsyncSession,
+    slug: str,
+    event_ids: list[uuid.UUID] | None = None,
+) -> list[MetricSignalResponse]:
+    project = await _resolve_project(session, slug)
+
+    signals: list[MetricSignalResponse] = []
+    for scope_type in (SCOPE_PROJECT_TOTAL, SCOPE_EVENT_TYPE, SCOPE_EVENT):
+        if scope_type == SCOPE_EVENT and not event_ids:
+            continue
+
+        latest_anomalies = await _get_latest_anomaly_rows(
+            session,
+            project_id=project.id,
+            scope_type=scope_type,
+            event_ids=event_ids,
+        )
+        latest_metrics = await _get_latest_metric_bucket_map(
+            session,
+            project_id=project.id,
+            scope_type=scope_type,
+            event_ids=event_ids,
+        )
+        for anomaly in latest_anomalies:
+            key = (anomaly.scan_config_id, anomaly.scope_type, anomaly.scope_ref)
+            latest_metric_bucket = latest_metrics.get(key)
+            if latest_metric_bucket is None or anomaly.bucket >= latest_metric_bucket:
+                signals.append(_signal_from_anomaly(anomaly))
+
+    signals.sort(key=lambda signal: signal.bucket, reverse=True)
+    return signals

@@ -60,6 +60,7 @@ class TestScanConfigsCRUD:
         assert data["cardinality_threshold"] == 50
         assert data["data_source_id"] == data_source["id"]
         assert data["project_id"] == project["id"]
+        assert "anomaly_detection_enabled" not in data
 
     async def test_list_scan_configs(self, client: AsyncClient, project: dict, data_source: dict):
         for i in range(3):

@@ -10,8 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.models import Base
 from tripl.models.data_source import DataSource
+from tripl.models.event import Event
+from tripl.models.event_metric import EventMetric
 from tripl.models.event_type import EventType
+from tripl.models.metric_anomaly import MetricAnomaly
 from tripl.models.project import Project
+from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob, ScanJobStatus
 from tripl.worker.adapters.base import ColumnInfo
@@ -74,6 +78,57 @@ def _create_scan_config(session: Session, *, with_event_type: bool = False) -> S
     session.add(config)
     session.commit()
     return config
+
+
+def _seed_anomaly_scan_state(session: Session) -> tuple[ScanConfig, EventType, Event]:
+    config = _create_scan_config(session, with_event_type=True)
+    assert config.event_type_id is not None
+
+    session.add(
+        ProjectAnomalySettings(
+            project_id=config.project_id,
+            anomaly_detection_enabled=True,
+        )
+    )
+    event_type = session.get(EventType, config.event_type_id)
+    assert event_type is not None
+    event = Event(
+        id=uuid.uuid4(),
+        project_id=config.project_id,
+        event_type_id=event_type.id,
+        name="event_name=Login",
+        description="",
+        implemented=True,
+        reviewed=True,
+        archived=False,
+    )
+    session.add(event)
+
+    for hour in range(10):
+        bucket = datetime(2026, 1, 1, hour)
+        session.add(
+            EventMetric(
+                id=uuid.uuid4(),
+                scan_config_id=config.id,
+                event_id=event.id,
+                event_type_id=None,
+                bucket=bucket,
+                count=10,
+            )
+        )
+        session.add(
+            EventMetric(
+                id=uuid.uuid4(),
+                scan_config_id=config.id,
+                event_id=None,
+                event_type_id=event_type.id,
+                bucket=bucket,
+                count=10,
+            )
+        )
+
+    session.commit()
+    return config, event_type, event
 
 
 def test_check_metrics_due_skips_dispatch_when_active_job_exists(
@@ -223,6 +278,7 @@ def test_collect_metrics_reuses_existing_pending_job(
 
     assert result["event_metrics"] == 0
     assert result["type_metrics"] == 0
+    assert result["signals_added"] == 0
 
     with sync_session_factory() as session:
         jobs = (
@@ -238,3 +294,95 @@ def test_collect_metrics_reuses_existing_pending_job(
     assert jobs[0].completed_at is not None
     assert jobs[0].result_summary is not None
     assert jobs[0].result_summary["columns_analyzed"] == 1
+
+
+def test_collect_metrics_recalculates_and_clears_metric_anomalies(
+    sync_session_factory: sessionmaker[Session],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    with sync_session_factory() as session:
+        config, event_type, event = _seed_anomaly_scan_state(session)
+        config_id = str(config.id)
+
+    class FakeAdapter:
+        rows: list[tuple[object, ...]] = []
+
+        def test_connection(self) -> bool:
+            return True
+
+        def get_columns(self, base_query: str) -> list[ColumnInfo]:
+            return [
+                ColumnInfo(name="time", type_name="DateTime"),
+                ColumnInfo(name="event_name", type_name="String"),
+            ]
+
+        def get_time_bucketed_counts(
+            self,
+            base_query: str,
+            time_column: str,
+            ch_interval: str,
+            regular_columns: list[str],
+            json_columns: list[str],
+            time_from: datetime,
+            time_to: datetime,
+            limit: int = 100000,
+        ) -> tuple[list[str], list[tuple[object, ...]]]:
+            return (["event_name"], self.rows)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(metrics, "_get_sync_session", sync_session_factory)
+    monkeypatch.setattr(metrics, "_build_adapter", lambda ds: FakeAdapter())
+    monkeypatch.setattr(metrics, "_floor_to_interval", lambda dt, delta: datetime(2026, 1, 1, 11))
+    monkeypatch.setattr(metrics, "analyze_cardinality", lambda *args, **kwargs: object())
+
+    def fake_generate_events(*args: object, **kwargs: object) -> GenerationResult:
+        with sync_session_factory() as session:
+            persisted_event = session.get(Event, event.id)
+            assert persisted_event is not None
+            return GenerationResult(
+                columns_analyzed=1,
+                col_meta={"event_name": {"is_json": False, "is_low": True}},
+                events_by_name={"event_name=Login": persisted_event},
+            )
+
+    monkeypatch.setattr(metrics, "generate_events", fake_generate_events)
+
+    FakeAdapter.rows = [
+        (datetime(2026, 1, 1, 8), "Login", 10),
+        (datetime(2026, 1, 1, 9), "Login", 10),
+    ]
+    first_result = metrics.collect_metrics.run(config_id)
+    assert first_result["anomalies_detected"] == 3
+    assert first_result["signals_added"] == 3
+
+    with sync_session_factory() as session:
+        anomalies = session.execute(select(MetricAnomaly)).scalars().all()
+        assert {(anomaly.scope_type, anomaly.direction) for anomaly in anomalies} == {
+            ("project_total", "drop"),
+            ("event_type", "drop"),
+            ("event", "drop"),
+        }
+        assert {anomaly.bucket for anomaly in anomalies} == {datetime(2026, 1, 1, 10)}
+
+    FakeAdapter.rows = [
+        (datetime(2026, 1, 1, 8), "Login", 10),
+        (datetime(2026, 1, 1, 9), "Login", 10),
+    ]
+    repeated_result = metrics.collect_metrics.run(config_id)
+    assert repeated_result["anomalies_detected"] == 3
+    assert repeated_result["signals_added"] == 0
+
+    FakeAdapter.rows = [
+        (datetime(2026, 1, 1, 8), "Login", 10),
+        (datetime(2026, 1, 1, 9), "Login", 10),
+        (datetime(2026, 1, 1, 10), "Login", 10),
+    ]
+    second_result = metrics.collect_metrics.run(config_id)
+    assert second_result["anomalies_detected"] == 0
+    assert second_result["signals_added"] == 0
+
+    with sync_session_factory() as session:
+        anomalies = session.execute(select(MetricAnomaly)).scalars().all()
+        assert anomalies == []
