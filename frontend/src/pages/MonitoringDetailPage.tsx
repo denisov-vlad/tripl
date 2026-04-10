@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
+import { resolveMetaFieldHref } from '@/lib/metaFields'
 import type { EventType, FieldDefinition, MetaFieldDefinition } from '@/types'
 import { AlertTriangle, ArrowLeft, CircleCheck, Eye, Tag } from 'lucide-react'
 
@@ -290,15 +291,16 @@ export default function MonitoringDetailPage() {
                 <div className="grid gap-3">
                   {event.meta_values.map(metaValue => {
                     const metaField = metaFieldMap.get(metaValue.meta_field_definition_id)
+                    const href = metaField ? resolveMetaFieldHref(metaField, metaValue.value) : null
                     return (
                       <div key={metaValue.id} className="flex gap-4 text-sm">
                         <span className="text-muted-foreground min-w-[140px] font-medium">
                           {metaField?.display_name ?? metaField?.name ?? 'Unknown'}
                         </span>
                         <span className="font-mono text-foreground/80 break-all">
-                          {metaField?.field_type === 'url' && metaValue.value ? (
+                          {href ? (
                             <a
-                              href={metaValue.value}
+                              href={href}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-primary underline"

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -183,5 +183,76 @@ describe('ProjectSettingsPage', () => {
     fireEvent.click(await screen.findByText('Main scan'))
 
     expect(await screen.findByText('+2 signals')).toBeInTheDocument()
+  })
+
+  it('creates a meta field with a link template', async () => {
+    let metaFields: unknown[] = []
+    const postBodies: unknown[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+
+      if (url.endsWith('/api/v1/projects/demo/meta-fields') && (!init || !init.method || init.method === 'GET')) {
+        return mockJsonResponse(metaFields)
+      }
+
+      if (url.endsWith('/api/v1/projects/demo/meta-fields') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body))
+        postBodies.push(body)
+        metaFields = [{
+          id: 'mf-1',
+          project_id: 'project-1',
+          name: body.name,
+          display_name: body.display_name,
+          field_type: body.field_type,
+          is_required: false,
+          enum_options: null,
+          default_value: null,
+          link_template: body.link_template,
+          order: 0,
+        }]
+        return mockJsonResponse(metaFields[0])
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/p/demo/settings/meta-fields']}>
+          <Routes>
+            <Route path="/p/:slug/settings/:tab" element={<ProjectSettingsPage />} />
+            <Route path="/p/:slug/settings" element={<ProjectSettingsPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Add Meta Field' }))[0])
+
+    const dialog = await screen.findByRole('dialog')
+    const inputs = within(dialog).getAllByRole('textbox')
+    fireEvent.change(inputs[0], { target: { value: 'jira_key' } })
+    fireEvent.change(inputs[1], { target: { value: 'Jira Key' } })
+    fireEvent.click(within(dialog).getByLabelText('Display as link'))
+    fireEvent.change(within(dialog).getByPlaceholderText('https://tracker.example.com/issues/${value}'), {
+      target: { value: 'https://tracker.example.com/issues/${value}' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => {
+      expect(postBodies).toContainEqual({
+        name: 'jira_key',
+        display_name: 'Jira Key',
+        field_type: 'string',
+        is_required: false,
+        link_template: 'https://tracker.example.com/issues/${value}',
+      })
+    })
+
+    expect(await screen.findByText('Link: https://tracker.example.com/issues/${value}')).toBeInTheDocument()
   })
 })

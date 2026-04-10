@@ -22,6 +22,7 @@ class MetaFieldDefinition(UUIDMixin, Base):
     is_required: Mapped[bool] = mapped_column(Boolean, default=False)
     enum_options: Mapped[list | None] = mapped_column(sa.JSON, nullable=True)
     default_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     order: Mapped[int] = mapped_column(Integer, default=0)
 
     project: Mapped[Project] = relationship(back_populates="meta_field_definitions")  # noqa: F821

@@ -11,10 +11,16 @@ async def test_create_meta_field(client: AsyncClient):
     await _setup_meta(client)
     resp = await client.post(
         "/api/v1/projects/meta-proj/meta-fields",
-        json={"name": "jira_link", "display_name": "Jira", "field_type": "url"},
+        json={
+            "name": "jira_link",
+            "display_name": "Jira",
+            "field_type": "string",
+            "link_template": "https://tracker.example.com/issues/${value}",
+        },
     )
     assert resp.status_code == 201
     assert resp.json()["name"] == "jira_link"
+    assert resp.json()["link_template"] == "https://tracker.example.com/issues/${value}"
 
 
 @pytest.mark.asyncio
@@ -62,10 +68,29 @@ async def test_update_meta_field(client: AsyncClient):
     mf_id = create.json()["id"]
     resp = await client.patch(
         f"/api/v1/projects/meta-upd/meta-fields/{mf_id}",
-        json={"display_name": "Jira Link"},
+        json={
+            "display_name": "Jira Link",
+            "link_template": "https://tracker.example.com/issues/${value}",
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["display_name"] == "Jira Link"
+    assert resp.json()["link_template"] == "https://tracker.example.com/issues/${value}"
+
+
+@pytest.mark.asyncio
+async def test_create_meta_field_rejects_invalid_link_template(client: AsyncClient):
+    await _setup_meta(client, "meta-invalid-template")
+    resp = await client.post(
+        "/api/v1/projects/meta-invalid-template/meta-fields",
+        json={
+            "name": "jira_key",
+            "display_name": "Jira Key",
+            "field_type": "string",
+            "link_template": "https://tracker.example.com/issues/",
+        },
+    )
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio

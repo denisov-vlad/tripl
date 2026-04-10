@@ -59,6 +59,7 @@ export interface MetaFieldDefinition {
   is_required: boolean
   enum_options: string[] | null
   default_value: string | null
+  link_template: string | null
   order: number
 }
 

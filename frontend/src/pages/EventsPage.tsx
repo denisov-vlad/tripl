@@ -38,6 +38,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/empty-state'
+import { META_FIELD_LINK_PLACEHOLDER, resolveMetaFieldHref } from '@/lib/metaFields'
 import { aggregateMetricPoints } from '@/lib/metrics'
 import {
   AlertTriangle,
@@ -907,9 +908,15 @@ export default function EventsPage() {
                   })}
                   {metaFields.map((mf: MetaFieldDefinition) => (
                     <TableCell key={mf.id} className="text-muted-foreground max-w-40 truncate text-xs">
-                      {mf.field_type === 'url' && mvMap[mf.id] ? (
-                        <a href={mvMap[mf.id]} target="_blank" rel="noopener noreferrer" className="text-primary underline-offset-4 hover:underline">
-                          Link
+                      {resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ? (
+                        <a
+                          href={resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ?? undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block truncate text-primary underline-offset-4 hover:underline"
+                          title={mvMap[mf.id]}
+                        >
+                          {mvMap[mf.id]}
                         </a>
                       ) : mf.field_type === 'boolean' && mvMap[mf.id] ? (
                         <Badge variant={mvMap[mf.id] === 'true' ? 'success' : 'secondary'} className="text-[10px]">
@@ -1217,12 +1224,19 @@ function EventForm({
                           {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                         </select>
                       ) : (
-                        <VariableInput
-                          value={metaValues[mf.id] ?? ''}
-                          onChange={v => setMetaValues({ ...metaValues, [mf.id]: v })}
-                          variables={varSuggestions}
-                          type={mf.field_type === 'url' ? 'url' : mf.field_type === 'date' ? 'date' : 'text'}
-                        />
+                        <>
+                          <VariableInput
+                            value={metaValues[mf.id] ?? ''}
+                            onChange={v => setMetaValues({ ...metaValues, [mf.id]: v })}
+                            variables={varSuggestions}
+                            type={mf.field_type === 'url' ? 'url' : mf.field_type === 'date' ? 'date' : 'text'}
+                          />
+                          {mf.link_template && (
+                            <p className="text-[11px] text-muted-foreground">
+                              Uses link template with <span className="font-mono">{META_FIELD_LINK_PLACEHOLDER}</span>.
+                            </p>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}

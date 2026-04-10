@@ -1,7 +1,20 @@
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+LINK_TEMPLATE_PLACEHOLDER = "${value}"
+
+
+def _normalize_link_template(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if LINK_TEMPLATE_PLACEHOLDER not in normalized:
+        raise ValueError(f"link_template must include {LINK_TEMPLATE_PLACEHOLDER}")
+    return normalized
 
 
 class MetaFieldCreate(BaseModel):
@@ -11,7 +24,10 @@ class MetaFieldCreate(BaseModel):
     is_required: bool = False
     enum_options: list[str] | None = None
     default_value: str | None = None
+    link_template: str | None = Field(None, max_length=2000)
     order: int = 0
+
+    _validate_link_template = field_validator("link_template")(_normalize_link_template)
 
 
 class MetaFieldUpdate(BaseModel):
@@ -20,7 +36,10 @@ class MetaFieldUpdate(BaseModel):
     is_required: bool | None = None
     enum_options: list[str] | None = None
     default_value: str | None = None
+    link_template: str | None = Field(None, max_length=2000)
     order: int | None = None
+
+    _validate_link_template = field_validator("link_template")(_normalize_link_template)
 
 
 class MetaFieldResponse(BaseModel):
@@ -32,6 +51,7 @@ class MetaFieldResponse(BaseModel):
     is_required: bool
     enum_options: list[Any] | None
     default_value: str | None
+    link_template: str | None
     order: int
 
     model_config = {"from_attributes": True}

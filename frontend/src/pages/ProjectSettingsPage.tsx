@@ -41,6 +41,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
+import { META_FIELD_LINK_PLACEHOLDER } from '@/lib/metaFields'
 import { Plus, Pencil, Trash2, ChevronDown, ArrowUp, ArrowDown, Play, Layers, Link2, Variable as VariableIcon, List, Search } from 'lucide-react'
 
 type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'monitoring' | 'scans'
@@ -536,6 +537,8 @@ function MetaFieldsTab({ slug }: { slug: string }) {
   const [enumOptions, setEnumOptions] = useState<string[]>([])
   const [enumInput, setEnumInput] = useState('')
   const [defaultValue, setDefaultValue] = useState('')
+  const [displayAsLink, setDisplayAsLink] = useState(false)
+  const [linkTemplate, setLinkTemplate] = useState('')
   const [editingMf, setEditingMf] = useState<MetaFieldDefinition | null>(null)
   const [editDisplayName, setEditDisplayName] = useState('')
   const [editFieldType, setEditFieldType] = useState('')
@@ -543,6 +546,8 @@ function MetaFieldsTab({ slug }: { slug: string }) {
   const [editEnumOptions, setEditEnumOptions] = useState<string[]>([])
   const [editEnumInput, setEditEnumInput] = useState('')
   const [editDefaultValue, setEditDefaultValue] = useState('')
+  const [editDisplayAsLink, setEditDisplayAsLink] = useState(false)
+  const [editLinkTemplate, setEditLinkTemplate] = useState('')
   const { confirm, dialog } = useConfirm()
 
   const metaFieldTypes = ['string', 'url', 'boolean', 'enum', 'date']
@@ -557,11 +562,13 @@ function MetaFieldsTab({ slug }: { slug: string }) {
       name, display_name: displayName, field_type: fieldType, is_required: isRequired,
       ...(fieldType === 'enum' && enumOptions.length > 0 ? { enum_options: enumOptions } : {}),
       ...(defaultValue ? { default_value: defaultValue } : {}),
+      ...(displayAsLink ? { link_template: linkTemplate.trim() || null } : {}),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['metaFields', slug] })
       setShowForm(false); setName(''); setDisplayName(''); setFieldType('string')
       setIsRequired(false); setEnumOptions([]); setEnumInput(''); setDefaultValue('')
+      setDisplayAsLink(false); setLinkTemplate('')
     },
   })
 
@@ -570,6 +577,7 @@ function MetaFieldsTab({ slug }: { slug: string }) {
       display_name: editDisplayName, field_type: editFieldType as MetaFieldDefinition['field_type'], is_required: editIsRequired,
       ...(editFieldType === 'enum' ? { enum_options: editEnumOptions } : { enum_options: null }),
       default_value: editDefaultValue || null,
+      link_template: editDisplayAsLink ? (editLinkTemplate.trim() || null) : null,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['metaFields', slug] })
@@ -600,6 +608,8 @@ function MetaFieldsTab({ slug }: { slug: string }) {
     setEditEnumOptions(mf.enum_options ?? [])
     setEditEnumInput('')
     setEditDefaultValue(mf.default_value ?? '')
+    setEditDisplayAsLink(Boolean(mf.link_template))
+    setEditLinkTemplate(mf.link_template ?? '')
   }
 
   const addMetaEnumOption = (option: string, target: 'create' | 'edit') => {
@@ -664,6 +674,26 @@ function MetaFieldsTab({ slug }: { slug: string }) {
                   )}
                 </div>
               )}
+              <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox id="meta-link-enabled" checked={displayAsLink} onCheckedChange={checked => setDisplayAsLink(Boolean(checked))} />
+                  <Label htmlFor="meta-link-enabled" className="cursor-pointer">Display as link</Label>
+                </div>
+                {displayAsLink && (
+                  <div className="mt-3 grid gap-2">
+                    <Label>Link Template</Label>
+                    <Input
+                      value={linkTemplate}
+                      onChange={e => setLinkTemplate(e.target.value)}
+                      placeholder={`https://tracker.example.com/issues/${META_FIELD_LINK_PLACEHOLDER}`}
+                      required={displayAsLink}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Use <span className="font-mono">{META_FIELD_LINK_PLACEHOLDER}</span>. Stored values stay short, for example <span className="font-mono">TASK-123</span>.
+                    </p>
+                  </div>
+                )}
+              </div>
               <div className="grid gap-2"><Label>Default Value (optional)</Label><Input value={defaultValue} onChange={e => setDefaultValue(e.target.value)} placeholder="Optional default" /></div>
               {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
@@ -717,6 +747,26 @@ function MetaFieldsTab({ slug }: { slug: string }) {
                   )}
                 </div>
               )}
+              <div className="rounded-md border border-border/70 bg-muted/20 p-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox id="edit-meta-link-enabled" checked={editDisplayAsLink} onCheckedChange={checked => setEditDisplayAsLink(Boolean(checked))} />
+                  <Label htmlFor="edit-meta-link-enabled" className="cursor-pointer">Display as link</Label>
+                </div>
+                {editDisplayAsLink && (
+                  <div className="mt-3 grid gap-2">
+                    <Label>Link Template</Label>
+                    <Input
+                      value={editLinkTemplate}
+                      onChange={e => setEditLinkTemplate(e.target.value)}
+                      placeholder={`https://tracker.example.com/issues/${META_FIELD_LINK_PLACEHOLDER}`}
+                      required={editDisplayAsLink}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Use <span className="font-mono">{META_FIELD_LINK_PLACEHOLDER}</span> to inject the stored value into the final URL.
+                    </p>
+                  </div>
+                )}
+              </div>
               {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
             </div>
             <DialogFooter>
@@ -731,9 +781,9 @@ function MetaFieldsTab({ slug }: { slug: string }) {
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Display</TableHead>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Display</TableHead>
                 <TableHead className="w-20">Type</TableHead>
                 <TableHead className="w-16">Req</TableHead>
                 <TableHead>Default</TableHead>
@@ -744,7 +794,16 @@ function MetaFieldsTab({ slug }: { slug: string }) {
               {metaFields.map((mf: MetaFieldDefinition) => (
                 <TableRow key={mf.id}>
                   <TableCell className="font-mono text-xs">{mf.name}</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">{mf.display_name}</TableCell>
+                  <TableCell className="text-xs">
+                    <div className="space-y-1">
+                      <div className="text-muted-foreground">{mf.display_name}</div>
+                      {mf.link_template && (
+                        <div className="font-mono text-[11px] text-muted-foreground/80">
+                          Link: {mf.link_template}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline" className="text-[10px]">{mf.field_type}</Badge>
                     {mf.field_type === 'enum' && mf.enum_options && <span className="text-muted-foreground text-[10px] ml-1">({mf.enum_options.length})</span>}
