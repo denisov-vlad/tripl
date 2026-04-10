@@ -8,7 +8,16 @@ from tripl.worker.analyzers.anomaly_detector import (
 
 
 def _bucket(hour: int) -> datetime:
-    return datetime(2026, 1, 1, hour, tzinfo=UTC)
+    return datetime(2026, 1, 1, tzinfo=UTC) + timedelta(hours=hour)
+
+
+def _daily_pattern_count(hour: int) -> int:
+    hour_of_day = hour % 24
+    if 9 <= hour_of_day < 12:
+        return 60
+    if 18 <= hour_of_day < 20:
+        return 35
+    return 12
 
 
 SETTINGS = AnomalyDetectionSettings(
@@ -128,3 +137,43 @@ def test_detect_anomalies_zero_fills_gaps_after_first_seen_bucket() -> None:
     assert anomalies[0].bucket == _bucket(8)
     assert anomalies[0].actual_count == 0
     assert anomalies[0].direction == "drop"
+
+
+def test_detect_anomalies_respects_repeating_daily_pattern_with_stl() -> None:
+    points = [
+        SeriesPoint(bucket=_bucket(hour), count=_daily_pattern_count(hour))
+        for hour in range(24 * 10)
+    ]
+
+    anomalies = detect_anomalies(
+        points,
+        interval=timedelta(hours=1),
+        evaluation_start=_bucket(24 * 10 - 1),
+        evaluation_end=_bucket(24 * 10),
+        settings=SETTINGS,
+    )
+
+    assert anomalies == []
+
+
+def test_detect_anomalies_detects_spike_on_top_of_repeating_daily_pattern() -> None:
+    points = [
+        SeriesPoint(bucket=_bucket(hour), count=_daily_pattern_count(hour))
+        for hour in range(24 * 10)
+    ]
+    anomaly_hour = 24 * 10 - 15  # 09:00 in the last day
+    points[anomaly_hour] = SeriesPoint(bucket=_bucket(anomaly_hour), count=160)
+
+    anomalies = detect_anomalies(
+        points,
+        interval=timedelta(hours=1),
+        evaluation_start=_bucket(anomaly_hour),
+        evaluation_end=_bucket(24 * 10),
+        settings=SETTINGS,
+    )
+
+    spike_anomaly = next(
+        anomaly for anomaly in anomalies if anomaly.bucket == _bucket(anomaly_hour)
+    )
+    assert spike_anomaly.direction == "spike"
+    assert spike_anomaly.expected_count > 30
