@@ -58,6 +58,7 @@ ACTIVE_SCAN_JOB_STATUSES = (
     ScanJobStatus.pending.value,
     ScanJobStatus.running.value,
 )
+RECENT_SIGNAL_WINDOW = timedelta(hours=24)
 
 
 def _get_sync_session() -> Session:
@@ -382,7 +383,25 @@ def _collect_scope_ids(
     return ids
 
 
-def _get_active_signal_scope_keys(
+def _classify_signal_state(
+    *,
+    anomaly_bucket: datetime,
+    latest_metric_bucket: datetime | None,
+) -> str | None:
+    if latest_metric_bucket is None or anomaly_bucket >= latest_metric_bucket:
+        return "latest_scan"
+
+    recent_cutoff = datetime.now(UTC)
+    if anomaly_bucket.tzinfo is None:
+        recent_cutoff = recent_cutoff.replace(tzinfo=None)
+    recent_cutoff -= RECENT_SIGNAL_WINDOW
+    if anomaly_bucket >= recent_cutoff:
+        return "recent"
+
+    return None
+
+
+def _get_visible_signal_scope_keys(
     session: Session,
     scan_config_id: uuid.UUID,
 ) -> set[tuple[str, str]]:
@@ -433,8 +452,11 @@ def _get_active_signal_scope_keys(
     return {
         key
         for key, anomaly in latest_anomalies.items()
-        if (latest_metric_bucket := latest_metrics.get(key)) is None
-        or anomaly.bucket >= latest_metric_bucket
+        if _classify_signal_state(
+            anomaly_bucket=anomaly.bucket,
+            latest_metric_bucket=latest_metrics.get(key),
+        )
+        is not None
     }
 
 
@@ -674,7 +696,7 @@ def collect_metrics(
             session.add(job)
         session.commit()
 
-        active_signals_before = _get_active_signal_scope_keys(session, config.id)
+        visible_signals_before = _get_visible_signal_scope_keys(session, config.id)
 
         ds = session.get(DataSource, config.data_source_id)
         if ds is None:
@@ -839,7 +861,7 @@ def collect_metrics(
                 evaluation_end=time_to,
             )
             signals_added = len(
-                _get_active_signal_scope_keys(session, config.id) - active_signals_before
+                _get_visible_signal_scope_keys(session, config.id) - visible_signals_before
             )
             result_summary = {
                 "events_created": total_created,
@@ -975,7 +997,7 @@ def collect_metrics(
             evaluation_end=time_to,
         )
         signals_added = len(
-            _get_active_signal_scope_keys(session, config.id) - active_signals_before
+            _get_visible_signal_scope_keys(session, config.id) - visible_signals_before
         )
 
         result_summary = {

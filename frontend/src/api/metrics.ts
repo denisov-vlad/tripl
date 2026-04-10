@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { EventMetricsResponse, MonitoringSignal } from '../types'
+import type { EventMetricsResponse, EventWindowMetrics, MonitoringSignal } from '../types'
 
 export interface EventsMetricsParams {
   event_type_id?: string
@@ -54,6 +54,11 @@ export const metricsApi = {
     const qs = sp.toString()
     return api.get<EventMetricsResponse>(`/projects/${slug}/event-types/${eventTypeId}/metrics${qs ? `?${qs}` : ''}`)
   },
+
+  getEventsWindowMetrics: (
+    slug: string,
+    data: { event_ids: string[]; time_from: string; time_to: string },
+  ) => api.post<EventWindowMetrics[]>(`/projects/${slug}/events/window-metrics`, data),
 
   getActiveSignals: (slug: string, eventIds?: string[]) => {
     const sp = new URLSearchParams()

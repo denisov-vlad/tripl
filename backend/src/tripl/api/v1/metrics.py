@@ -5,7 +5,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from tripl.api.deps import SessionDep
-from tripl.schemas.event_metric import EventMetricsResponse, MetricSignalResponse
+from tripl.schemas.event_metric import (
+    EventMetricsResponse,
+    EventWindowMetricsRequest,
+    EventWindowMetricsResponse,
+    MetricSignalResponse,
+)
 from tripl.services import metrics_service
 
 router = APIRouter(tags=["metrics"])
@@ -42,6 +47,24 @@ async def get_events_metrics(
         archived=archived,
         time_from=time_from,
         time_to=time_to,
+    )
+
+
+@router.post(
+    "/projects/{slug}/events/window-metrics",
+    response_model=list[EventWindowMetricsResponse],
+)
+async def get_events_window_metrics(
+    session: SessionDep,
+    slug: str,
+    data: EventWindowMetricsRequest,
+) -> list[EventWindowMetricsResponse]:
+    return await metrics_service.get_events_window_metrics(
+        session,
+        slug,
+        event_ids=data.event_ids,
+        time_from=data.time_from,
+        time_to=data.time_to,
     )
 
 

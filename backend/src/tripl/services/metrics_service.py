@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -16,7 +16,12 @@ from tripl.models.event_type import EventType
 from tripl.models.metric_anomaly import MetricAnomaly
 from tripl.models.project import Project
 from tripl.models.scan_config import ScanConfig
-from tripl.schemas.event_metric import EventMetricPoint, EventMetricsResponse, MetricSignalResponse
+from tripl.schemas.event_metric import (
+    EventMetricPoint,
+    EventMetricsResponse,
+    EventWindowMetricsResponse,
+    MetricSignalResponse,
+)
 from tripl.worker.analyzers.anomaly_detector import (
     SCOPE_EVENT,
     SCOPE_EVENT_TYPE,
@@ -25,6 +30,8 @@ from tripl.worker.analyzers.anomaly_detector import (
     expand_series,
 )
 from tripl.worker.utils.intervals import get_interval
+
+RECENT_SIGNAL_WINDOW = timedelta(hours=24)
 
 
 async def _resolve_project(session: AsyncSession, slug: str) -> Project:
@@ -219,11 +226,34 @@ async def _get_anomaly_rows(
     return list(result.scalars().all())
 
 
-def _signal_from_anomaly(anomaly: MetricAnomaly) -> MetricSignalResponse:
+def _classify_signal_state(
+    *,
+    anomaly_bucket: datetime,
+    latest_metric_bucket: datetime | None,
+) -> str | None:
+    if latest_metric_bucket is None or anomaly_bucket >= latest_metric_bucket:
+        return "latest_scan"
+
+    recent_cutoff = datetime.now(UTC)
+    if anomaly_bucket.tzinfo is None:
+        recent_cutoff = recent_cutoff.replace(tzinfo=None)
+    recent_cutoff -= RECENT_SIGNAL_WINDOW
+    if anomaly_bucket >= recent_cutoff:
+        return "recent"
+
+    return None
+
+
+def _signal_from_anomaly(
+    anomaly: MetricAnomaly,
+    *,
+    state: str,
+) -> MetricSignalResponse:
     return MetricSignalResponse(
         scan_config_id=anomaly.scan_config_id,
         scope_type=anomaly.scope_type,
         scope_ref=anomaly.scope_ref,
+        state=state,
         event_id=anomaly.event_id,
         event_type_id=anomaly.event_type_id,
         bucket=anomaly.bucket,
@@ -311,11 +341,15 @@ def _build_metrics_response(
         ]
 
     latest_signal = None
-    if data:
-        last_bucket = data[-1].bucket
-        last_anomaly = anomalies_by_bucket.get(last_bucket)
-        if last_anomaly is not None:
-            latest_signal = _signal_from_anomaly(last_anomaly)
+    latest_metric_bucket = data[-1].bucket if data else None
+    if anomalies:
+        latest_anomaly = anomalies[-1]
+        state = _classify_signal_state(
+            anomaly_bucket=latest_anomaly.bucket,
+            latest_metric_bucket=latest_metric_bucket,
+        )
+        if state is not None:
+            latest_signal = _signal_from_anomaly(latest_anomaly, state=state)
 
     return EventMetricsResponse(
         scope=scope,
@@ -429,6 +463,144 @@ async def get_events_metrics(
         interval=interval,
         data=[EventMetricPoint(bucket=bucket, count=count) for bucket, count in rows],
     )
+
+
+async def get_events_window_metrics(
+    session: AsyncSession,
+    slug: str,
+    *,
+    event_ids: list[uuid.UUID],
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+) -> list[EventWindowMetricsResponse]:
+    if not event_ids:
+        return []
+
+    project = await _resolve_project(session, slug)
+    valid_event_ids = list(
+        (
+            await session.execute(
+                select(Event.id).where(
+                    Event.project_id == project.id,
+                    Event.id.in_(event_ids),
+                )
+            )
+        ).scalars()
+    )
+    if not valid_event_ids:
+        return []
+
+    latest_rows = (
+        await session.execute(
+            select(EventMetric.event_id, EventMetric.scan_config_id, EventMetric.bucket)
+            .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+            .where(
+                ScanConfig.project_id == project.id,
+                EventMetric.event_id.in_(valid_event_ids),
+            )
+            .order_by(EventMetric.event_id, EventMetric.bucket.desc())
+        )
+    ).all()
+
+    latest_scan_by_event: dict[uuid.UUID, uuid.UUID] = {}
+    for event_id, scan_config_id, _bucket in latest_rows:
+        if event_id is not None and event_id not in latest_scan_by_event:
+            latest_scan_by_event[event_id] = scan_config_id
+
+    interval_by_scan: dict[uuid.UUID, str | None] = {}
+    if latest_scan_by_event:
+        interval_rows = (
+            await session.execute(
+                select(ScanConfig.id, ScanConfig.interval).where(
+                    ScanConfig.id.in_(set(latest_scan_by_event.values()))
+                )
+            )
+        ).all()
+        interval_by_scan = {scan_config_id: interval for scan_config_id, interval in interval_rows}
+
+    metric_rows_by_event: dict[uuid.UUID, list[tuple[datetime, int]]] = {
+        event_id: [] for event_id in valid_event_ids
+    }
+    if latest_scan_by_event:
+        metric_query = (
+            select(
+                EventMetric.event_id,
+                EventMetric.scan_config_id,
+                EventMetric.bucket,
+                EventMetric.count,
+            )
+            .where(
+                EventMetric.event_id.in_(valid_event_ids),
+                EventMetric.scan_config_id.in_(set(latest_scan_by_event.values())),
+            )
+            .order_by(EventMetric.event_id, EventMetric.bucket)
+        )
+        if time_from is not None:
+            metric_query = metric_query.where(EventMetric.bucket >= time_from)
+        if time_to is not None:
+            metric_query = metric_query.where(EventMetric.bucket < time_to)
+
+        for event_id, scan_config_id, bucket, count in (await session.execute(metric_query)).all():
+            if event_id is None:
+                continue
+            if latest_scan_by_event.get(event_id) != scan_config_id:
+                continue
+            metric_rows_by_event.setdefault(event_id, []).append((bucket, int(count)))
+
+    anomaly_rows_by_event: dict[uuid.UUID, list[MetricAnomaly]] = {
+        event_id: [] for event_id in valid_event_ids
+    }
+    if latest_scan_by_event:
+        anomaly_query = (
+            select(MetricAnomaly)
+            .where(
+                MetricAnomaly.scope_type == SCOPE_EVENT,
+                MetricAnomaly.event_id.in_(valid_event_ids),
+                MetricAnomaly.scan_config_id.in_(set(latest_scan_by_event.values())),
+            )
+            .order_by(MetricAnomaly.event_id, MetricAnomaly.bucket)
+        )
+        if time_from is not None:
+            anomaly_query = anomaly_query.where(MetricAnomaly.bucket >= time_from)
+        if time_to is not None:
+            anomaly_query = anomaly_query.where(MetricAnomaly.bucket < time_to)
+
+        for anomaly in (await session.execute(anomaly_query)).scalars():
+            if anomaly.event_id is None:
+                continue
+            if latest_scan_by_event.get(anomaly.event_id) != anomaly.scan_config_id:
+                continue
+            anomaly_rows_by_event.setdefault(anomaly.event_id, []).append(anomaly)
+
+    valid_event_ids_set = set(valid_event_ids)
+    responses: list[EventWindowMetricsResponse] = []
+    for event_id in event_ids:
+        if event_id not in valid_event_ids_set:
+            continue
+
+        scan_config_id = latest_scan_by_event.get(event_id)
+        interval = interval_by_scan.get(scan_config_id) if scan_config_id is not None else None
+        metric_rows = metric_rows_by_event.get(event_id, [])
+        metrics_response = _build_metrics_response(
+            scope=SCOPE_EVENT,
+            scan_config_id=scan_config_id,
+            scope_ref=str(event_id),
+            interval=interval,
+            metric_rows=metric_rows,
+            anomalies=anomaly_rows_by_event.get(event_id, []),
+            event_id=event_id,
+        )
+        responses.append(
+            EventWindowMetricsResponse(
+                event_id=event_id,
+                scan_config_id=scan_config_id,
+                interval=interval,
+                total_count=sum(count for _bucket, count in metric_rows),
+                data=metrics_response.data,
+            )
+        )
+
+    return responses
 
 
 async def get_event_type_metrics(
@@ -662,8 +834,12 @@ async def get_active_signals(
         for anomaly in latest_anomalies:
             key = (anomaly.scan_config_id, anomaly.scope_type, anomaly.scope_ref)
             latest_metric_bucket = latest_metrics.get(key)
-            if latest_metric_bucket is None or anomaly.bucket >= latest_metric_bucket:
-                signals.append(_signal_from_anomaly(anomaly))
+            state = _classify_signal_state(
+                anomaly_bucket=anomaly.bucket,
+                latest_metric_bucket=latest_metric_bucket,
+            )
+            if state is not None:
+                signals.append(_signal_from_anomaly(anomaly, state=state))
 
     signals.sort(key=lambda signal: signal.bucket, reverse=True)
     return signals

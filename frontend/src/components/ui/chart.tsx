@@ -22,6 +22,13 @@ interface MetricsChartProps {
   seriesLabel?: string
 }
 
+interface MiniMetricsChartProps {
+  data: EventMetricPoint[]
+  className?: string
+  color?: string
+  height?: number
+}
+
 function formatTick(dateStr: string, granularity: MetricsGranularity) {
   const d = new Date(dateStr)
 
@@ -194,6 +201,63 @@ export function MetricsChart({
               )
             }}
             activeDot={{ r: 4, strokeWidth: 0 }}
+          />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+export function MiniMetricsChart({
+  data,
+  className,
+  color,
+  height = 72,
+}: MiniMetricsChartProps) {
+  const chartColor = color || 'var(--chart-1)'
+  const gradientId = useId().replace(/:/g, '')
+
+  if (!data.length) {
+    return (
+      <div
+        className={cn('flex items-center justify-center text-[11px] text-muted-foreground', className)}
+        style={{ height }}
+      >
+        No recent events
+      </div>
+    )
+  }
+
+  return (
+    <div className={cn('w-full', className)} style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 4, right: 2, bottom: 2, left: 2 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={chartColor} stopOpacity={0.25} />
+              <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Area
+            type="monotone"
+            dataKey="count"
+            stroke={chartColor}
+            fill={`url(#${gradientId})`}
+            strokeWidth={2}
+            dot={props => {
+              if (!props.payload?.is_anomaly) return <></>
+              return (
+                <circle
+                  cx={props.cx}
+                  cy={props.cy}
+                  r={3}
+                  fill="var(--destructive)"
+                  stroke="var(--background)"
+                  strokeWidth={1.5}
+                />
+              )
+            }}
+            activeDot={false}
           />
         </ComposedChart>
       </ResponsiveContainer>

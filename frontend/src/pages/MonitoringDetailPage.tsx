@@ -120,6 +120,12 @@ export default function MonitoringDetailPage() {
     return event?.description || 'Monitoring detail for the selected event.'
   })()
   const latestSignal = metrics?.latest_signal
+  const latestSignalBadgeClassName = latestSignal?.state === 'recent'
+    ? 'gap-1 border-amber-500/60 bg-amber-400/15 text-amber-800'
+    : 'gap-1'
+  const latestSignalLabel = latestSignal
+    ? `${latestSignal.state === 'recent' ? 'Recent' : 'Latest scan'} ${latestSignal.direction === 'drop' ? 'drop' : 'spike'} anomaly`
+    : null
 
   return (
     <div className="space-y-6 p-6 max-w-5xl mx-auto">
@@ -150,10 +156,13 @@ export default function MonitoringDetailPage() {
               <Eye className="h-3 w-3" /> Reviewed
             </Badge>
           )}
-          {latestSignal && (
-            <Badge variant="destructive" className="gap-1">
+          {latestSignal && latestSignalLabel && (
+            <Badge
+              variant={latestSignal.state === 'recent' ? 'outline' : 'destructive'}
+              className={latestSignalBadgeClassName}
+            >
               <AlertTriangle className="h-3 w-3" />
-              {latestSignal.direction === 'drop' ? 'Drop anomaly' : 'Spike anomaly'}
+              {latestSignalLabel}
             </Badge>
           )}
         </div>

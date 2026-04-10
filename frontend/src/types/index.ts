@@ -196,6 +196,7 @@ export interface MonitoringSignal {
   scan_config_id: string
   scope_type: 'project_total' | 'event_type' | 'event'
   scope_ref: string
+  state: 'latest_scan' | 'recent'
   event_id: string | null
   event_type_id: string | null
   bucket: string
@@ -213,5 +214,13 @@ export interface EventMetricsResponse {
   event_type_id: string | null
   interval: string | null
   latest_signal: MonitoringSignal | null
+  data: EventMetricPoint[]
+}
+
+export interface EventWindowMetrics {
+  event_id: string
+  scan_config_id: string | null
+  interval: string | null
+  total_count: number
   data: EventMetricPoint[]
 }

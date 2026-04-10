@@ -17,6 +17,7 @@ class MetricSignalResponse(BaseModel):
     scan_config_id: uuid.UUID
     scope_type: str
     scope_ref: str
+    state: str
     event_id: uuid.UUID | None = None
     event_type_id: uuid.UUID | None = None
     bucket: datetime
@@ -34,4 +35,18 @@ class EventMetricsResponse(BaseModel):
     event_type_id: uuid.UUID | None = None
     interval: str | None = None
     latest_signal: MetricSignalResponse | None = None
+    data: list[EventMetricPoint]
+
+
+class EventWindowMetricsRequest(BaseModel):
+    event_ids: list[uuid.UUID]
+    time_from: datetime | None = None
+    time_to: datetime | None = None
+
+
+class EventWindowMetricsResponse(BaseModel):
+    event_id: uuid.UUID
+    scan_config_id: uuid.UUID | None = None
+    interval: str | None = None
+    total_count: int
     data: list[EventMetricPoint]

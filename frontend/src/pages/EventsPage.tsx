@@ -9,6 +9,7 @@ import { variablesApi } from '@/api/variables'
 import { useConfirm } from '@/hooks/useConfirm'
 import type {
   Event as TEvent,
+  EventMetricPoint,
   EventType,
   FieldDefinition,
   MetaFieldDefinition,
@@ -17,7 +18,7 @@ import type {
 } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { MetricsChart } from '@/components/ui/chart'
+import { MetricsChart, MiniMetricsChart } from '@/components/ui/chart'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -35,10 +36,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/empty-state'
 import { aggregateMetricPoints } from '@/lib/metrics'
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Archive,
   ArchiveRestore,
   BarChart3,
@@ -55,6 +59,36 @@ import {
 } from 'lucide-react'
 
 const TAB_METRICS_RANGE_DAYS = 30
+const ROW_METRICS_RANGE_HOURS = 24
+const compactCountFormatter = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  compactDisplay: 'short',
+  maximumFractionDigits: 0,
+})
+
+function formatCompactCount(value: number) {
+  return compactCountFormatter.format(value).toLowerCase()
+}
+
+function getSignalTone(signal: MonitoringSignal) {
+  if (signal.state === 'latest_scan') {
+    return {
+      compact: 'text-destructive',
+      regular: 'bg-destructive text-destructive-foreground',
+      button: 'destructive' as const,
+      buttonClassName: '',
+      title: 'Open latest scan anomaly',
+    }
+  }
+
+  return {
+    compact: 'text-amber-500',
+    regular: 'bg-amber-400 text-amber-950 ring-1 ring-amber-500/70',
+    button: 'outline' as const,
+    buttonClassName: 'border-amber-500/60 bg-amber-400/15 text-amber-800 hover:bg-amber-400/20',
+    title: 'Open recent anomaly',
+  }
+}
 
 function getMonitoringPath(slug: string, signal: MonitoringSignal) {
   if (signal.scope_type === 'project_total') {
@@ -94,17 +128,56 @@ function SignalLink({
 }) {
   if (!signal) return null
 
+  const tone = getSignalTone(signal)
+  const CompactIcon = signal.direction === 'spike' ? ArrowUp : ArrowDown
+
   return (
     <Link
       to={getMonitoringPath(slug, signal)}
       className={compact
-        ? 'inline-flex h-2.5 w-2.5 rounded-full bg-destructive align-middle'
-        : 'inline-flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground'}
-      title="Open anomaly detail"
-      aria-label="Open anomaly detail"
+        ? `relative top-px inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center ${tone.compact}`
+        : `inline-flex h-5 w-5 items-center justify-center rounded-full ${tone.regular}`}
+      title={tone.title}
+      aria-label={tone.title}
     >
-      {compact ? null : <AlertTriangle className="h-3 w-3" />}
+      {compact ? <CompactIcon className="h-3.5 w-3.5 stroke-[2.25]" /> : <AlertTriangle className="h-3 w-3" />}
     </Link>
+  )
+}
+
+function EventWindowMetricsCell({
+  eventName,
+  color,
+  totalCount,
+  data,
+}: {
+  eventName: string
+  color: string
+  totalCount: number | undefined
+  data: EventMetricPoint[]
+}) {
+  const label = totalCount == null ? '—' : formatCompactCount(totalCount)
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" className="font-mono text-xs text-muted-foreground hover:text-foreground">
+          {label}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="w-64 border bg-background p-0 text-foreground shadow-md" side="top">
+        <div className="space-y-3 p-3">
+          <div className="space-y-1">
+            <p className="truncate text-xs font-medium">{eventName}</p>
+            <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+              <span>Last 24 hours</span>
+              <span>{formatCompactCount(totalCount ?? 0)} events</span>
+            </div>
+          </div>
+          <MiniMetricsChart data={data} color={color} height={72} />
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -238,6 +311,11 @@ export default function EventsPage() {
     const to = new Date()
     const from = new Date(to.getTime() - TAB_METRICS_RANGE_DAYS * 24 * 60 * 60 * 1000)
     return { from: from.toISOString(), to: to.toISOString() }
+  }, [])
+  const rowMetricsRange = useMemo(() => {
+    const to = new Date()
+    const from = new Date(to.getTime() - ROW_METRICS_RANGE_HOURS * 60 * 60 * 1000)
+    return { time_from: from.toISOString(), time_to: to.toISOString() }
   }, [])
 
   const { data: eventsData } = useQuery({
@@ -462,6 +540,32 @@ export default function EventsPage() {
     Object.values(fieldFilters).some(v => v !== '') ||
     Object.values(metaFilters).some(v => v !== '')
 
+  const eventIdsForWindowMetrics = useMemo(
+    () => events.map(event => event.id),
+    [events],
+  )
+
+  const { data: eventWindowMetrics = [] } = useQuery({
+    queryKey: [
+      'eventWindowMetrics',
+      slug,
+      eventIdsForWindowMetrics,
+      rowMetricsRange.time_from,
+      rowMetricsRange.time_to,
+    ],
+    queryFn: () => metricsApi.getEventsWindowMetrics(slug!, {
+      event_ids: eventIdsForWindowMetrics,
+      ...rowMetricsRange,
+    }),
+    enabled: !!slug && eventIdsForWindowMetrics.length > 0,
+    refetchInterval: 60000,
+  })
+
+  const eventWindowMetricsByEvent = useMemo(
+    () => new Map(eventWindowMetrics.map(metric => [metric.event_id, metric])),
+    [eventWindowMetrics],
+  )
+
   const clearAllFilters = () => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
@@ -666,7 +770,12 @@ export default function EventsPage() {
             </div>
             <div className="flex items-center gap-2">
               {activeTabSignal && (
-                <Button variant="destructive" size="sm" asChild>
+                <Button
+                  variant={getSignalTone(activeTabSignal).button}
+                  size="sm"
+                  className={getSignalTone(activeTabSignal).buttonClassName}
+                  asChild
+                >
                   <Link to={getMonitoringPath(slug!, activeTabSignal)}>
                     <AlertTriangle className="mr-1 h-3.5 w-3.5" />
                     View signal
@@ -708,12 +817,14 @@ export default function EventsPage() {
       </Collapsible>
 
       {/* Events Table */}
+      <TooltipProvider delayDuration={0}>
       <div className="rounded-lg border overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
+              <TableHead>Event</TableHead>
               {!activeEt && <TableHead>Type</TableHead>}
+              <TableHead className="w-24 text-right">24h</TableHead>
               <TableHead>Tags</TableHead>
               {fieldColumns.map(f => (
                 <TableHead key={f.id}>{f.display_name}</TableHead>
@@ -731,14 +842,13 @@ export default function EventsPage() {
               return (
                 <TableRow key={ev.id}>
                   <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
+                    <div className="inline-flex max-w-full items-center gap-1.5 align-middle">
                       <button
-                        className="hover:underline underline-offset-4 text-left"
+                        className="truncate text-left hover:underline underline-offset-4"
                         onClick={() => navigate(`/p/${slug}/monitoring/event/${ev.id}`)}
                       >
                         {ev.name}
                       </button>
-                      <SignalLink slug={slug!} signal={eventSignals.get(ev.id)} compact />
                     </div>
                   </TableCell>
                   {!activeEt && (
@@ -753,6 +863,17 @@ export default function EventsPage() {
                       </Badge>
                     </TableCell>
                   )}
+                  <TableCell className="text-right">
+                    <div className="inline-flex items-center justify-end gap-1.5 align-middle">
+                      <SignalLink slug={slug!} signal={eventSignals.get(ev.id)} compact />
+                      <EventWindowMetricsCell
+                        eventName={ev.name}
+                        color={ev.event_type.color}
+                        totalCount={eventWindowMetricsByEvent.get(ev.id)?.total_count}
+                        data={eventWindowMetricsByEvent.get(ev.id)?.data ?? []}
+                      />
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {ev.tags.map(t => (
@@ -862,6 +983,7 @@ export default function EventsPage() {
           </TableBody>
         </Table>
       </div>
+      </TooltipProvider>
     </div>
   )
 }
