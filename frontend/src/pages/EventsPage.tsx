@@ -39,7 +39,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/empty-state'
 import { META_FIELD_LINK_PLACEHOLDER, resolveMetaFieldHref } from '@/lib/metaFields'
-import { aggregateMetricPoints } from '@/lib/metrics'
+import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
 import {
   AlertTriangle,
   ArrowDown,
@@ -52,6 +52,7 @@ import {
   CircleCheck,
   Eye,
   Filter,
+  MoreHorizontal,
   Pencil,
   Plus,
   Search,
@@ -59,8 +60,19 @@ import {
   X,
 } from 'lucide-react'
 
-const TAB_METRICS_RANGE_DAYS = 30
+const TAB_METRICS_RANGE_DAYS_DEFAULT = 7
 const ROW_METRICS_RANGE_HOURS = 24
+const TAB_METRICS_RANGE_OPTIONS = [
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+] as const
+const TAB_METRICS_GRANULARITY_OPTIONS: { value: MetricsGranularity; label: string }[] = [
+  { value: 'hour', label: 'Hours' },
+  { value: 'day', label: 'Days' },
+  { value: 'week', label: 'Weeks' },
+  { value: 'month', label: 'Months' },
+]
 const compactCountFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   compactDisplay: 'short',
@@ -116,6 +128,35 @@ function mapLatestSignals(signals: MonitoringSignal[], scopeType: MonitoringSign
       if (!entries.has(signal.scope_ref)) entries.set(signal.scope_ref, signal)
     })
   return entries
+}
+
+function deriveRowSignalFromMetrics(
+  eventId: string,
+  scanConfigId: string | null | undefined,
+  points: EventMetricPoint[],
+): MonitoringSignal | null {
+  const anomalyPoints = points.filter(
+    point => point.is_anomaly && point.anomaly_direction !== null,
+  )
+  if (!anomalyPoints.length) return null
+
+  const latestAnomaly = anomalyPoints[anomalyPoints.length - 1]
+  const latestBucket = points[points.length - 1]?.bucket ?? latestAnomaly.bucket
+
+  return {
+    scan_config_id: scanConfigId ?? '',
+    scope_type: 'event',
+    scope_ref: eventId,
+    state: latestAnomaly.bucket === latestBucket ? 'latest_scan' : 'recent',
+    event_id: eventId,
+    event_type_id: null,
+    bucket: latestAnomaly.bucket,
+    actual_count: latestAnomaly.count,
+    expected_count: latestAnomaly.expected_count ?? latestAnomaly.count,
+    stddev: 0,
+    z_score: latestAnomaly.z_score ?? 0,
+    direction: latestAnomaly.anomaly_direction ?? 'drop',
+  }
 }
 
 function SignalLink({
@@ -179,6 +220,157 @@ function EventWindowMetricsCell({
         </div>
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+function EventRowActions({
+  event,
+  slug,
+  onEdit,
+  onToggleReviewed,
+  onToggleImplemented,
+  onToggleArchived,
+  onDelete,
+}: {
+  event: TEvent
+  slug: string
+  onEdit: () => void
+  onToggleReviewed: () => void
+  onToggleImplemented: () => void
+  onToggleArchived: () => void
+  onDelete: () => void
+}) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const openActions = useCallback(() => {
+    clearCloseTimer()
+    setIsExpanded(true)
+  }, [clearCloseTimer])
+
+  const scheduleClose = useCallback(() => {
+    clearCloseTimer()
+    closeTimerRef.current = window.setTimeout(() => {
+      setIsExpanded(false)
+      closeTimerRef.current = null
+    }, 140)
+  }, [clearCloseTimer])
+
+  useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex items-center justify-end"
+      onMouseLeave={scheduleClose}
+      onBlur={event_ => {
+        if (!containerRef.current?.contains(event_.relatedTarget as Node | null)) {
+          scheduleClose()
+        }
+      }}
+    >
+      <div className="relative flex items-center justify-end">
+        <div
+          className={`absolute right-[calc(100%-1px)] top-1/2 z-50 flex -translate-y-1/2 items-center gap-1 rounded-l-lg border border-r-0 bg-background/95 p-1 shadow-lg backdrop-blur-sm transition-all duration-200 ease-out ${
+            isExpanded
+              ? 'pointer-events-auto translate-x-0 opacity-100'
+              : 'pointer-events-none translate-x-2 opacity-0'
+          }`}
+          onMouseEnter={openActions}
+        >
+          <Button
+            variant={event.implemented ? 'default' : 'ghost'}
+            size="icon"
+            className="h-7 w-7"
+            title={event.implemented ? 'Implemented' : 'Not implemented'}
+            aria-label="Toggle implemented status"
+            onClick={onToggleImplemented}
+          >
+            <CircleCheck className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="View metrics"
+            aria-label="View metrics"
+            asChild
+          >
+            <Link to={`/p/${slug}/monitoring/event/${event.id}`}>
+              <BarChart3 className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground"
+            title={event.archived ? 'Unarchive' : 'Archive'}
+            aria-label={event.archived ? 'Unarchive event' : 'Archive event'}
+            onClick={onToggleArchived}
+          >
+            {event.archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            title="Delete event"
+            aria-label="Delete event"
+            onClick={onDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <div className={`relative z-10 flex items-center gap-1 rounded-lg border bg-background/95 p-1 backdrop-blur-sm transition-shadow ${isExpanded ? 'shadow-lg' : 'shadow-sm'}`}>
+          <Button
+            variant={event.reviewed ? 'default' : 'ghost'}
+            size="icon"
+            className="h-7 w-7"
+            title={event.reviewed ? 'Reviewed' : 'Not reviewed'}
+            aria-label="Toggle review status"
+            onClick={onToggleReviewed}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Edit event"
+            aria-label="Edit event"
+            onClick={onEdit}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="More actions"
+            aria-label="More actions"
+            onMouseEnter={openActions}
+            onFocus={openActions}
+            onClick={() => {
+              if (isExpanded) {
+                scheduleClose()
+              } else {
+                openActions()
+              }
+            }}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -278,6 +470,8 @@ export default function EventsPage() {
   const [editingEvent, setEditingEvent] = useState<TEvent | null>(null)
   const [expandedCell, setExpandedCell] = useState<string | null>(null)
   const [openCharts, setOpenCharts] = useState<Record<string, boolean>>({})
+  const [tabMetricsRangeDays, setTabMetricsRangeDays] = useState(TAB_METRICS_RANGE_DAYS_DEFAULT)
+  const [tabMetricsGranularity, setTabMetricsGranularity] = useState<MetricsGranularity>('hour')
   const { confirm, dialog } = useConfirm()
 
   // Open event from URL param
@@ -310,9 +504,9 @@ export default function EventsPage() {
   const filterArchivedForQuery = activeTab === 'archived' ? true : false
   const tabMetricsRange = useMemo(() => {
     const to = new Date()
-    const from = new Date(to.getTime() - TAB_METRICS_RANGE_DAYS * 24 * 60 * 60 * 1000)
+    const from = new Date(to.getTime() - tabMetricsRangeDays * 24 * 60 * 60 * 1000)
     return { from: from.toISOString(), to: to.toISOString() }
-  }, [])
+  }, [tabMetricsRangeDays])
   const rowMetricsRange = useMemo(() => {
     const to = new Date()
     const from = new Date(to.getTime() - ROW_METRICS_RANGE_HOURS * 60 * 60 * 1000)
@@ -333,7 +527,7 @@ export default function EventsPage() {
   })
 
   const { data: tabMetrics, isLoading: tabMetricsLoading } = useQuery({
-    queryKey: ['eventsMetrics', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
+    queryKey: ['eventsMetrics', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery, tabMetricsRange.from, tabMetricsRange.to],
     queryFn: () => metricsApi.getEventsMetrics(slug!, {
       event_type_id: filterEtId,
       search: search || undefined,
@@ -435,8 +629,8 @@ export default function EventsPage() {
     setOpenCharts(prev => ({ ...prev, [activeTab]: open }))
   }, [activeTab])
   const tabMetricsData = useMemo(
-    () => aggregateMetricPoints(tabMetrics?.data ?? [], 'day'),
-    [tabMetrics?.data],
+    () => aggregateMetricPoints(tabMetrics?.data ?? [], tabMetricsGranularity),
+    [tabMetrics?.data, tabMetricsGranularity],
   )
   const projectTotalSignal = useMemo(
     () => pickLatestSignal(activeSignals, 'project_total'),
@@ -566,6 +760,26 @@ export default function EventsPage() {
     () => new Map(eventWindowMetrics.map(metric => [metric.event_id, metric])),
     [eventWindowMetrics],
   )
+  const eventRowSignals = useMemo(() => {
+    const entries = new Map<string, MonitoringSignal>()
+    for (const event of events) {
+      const activeSignal = eventSignals.get(event.id)
+      if (activeSignal) {
+        entries.set(event.id, activeSignal)
+        continue
+      }
+      const metric = eventWindowMetricsByEvent.get(event.id)
+      const derivedSignal = deriveRowSignalFromMetrics(
+        event.id,
+        metric?.scan_config_id,
+        metric?.data ?? [],
+      )
+      if (derivedSignal) {
+        entries.set(event.id, derivedSignal)
+      }
+    }
+    return entries
+  }, [eventSignals, eventWindowMetricsByEvent, events])
 
   const clearAllFilters = () => {
     setSearchParams(prev => {
@@ -766,10 +980,39 @@ export default function EventsPage() {
             <div>
               <h2 className="text-sm font-semibold">{activeTabLabel} Dynamics</h2>
               <p className="text-xs text-muted-foreground">
-                Last {TAB_METRICS_RANGE_DAYS} days, grouped by day.
+                Last {tabMetricsRangeDays} days, grouped by {tabMetricsGranularity}.
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
+                {TAB_METRICS_RANGE_OPTIONS.map(option => (
+                  <Button
+                    key={option.days}
+                    type="button"
+                    variant={tabMetricsRangeDays === option.days ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setTabMetricsRangeDays(option.days)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
+              <Select
+                value={tabMetricsGranularity}
+                onValueChange={value => setTabMetricsGranularity(value as MetricsGranularity)}
+              >
+                <SelectTrigger className="h-8 w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TAB_METRICS_GRANULARITY_OPTIONS.map(option => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {activeTabSignal && (
                 <Button
                   variant={getSignalTone(activeTabSignal).button}
@@ -803,7 +1046,7 @@ export default function EventsPage() {
                     data={tabMetricsData}
                     height={240}
                     color={activeEt?.color || 'var(--chart-3)'}
-                    granularity="day"
+                    granularity={tabMetricsGranularity}
                   />
                   {tabMetrics?.interval && (
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -833,7 +1076,9 @@ export default function EventsPage() {
               {metaFields.map((mf: MetaFieldDefinition) => (
                 <TableHead key={mf.id} className="text-muted-foreground">{mf.display_name}</TableHead>
               ))}
-              <TableHead className="w-36"></TableHead>
+              <TableHead className="sticky right-0 z-20 w-[7.5rem] border-l bg-background text-right">
+                Actions
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -866,7 +1111,7 @@ export default function EventsPage() {
                   )}
                   <TableCell className="text-right">
                     <div className="inline-flex items-center justify-end gap-1.5 align-middle">
-                      <SignalLink slug={slug!} signal={eventSignals.get(ev.id)} compact />
+                      <SignalLink slug={slug!} signal={eventRowSignals.get(ev.id)} compact />
                       <EventWindowMetricsCell
                         eventName={ev.name}
                         color={ev.event_type.color}
@@ -925,57 +1170,16 @@ export default function EventsPage() {
                       ) : mvMap[mf.id] ?? ''}
                     </TableCell>
                   ))}
-                  <TableCell>
-                    <div className="flex gap-1 items-center">
-                      <Button
-                        variant={ev.implemented ? 'default' : 'ghost'}
-                        size="icon"
-                        className="h-7 w-7"
-                        title={ev.implemented ? 'Implemented' : 'Not implemented'}
-                        onClick={() => toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })}
-                      >
-                        <CircleCheck className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant={ev.reviewed ? 'default' : 'ghost'}
-                        size="icon"
-                        className="h-7 w-7"
-                        title={ev.reviewed ? 'Reviewed' : 'Not reviewed'}
-                        onClick={() => toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })}
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        title="View metrics"
-                        asChild
-                      >
-                        <Link to={`/p/${slug}/monitoring/event/${ev.id}`}>
-                          <BarChart3 className="h-3.5 w-3.5" />
-                        </Link>
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-7 w-7"
-                        onClick={() => openEvent(ev)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground"
-                        title={ev.archived ? 'Unarchive' : 'Archive'}
-                        onClick={() => toggleArchivedMut.mutate({ id: ev.id, archived: !ev.archived })}
-                      >
-                        {ev.archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleDelete(ev)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                  <TableCell className="sticky right-0 z-10 border-l bg-background/95 pl-3 pr-2 backdrop-blur-sm hover:z-40 focus-within:z-40">
+                    <EventRowActions
+                      event={ev}
+                      slug={slug!}
+                      onEdit={() => openEvent(ev)}
+                      onToggleReviewed={() => toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })}
+                      onToggleImplemented={() => toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })}
+                      onToggleArchived={() => toggleArchivedMut.mutate({ id: ev.id, archived: !ev.archived })}
+                      onDelete={() => handleDelete(ev)}
+                    />
                   </TableCell>
                 </TableRow>
               )
