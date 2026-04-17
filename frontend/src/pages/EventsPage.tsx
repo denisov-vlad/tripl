@@ -38,6 +38,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
 import { META_FIELD_LINK_PLACEHOLDER, resolveMetaFieldHref } from '@/lib/metaFields'
 import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
 import {
@@ -61,7 +62,8 @@ import {
 } from 'lucide-react'
 
 const TAB_METRICS_RANGE_DAYS_DEFAULT = 7
-const ROW_METRICS_RANGE_HOURS = 24
+const ROW_METRICS_RANGE_HOURS = 48
+const ROW_METRICS_LABEL = `${ROW_METRICS_RANGE_HOURS}h`
 const TAB_METRICS_RANGE_OPTIONS = [
   { label: '7d', days: 7 },
   { label: '30d', days: 30 },
@@ -73,6 +75,18 @@ const TAB_METRICS_GRANULARITY_OPTIONS: { value: MetricsGranularity; label: strin
   { value: 'week', label: 'Weeks' },
   { value: 'month', label: 'Months' },
 ]
+const EMPTY_EVENT_TYPES: EventType[] = []
+const EMPTY_META_FIELDS: MetaFieldDefinition[] = []
+const EMPTY_VARIABLES: Variable[] = []
+const EMPTY_TAGS: string[] = []
+const EMPTY_SIGNALS: MonitoringSignal[] = []
+const EMPTY_EVENT_WINDOW_METRICS: {
+  event_id: string
+  scan_config_id: string | null
+  interval: string
+  total_count: number
+  data: EventMetricPoint[]
+}[] = []
 const compactCountFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   compactDisplay: 'short',
@@ -207,16 +221,19 @@ function EventWindowMetricsCell({
           {label}
         </button>
       </TooltipTrigger>
-      <TooltipContent className="w-64 border bg-background p-0 text-foreground shadow-md" side="top">
+      <TooltipContent
+        className="w-[22rem] max-w-[calc(100vw-2rem)] border bg-background p-0 text-foreground shadow-md"
+        side="top"
+      >
         <div className="space-y-3 p-3">
           <div className="space-y-1">
             <p className="truncate text-xs font-medium">{eventName}</p>
             <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-              <span>Last 24 hours</span>
+              <span>Last 48 hours</span>
               <span>{formatCompactCount(totalCount ?? 0)} events</span>
             </div>
           </div>
-          <MiniMetricsChart data={data} color={color} height={72} />
+          <MiniMetricsChart data={data} color={color} height={104} />
         </div>
       </TooltipContent>
     </Tooltip>
@@ -226,7 +243,11 @@ function EventWindowMetricsCell({
 function EventRowActions({
   event,
   slug,
+  canMoveUp,
+  canMoveDown,
   onEdit,
+  onMoveUp,
+  onMoveDown,
   onToggleReviewed,
   onToggleImplemented,
   onToggleArchived,
@@ -234,7 +255,11 @@ function EventRowActions({
 }: {
   event: TEvent
   slug: string
+  canMoveUp: boolean
+  canMoveDown: boolean
   onEdit: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
   onToggleReviewed: () => void
   onToggleImplemented: () => void
   onToggleArchived: () => void
@@ -286,6 +311,28 @@ function EventRowActions({
           }`}
           onMouseEnter={openActions}
         >
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Move event up"
+            aria-label="Move event up"
+            onClick={onMoveUp}
+            disabled={!canMoveUp}
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Move event down"
+            aria-label="Move event down"
+            onClick={onMoveDown}
+            disabled={!canMoveDown}
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+          </Button>
           <Button
             variant={event.implemented ? 'default' : 'ghost'}
             size="icon"
@@ -472,31 +519,36 @@ export default function EventsPage() {
   const [openCharts, setOpenCharts] = useState<Record<string, boolean>>({})
   const [tabMetricsRangeDays, setTabMetricsRangeDays] = useState(TAB_METRICS_RANGE_DAYS_DEFAULT)
   const [tabMetricsGranularity, setTabMetricsGranularity] = useState<MetricsGranularity>('hour')
+  const [selectedEventIds, setSelectedEventIds] = useState<string[]>([])
   const { confirm, dialog } = useConfirm()
 
   // Open event from URL param
   const openEventId = urlEventId || null
 
-  const { data: eventTypes = [] } = useQuery({
+  const eventTypesQuery = useQuery({
     queryKey: ['eventTypes', slug],
     queryFn: () => eventTypesApi.list(slug!),
     enabled: !!slug,
   })
-  const { data: metaFields = [] } = useQuery({
+  const eventTypes = eventTypesQuery.data ?? EMPTY_EVENT_TYPES
+  const metaFieldsQuery = useQuery({
     queryKey: ['metaFields', slug],
     queryFn: () => metaFieldsApi.list(slug!),
     enabled: !!slug,
   })
-  const { data: variables = [] } = useQuery({
+  const metaFields = metaFieldsQuery.data ?? EMPTY_META_FIELDS
+  const variablesQuery = useQuery({
     queryKey: ['variables', slug],
     queryFn: () => variablesApi.list(slug!),
     enabled: !!slug,
   })
-  const { data: allTags = [] } = useQuery({
+  const variables = variablesQuery.data ?? EMPTY_VARIABLES
+  const allTagsQuery = useQuery({
     queryKey: ['eventTags', slug],
     queryFn: () => eventsApi.tags(slug!),
     enabled: !!slug,
   })
+  const allTags = allTagsQuery.data ?? EMPTY_TAGS
 
   const specialTabs = ['all', 'review', 'archived']
   const filterEtId = specialTabs.includes(activeTab) ? undefined : eventTypes.find((e: EventType) => e.name === activeTab)?.id
@@ -513,7 +565,7 @@ export default function EventsPage() {
     return { time_from: from.toISOString(), time_to: to.toISOString() }
   }, [])
 
-  const { data: eventsData } = useQuery({
+  const eventsQuery = useQuery({
     queryKey: ['events', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
     queryFn: () => eventsApi.list(slug!, {
       event_type_id: filterEtId,
@@ -525,6 +577,7 @@ export default function EventsPage() {
     }),
     enabled: !!slug,
   })
+  const eventsData = eventsQuery.data
 
   const { data: tabMetrics, isLoading: tabMetricsLoading } = useQuery({
     queryKey: ['eventsMetrics', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery, tabMetricsRange.from, tabMetricsRange.to],
@@ -547,33 +600,35 @@ export default function EventsPage() {
     [eventsData?.items],
   )
 
-  const { data: activeSignals = [] } = useQuery({
+  const activeSignalsQuery = useQuery({
     queryKey: ['activeSignals', slug, eventIdsForSignals],
     queryFn: () => metricsApi.getActiveSignals(slug!, eventIdsForSignals),
     enabled: !!slug,
     refetchInterval: 60000,
   })
+  const activeSignals = activeSignalsQuery.data ?? EMPTY_SIGNALS
 
-  const { data: unreviewedData } = useQuery({
+  const unreviewedDataQuery = useQuery({
     queryKey: ['events', slug, 'unreviewedCount'],
     queryFn: () => eventsApi.list(slug!, { reviewed: false, archived: false, limit: 1 }),
     enabled: !!slug,
   })
-  const unreviewedCount = unreviewedData?.total ?? 0
+  const unreviewedCount = unreviewedDataQuery.data?.total ?? 0
 
-  const { data: archivedData } = useQuery({
+  const archivedDataQuery = useQuery({
     queryKey: ['events', slug, 'archivedCount'],
     queryFn: () => eventsApi.list(slug!, { archived: true, limit: 1 }),
     enabled: !!slug,
   })
-  const archivedCount = archivedData?.total ?? 0
+  const archivedCount = archivedDataQuery.data?.total ?? 0
 
   // Load event from URL if eventId is present
-  const { data: urlEvent } = useQuery({
+  const urlEventQuery = useQuery({
     queryKey: ['event', slug, openEventId],
     queryFn: () => eventsApi.get(slug!, openEventId!),
     enabled: !!slug && !!openEventId,
   })
+  const urlEvent = urlEventQuery.data
 
   const openEvent = useCallback((ev: TEvent) => {
     navigate(`/p/${slug}/events/${activeTab}/${ev.id}${searchParams.toString() ? `?${searchParams}` : ''}`)
@@ -591,6 +646,14 @@ export default function EventsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
   })
 
+  const bulkDeleteMut = useMutation({
+    mutationFn: (eventIds: string[]) => eventsApi.bulkDelete(slug!, eventIds),
+    onSuccess: () => {
+      setSelectedEventIds([])
+      qc.invalidateQueries({ queryKey: ['events', slug] })
+    },
+  })
+
   const toggleImplementedMut = useMutation({
     mutationFn: ({ id, implemented }: { id: string; implemented: boolean }) =>
       eventsApi.update(slug!, id, { implemented }),
@@ -606,6 +669,19 @@ export default function EventsPage() {
   const toggleArchivedMut = useMutation({
     mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
       eventsApi.update(slug!, id, { archived }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
+  })
+
+  const moveEventMut = useMutation({
+    mutationFn: ({
+      id,
+      direction,
+      visibleEventIds,
+    }: {
+      id: string
+      direction: 'up' | 'down'
+      visibleEventIds: string[]
+    }) => eventsApi.move(slug!, id, { direction, visible_event_ids: visibleEventIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
   })
 
@@ -731,6 +807,47 @@ export default function EventsPage() {
     })
   }, [rawEvents, fieldFilters, metaFilters, fieldColumns, metaFields, getFieldValue])
 
+  const visibleEventIds = useMemo(
+    () => events.map(event => event.id),
+    [events],
+  )
+  const selectedVisibleEventIds = useMemo(
+    () => selectedEventIds.filter(eventId => visibleEventIds.includes(eventId)),
+    [selectedEventIds, visibleEventIds],
+  )
+  const allVisibleSelected = events.length > 0 && selectedVisibleEventIds.length === events.length
+  const someVisibleSelected = selectedVisibleEventIds.length > 0
+
+  const toggleEventSelected = useCallback((eventId: string, checked: boolean) => {
+    setSelectedEventIds(current => (
+      checked
+        ? (current.includes(eventId) ? current : [...current, eventId])
+        : current.filter(id => id !== eventId)
+    ))
+  }, [])
+
+  const toggleAllVisibleSelected = useCallback((checked: boolean) => {
+    setSelectedEventIds(current => {
+      if (!checked) {
+        return current.filter(id => !visibleEventIds.includes(id))
+      }
+      const next = new Set(current)
+      visibleEventIds.forEach(id => next.add(id))
+      return Array.from(next)
+    })
+  }, [visibleEventIds])
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!selectedVisibleEventIds.length) return
+    const ok = await confirm({
+      title: 'Delete selected events',
+      message: `Delete ${selectedVisibleEventIds.length} selected events?`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+    })
+    if (ok) bulkDeleteMut.mutate(selectedVisibleEventIds)
+  }, [bulkDeleteMut, confirm, selectedVisibleEventIds])
+
   const hasActiveFilters = filterImplemented !== undefined || filterTag !== '' || filterReviewed !== undefined ||
     Object.values(fieldFilters).some(v => v !== '') ||
     Object.values(metaFilters).some(v => v !== '')
@@ -740,7 +857,7 @@ export default function EventsPage() {
     [events],
   )
 
-  const { data: eventWindowMetrics = [] } = useQuery({
+  const eventWindowMetricsQuery = useQuery({
     queryKey: [
       'eventWindowMetrics',
       slug,
@@ -755,6 +872,7 @@ export default function EventsPage() {
     enabled: !!slug && eventIdsForWindowMetrics.length > 0,
     refetchInterval: 60000,
   })
+  const eventWindowMetrics = eventWindowMetricsQuery.data ?? EMPTY_EVENT_WINDOW_METRICS
 
   const eventWindowMetricsByEvent = useMemo(
     () => new Map(eventWindowMetrics.map(metric => [metric.event_id, metric])),
@@ -792,6 +910,14 @@ export default function EventsPage() {
     }, { replace: true })
   }
 
+  const blockingError =
+    eventsQuery.error ??
+    eventTypesQuery.error ??
+    metaFieldsQuery.error ??
+    variablesQuery.error ??
+    allTagsQuery.error ??
+    urlEventQuery.error
+
   return (
     <div>
       {dialog}
@@ -817,149 +943,196 @@ export default function EventsPage() {
         </Button>
       </div>
 
-      {/* Tabs + search */}
-      <div className="flex items-end gap-4 mb-4">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
-          <TabsList className="h-9">
-            <div className="flex items-center gap-1">
-              <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
-              <SignalLink slug={slug!} signal={projectTotalSignal} />
-            </div>
-            <TabsTrigger value="review" className="text-xs gap-1.5">
-              Review
-              {unreviewedCount > 0 && (
-                <Badge variant="destructive" className="h-4 min-w-4 px-1 text-[10px] leading-none">{unreviewedCount}</Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="archived" className="text-xs gap-1.5">
-              Archived
-              {archivedCount > 0 && (
-                <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none">{archivedCount}</Badge>
-              )}
-            </TabsTrigger>
-            {eventTypes.map((et: EventType) => (
-              <div key={et.id} className="flex items-center gap-1">
-                <TabsTrigger value={et.name} className="text-xs gap-1.5">
-                  <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
-                  {et.display_name}
-                </TabsTrigger>
-                <SignalLink slug={slug!} signal={eventTypeSignals.get(et.id)} />
-              </div>
-            ))}
-          </TabsList>
-        </Tabs>
-        <div className="relative">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search events..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-9 h-9 w-56"
-          />
-        </div>
-      </div>
+      {blockingError && (
+        <ErrorState
+          title="Failed to load events"
+          description="The events page could not fetch the required data from the backend."
+          error={blockingError}
+          onRetry={() => {
+            const refetches: Promise<unknown>[] = [
+              eventsQuery.refetch(),
+              eventTypesQuery.refetch(),
+              metaFieldsQuery.refetch(),
+              variablesQuery.refetch(),
+              allTagsQuery.refetch(),
+              unreviewedDataQuery.refetch(),
+              archivedDataQuery.refetch(),
+            ]
+            if (openEventId) {
+              refetches.push(urlEventQuery.refetch())
+            }
+            void Promise.all(refetches)
+          }}
+        />
+      )}
 
-      {/* Filters */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-        <Select
-          value={filterImplemented === undefined ? '__all__' : String(filterImplemented)}
-          onValueChange={v => setFilterImplemented(v === '__all__' ? undefined : v === 'true')}
-        >
-          <SelectTrigger className="h-8 w-36 text-xs">
-            <SelectValue placeholder="All statuses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All statuses</SelectItem>
-            <SelectItem value="true">Implemented</SelectItem>
-            <SelectItem value="false">Not implemented</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select
-          value={filterTag || '__all__'}
-          onValueChange={v => setFilterTag(v === '__all__' ? '' : v)}
-        >
-          <SelectTrigger className="h-8 w-32 text-xs">
-            <SelectValue placeholder="All tags" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All tags</SelectItem>
-            {allTags.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        {fieldColumns.map(f => {
-          const enumOpts = fieldEnumOptions[f.id]
-          if (enumOpts) {
-            return (
-              <select
-                key={f.id}
-                value={fieldFilters[f.name] ?? ''}
-                onChange={e => updateFieldFilter(f.name, e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              >
-                <option value="">{f.display_name}: All</option>
-                {Array.from(enumOpts).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            )
-          }
-          if (f.field_type !== 'json') {
-            return (
+      {!blockingError && (
+        <>
+          {/* Tabs + search */}
+          <div className="flex items-end gap-4 mb-4">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
+              <TabsList className="h-9">
+                <div className="flex items-center gap-1">
+                  <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+                  <SignalLink slug={slug!} signal={projectTotalSignal} />
+                </div>
+                <TabsTrigger value="review" className="text-xs gap-1.5">
+                  Review
+                  {unreviewedCount > 0 && (
+                    <Badge variant="destructive" className="h-4 min-w-4 px-1 text-[10px] leading-none">{unreviewedCount}</Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="archived" className="text-xs gap-1.5">
+                  Archived
+                  {archivedCount > 0 && (
+                    <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none">{archivedCount}</Badge>
+                  )}
+                </TabsTrigger>
+                {eventTypes.map((et: EventType) => (
+                  <div key={et.id} className="flex items-center gap-1">
+                    <TabsTrigger value={et.name} className="text-xs gap-1.5">
+                      <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
+                      {et.display_name}
+                    </TabsTrigger>
+                    <SignalLink slug={slug!} signal={eventTypeSignals.get(et.id)} />
+                  </div>
+                ))}
+              </TabsList>
+            </Tabs>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                key={f.id}
-                value={fieldFilters[f.name] ?? ''}
-                onChange={e => updateFieldFilter(f.name, e.target.value)}
-                className="h-8 w-28 text-xs"
-                placeholder={f.display_name}
+                placeholder="Search events..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pl-9 h-9 w-56"
               />
-            )
-          }
-          return null
-        })}
-        {metaFields.map((mf: MetaFieldDefinition) => {
-          if (mf.field_type === 'enum' && mf.enum_options) {
-            return (
-              <select
-                key={mf.id}
-                value={metaFilters[mf.name] ?? ''}
-                onChange={e => updateMetaFilter(mf.name, e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              >
-                <option value="">{mf.display_name}: All</option>
-                {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-              </select>
-            )
-          }
-          if (mf.field_type === 'boolean') {
-            return (
-              <select
-                key={mf.id}
-                value={metaFilters[mf.name] ?? ''}
-                onChange={e => updateMetaFilter(mf.name, e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              >
-                <option value="">{mf.display_name}: All</option>
-                <option value="true">Yes</option>
-                <option value="false">No</option>
-              </select>
-            )
-          }
-          return (
-            <Input
-              key={mf.id}
-              value={metaFilters[mf.name] ?? ''}
-              onChange={e => updateMetaFilter(mf.name, e.target.value)}
-              className="h-8 w-28 text-xs"
-              placeholder={mf.display_name}
-            />
-          )
-        })}
-        {hasActiveFilters && (
-          <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-8 text-xs">
-            <X className="mr-1 h-3 w-3" />
-            Clear
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <Select
+              value={filterImplemented === undefined ? '__all__' : String(filterImplemented)}
+              onValueChange={v => setFilterImplemented(v === '__all__' ? undefined : v === 'true')}
+            >
+              <SelectTrigger className="h-8 w-36 text-xs">
+                <SelectValue placeholder="All statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All statuses</SelectItem>
+                <SelectItem value="true">Implemented</SelectItem>
+                <SelectItem value="false">Not implemented</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={filterTag || '__all__'}
+              onValueChange={v => setFilterTag(v === '__all__' ? '' : v)}
+            >
+              <SelectTrigger className="h-8 w-32 text-xs">
+                <SelectValue placeholder="All tags" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All tags</SelectItem>
+                {allTags.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {fieldColumns.map(f => {
+              const enumOpts = fieldEnumOptions[f.id]
+              if (enumOpts) {
+                return (
+                  <select
+                    key={f.id}
+                    value={fieldFilters[f.name] ?? ''}
+                    onChange={e => updateFieldFilter(f.name, e.target.value)}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    <option value="">{f.display_name}: All</option>
+                    {Array.from(enumOpts).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                )
+              }
+              if (f.field_type !== 'json') {
+                return (
+                  <Input
+                    key={f.id}
+                    value={fieldFilters[f.name] ?? ''}
+                    onChange={e => updateFieldFilter(f.name, e.target.value)}
+                    className="h-8 w-28 text-xs"
+                    placeholder={f.display_name}
+                  />
+                )
+              }
+              return null
+            })}
+            {metaFields.map((mf: MetaFieldDefinition) => {
+              if (mf.field_type === 'enum' && mf.enum_options) {
+                return (
+                  <select
+                    key={mf.id}
+                    value={metaFilters[mf.name] ?? ''}
+                    onChange={e => updateMetaFilter(mf.name, e.target.value)}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    <option value="">{mf.display_name}: All</option>
+                    {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                )
+              }
+              if (mf.field_type === 'boolean') {
+                return (
+                  <select
+                    key={mf.id}
+                    value={metaFilters[mf.name] ?? ''}
+                    onChange={e => updateMetaFilter(mf.name, e.target.value)}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  >
+                    <option value="">{mf.display_name}: All</option>
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+                )
+              }
+              return (
+                <Input
+                  key={mf.id}
+                  value={metaFilters[mf.name] ?? ''}
+                  onChange={e => updateMetaFilter(mf.name, e.target.value)}
+                  className="h-8 w-28 text-xs"
+                  placeholder={mf.display_name}
+                />
+              )
+            })}
+            {hasActiveFilters && (
+              <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-8 text-xs">
+                <X className="mr-1 h-3 w-3" />
+                Clear
+              </Button>
+            )}
+          </div>
+
+      {selectedVisibleEventIds.length > 0 && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2">
+          <span className="text-sm font-medium">{selectedVisibleEventIds.length} selected</span>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => { void handleBulkDelete() }}
+            disabled={bulkDeleteMut.isPending}
+          >
+            <Trash2 className="mr-1 h-3.5 w-3.5" />
+            Delete selected
           </Button>
-        )}
-      </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelectedEventIds([])}
+          >
+            Clear selection
+          </Button>
+        </div>
+      )}
 
       {/* Event Form (Sheet) */}
       {(showForm || openedEvent) && slug && (
@@ -1066,9 +1239,16 @@ export default function EventsPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <Checkbox
+                  checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                  onCheckedChange={checked => toggleAllVisibleSelected(checked === true)}
+                  aria-label="Select all visible events"
+                />
+              </TableHead>
               <TableHead>Event</TableHead>
               {!activeEt && <TableHead>Type</TableHead>}
-              <TableHead className="w-24 text-right">24h</TableHead>
+              <TableHead className="w-24 text-right">{ROW_METRICS_LABEL}</TableHead>
               <TableHead>Tags</TableHead>
               {fieldColumns.map(f => (
                 <TableHead key={f.id}>{f.display_name}</TableHead>
@@ -1084,9 +1264,17 @@ export default function EventsPage() {
           <TableBody>
             {events.map((ev: TEvent) => {
               const mvMap = Object.fromEntries(ev.meta_values.map(mv => [mv.meta_field_definition_id, mv.value]))
+              const eventIndex = visibleEventIds.indexOf(ev.id)
 
               return (
                 <TableRow key={ev.id}>
+                  <TableCell>
+                    <Checkbox
+                      checked={selectedEventIds.includes(ev.id)}
+                      onCheckedChange={checked => toggleEventSelected(ev.id, checked === true)}
+                      aria-label={`Select ${ev.name}`}
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">
                     <div className="inline-flex max-w-full items-center gap-1.5 align-middle">
                       <button
@@ -1174,7 +1362,11 @@ export default function EventsPage() {
                     <EventRowActions
                       event={ev}
                       slug={slug!}
+                      canMoveUp={eventIndex > 0}
+                      canMoveDown={eventIndex >= 0 && eventIndex < visibleEventIds.length - 1}
                       onEdit={() => openEvent(ev)}
+                      onMoveUp={() => moveEventMut.mutate({ id: ev.id, direction: 'up', visibleEventIds })}
+                      onMoveDown={() => moveEventMut.mutate({ id: ev.id, direction: 'down', visibleEventIds })}
                       onToggleReviewed={() => toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })}
                       onToggleImplemented={() => toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })}
                       onToggleArchived={() => toggleArchivedMut.mutate({ id: ev.id, archived: !ev.archived })}
@@ -1195,6 +1387,8 @@ export default function EventsPage() {
         </Table>
       </div>
       </TooltipProvider>
+        </>
+      )}
     </div>
   )
 }

@@ -9,6 +9,7 @@ import type { EventType, FieldDefinition, MetaFieldDefinition } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { ErrorState } from '@/components/error-state'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
@@ -37,23 +38,26 @@ export default function EventDetailPage() {
   const [rangeDays, setRangeDays] = useState(30)
   const [granularity, setGranularity] = useState<MetricsGranularity>('hour')
 
-  const { data: event, isLoading: eventLoading } = useQuery({
+  const eventQuery = useQuery({
     queryKey: ['event', slug, eventId],
     queryFn: () => eventsApi.get(slug!, eventId!),
     enabled: !!slug && !!eventId,
   })
+  const event = eventQuery.data
 
-  const { data: eventTypes = [] } = useQuery({
+  const eventTypesQuery = useQuery({
     queryKey: ['eventTypes', slug],
     queryFn: () => eventTypesApi.list(slug!),
     enabled: !!slug,
   })
+  const eventTypes = eventTypesQuery.data ?? []
 
-  const { data: metaFields = [] } = useQuery({
+  const metaFieldsQuery = useQuery({
     queryKey: ['metaFields', slug],
     queryFn: () => metaFieldsApi.list(slug!),
     enabled: !!slug,
   })
+  const metaFields = metaFieldsQuery.data ?? []
 
   const timeRange = useMemo(() => {
     const to = new Date()
@@ -61,19 +65,40 @@ export default function EventDetailPage() {
     return { from: from.toISOString(), to: to.toISOString() }
   }, [rangeDays])
 
-  const { data: metrics } = useQuery({
+  const metricsQuery = useQuery({
     queryKey: ['eventMetrics', slug, eventId, rangeDays],
     queryFn: () => metricsApi.getEventMetrics(slug!, eventId!, timeRange),
     enabled: !!slug && !!eventId,
     refetchInterval: 60000,
   })
+  const metrics = metricsQuery.data
   const chartData = useMemo(
     () => aggregateMetricPoints(metrics?.data ?? [], granularity),
     [granularity, metrics?.data],
   )
 
-  if (eventLoading) {
+  if (eventQuery.isLoading) {
     return <div className="p-6 text-muted-foreground">Loading…</div>
+  }
+
+  if (eventQuery.isError || eventTypesQuery.isError || metaFieldsQuery.isError || metricsQuery.isError) {
+    return (
+      <div className="p-6">
+        <ErrorState
+          title="Failed to load event details"
+          description="The detail page could not fetch data from the backend."
+          error={eventQuery.error ?? eventTypesQuery.error ?? metaFieldsQuery.error ?? metricsQuery.error}
+          onRetry={() => {
+            void Promise.all([
+              eventQuery.refetch(),
+              eventTypesQuery.refetch(),
+              metaFieldsQuery.refetch(),
+              metricsQuery.refetch(),
+            ])
+          }}
+        />
+      </div>
+    )
   }
 
   if (!event) {

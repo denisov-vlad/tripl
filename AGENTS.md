@@ -1,47 +1,382 @@
 # AGENTS.md
 
-## Project overview
-- **tripl** — analytics tracking plan service. See [PLAN.md](PLAN.md) for full architecture, data model, API spec, and implementation roadmap.
-- Phase 1 (done): event catalog — CRUD for projects, event types, configurable fields, meta fields, relations, events, variables.
-- Phase 2 (in progress): analytics DB integration (ClickHouse via data sources), Celery+RabbitMQ scan pipeline, auto-generated events from cardinality analysis.
-- Phase 3 (future): validation checks, alerting, scheduled scans.
+## What This Repo Is
 
-## Project scope
-- This project is an analytics tracking platform.
-- The backend standard is `uv` with Python `3.13`.
-- The API standard is FastAPI, and agents should prefer the latest stable FastAPI-compatible patterns already supported by the lockfile.
-- The frontend standard is a modern `pnpm`-managed TypeScript stack. Prefer current stable tooling such as Vite, React, and Vitest unless the repo already establishes a different frontend baseline.
-- The full local runtime should be defined in Docker Compose. Prefer running services through `docker compose` instead of ad hoc local processes when possible.
-- Background jobs and scheduled workloads should use Celery with RabbitMQ. The scan pipeline is already implemented with a Celery worker and beat scheduler.
+`tripl` is an analytics tracking-plan and monitoring service.
 
-## Dev environment tips
-- Use `uv` for all backend package management, virtualenv management, and command execution. Do not introduce `pipenv`, `poetry`, or bare `pip` workflows unless the repo already requires them.
-- Pin and verify Python `3.13` in backend config files such as `.python-version`, `pyproject.toml`, Dockerfiles, and Compose services when those files exist.
-- For backend dependencies, prefer commands like `uv add <package>` and `uv sync`.
-- For backend commands, prefer `uv run <command>` such as `uv run uvicorn ...`, `uv run pytest`, or `uv run alembic upgrade head`.
-- For frontend package management, use `pnpm` only.
-- If a frontend app needs to be created, prefer a current stable `pnpm`-installed React + TypeScript setup and keep the choice consistent with the existing repo structure.
-- Keep Dockerfiles, `.dockerignore`, and `compose.yaml` or `docker-compose.yml` aligned with actual service names and ports.
-- Treat Docker Compose as the source of truth for wiring API, frontend, RabbitMQ, Celery workers, and any supporting services.
-- Keep environment variable names synchronized across app config, Compose files, and `.env.example`.
+Use it to:
+- manage projects and tracking plans;
+- define event types, fields, relations, meta fields, and reusable variables;
+- store concrete catalog events with implementation/review/archive state;
+- connect external analytics DBs, currently ClickHouse;
+- run scan jobs that infer events and variables from real data;
+- collect time-bucketed metrics;
+- detect anomalies;
+- route alert deliveries to notification channels.
 
-## Architecture guidance
-- Keep the FastAPI app thin at the HTTP layer: request validation, auth, and response shaping belong in the API layer; business logic should live in services.
-- Model analytics ingestion and processing so request/response paths stay fast. Push heavy or retryable work to Celery tasks.
-- Use RabbitMQ as the Celery broker unless the repo explicitly introduces a separate result backend requirement.
-- Put scheduled jobs on Celery beat or an equivalent Celery-native scheduler when scheduling is needed.
-- Design Compose services so they can be started together for local development: `api`, `frontend`, `rabbitmq`, `celery-worker`, and `celery-beat` are the expected defaults unless the repo chooses different names.
-- Prefer structured configuration and explicit health checks for API, worker, and broker containers.
+The long-form product and architecture spec is in [PLAN.md](PLAN.md). This file is the fast navigation map for agents working in the codebase.
 
-## Testing instructions
-- Run backend tests with `uv run pytest`.
-- Run backend linting and type checks with the tools configured in `pyproject.toml`; common commands are `uv run ruff check`, `uv run ruff format --check`, and `uv run mypy`.
-- Run frontend checks with `pnpm lint`, `pnpm test`, and `pnpm exec tsc --noEmit` unless the package scripts define stricter wrappers.
-- When changing Docker or Compose setup, validate with `docker compose config` and bring the relevant stack up locally if feasible.
-- When changing Celery or RabbitMQ integration, verify both the worker startup path and at least one real task execution path.
-- Add or update tests for the code you change, including API, task, and frontend behavior where relevant.
+## Current Product Scope
 
-## PR instructions
-- Title format: `[analytics] <Title>`
-- Summarize any changes to API contracts, event schemas, task queues, schedules, or environment variables.
-- Before finishing, run the relevant backend checks with `uv`, the relevant frontend checks with `pnpm`, and any affected Docker Compose validation commands.
+Already implemented in code:
+- event catalog CRUD;
+- data sources and scan configs;
+- async scan pipeline via Celery + RabbitMQ;
+- auto-generated events from cardinality analysis;
+- variable detection for high-cardinality values;
+- metrics collection into PostgreSQL;
+- anomaly detection for project total, event type, and event scopes;
+- alerting with destinations, rules, delivery history, and message templating;
+- frontend pages for catalog, settings, data sources, monitoring, and alerting.
+
+Not a safe assumption unless you verify:
+- auth and roles;
+- tracking plan versioning;
+- import/export;
+- any local ClickHouse container.
+
+## Stack And Runtime
+
+Backend:
+- Python `3.13`
+- `uv`
+- FastAPI
+- SQLAlchemy async + `asyncpg`
+- Alembic
+- PostgreSQL
+- Celery `5.x`
+- RabbitMQ
+- `clickhouse-connect`
+- `statsmodels` for anomaly logic
+
+Frontend:
+- `pnpm`
+- React `19`
+- TypeScript
+- Vite `8`
+- Tailwind CSS `4`
+- Radix UI primitives
+- TanStack Query
+- Recharts
+
+Local runtime in [compose.yaml](compose.yaml):
+- `postgres`
+- `rabbitmq`
+- `api`
+- `celery-worker`
+- `celery-beat`
+- `frontend`
+
+Important runtime facts:
+- ClickHouse is external. The repo does not run it in Compose.
+- `api` runs `alembic upgrade head` before `uvicorn`.
+- Celery beat currently schedules metrics due-checks every 60 seconds.
+- API health endpoint is `GET /health`.
+- CORS is open in dev app setup.
+
+## Environment Variables
+
+Primary backend settings are in [backend/src/tripl/config.py](backend/src/tripl/config.py):
+- `DATABASE_URL`
+- `SYNC_DATABASE_URL`
+- `RABBITMQ_URL`
+- `ENCRYPTION_KEY`
+- `APP_BASE_URL`
+- `DEBUG`
+
+Frontend:
+- `VITE_API_URL`
+
+Practical notes:
+- `SYNC_DATABASE_URL` is used by Celery tasks and other sync SQLAlchemy code paths.
+- `ENCRYPTION_KEY` encrypts data-source secrets; with an empty key, dev/test paths can treat stored values as plaintext.
+- `APP_BASE_URL` is relevant for alert links.
+- Keep `.env.example`, Compose env, and app settings synchronized.
+
+## Repo Layout
+
+Top level:
+- [PLAN.md](PLAN.md): product scope and longer architecture notes.
+- [README.md](README.md): quick start and user-facing overview.
+- [compose.yaml](compose.yaml): local runtime topology.
+- [backend](backend): Python service.
+- [frontend](frontend): React app.
+
+Backend entrypoints:
+- [backend/src/tripl/main.py](backend/src/tripl/main.py): FastAPI app and `/health`.
+- [backend/src/tripl/api/v1/router.py](backend/src/tripl/api/v1/router.py): all API router registration.
+- [backend/src/tripl/worker/celery_app.py](backend/src/tripl/worker/celery_app.py): Celery app and beat schedule.
+
+Backend layers:
+- `backend/src/tripl/models`: SQLAlchemy models.
+- `backend/src/tripl/schemas`: Pydantic request/response models.
+- `backend/src/tripl/services`: business logic used by routers.
+- `backend/src/tripl/api/v1`: thin HTTP layer.
+- `backend/src/tripl/worker/tasks`: async task entrypoints.
+- `backend/src/tripl/worker/analyzers`: scan/anomaly analysis logic.
+- `backend/src/tripl/worker/adapters`: analytics DB adapters.
+- `backend/src/tripl/tests`: backend tests.
+
+Frontend layers:
+- `frontend/src/App.tsx`: route table.
+- `frontend/src/pages`: screen-level UI.
+- `frontend/src/api`: typed HTTP client wrappers.
+- `frontend/src/components`: layout and shared UI.
+- `frontend/src/types/index.ts`: frontend domain types.
+- `frontend/src/**/*.test.*`: Vitest coverage.
+
+## Domain Model Cheat Sheet
+
+Core planning entities:
+- `Project`: tracking-plan namespace.
+- `EventType`: schema bucket like page view or click.
+- `FieldDefinition`: typed field under an event type.
+- `EventTypeRelation`: relation between event types via fields.
+- `MetaFieldDefinition`: project-level metadata schema.
+- `Variable`: reusable placeholder such as `${user_id}`.
+
+Catalog entities:
+- `Event`: concrete expected event instance in the plan.
+- `EventFieldValue`: field value attached to an event.
+- `EventMetaValue`: meta value attached to an event.
+- `EventTag`: freeform event tag.
+
+Analytics and monitoring entities:
+- `DataSource`: external analytics DB connection, currently ClickHouse.
+- `ScanConfig`: saved scan definition. Important fields include `base_query`, `event_type_id`, `event_type_column`, `time_column`, `event_name_format`, `json_value_paths`, `cardinality_threshold`, `interval`.
+- `ScanJob`: async execution record for a scan config.
+- `EventMetric`: aggregated count buckets.
+- `MetricAnomaly`: persisted anomaly bucket.
+- `ProjectAnomalySettings`: anomaly detector thresholds and scope toggles.
+
+Alerting entities:
+- `AlertDestination`: channel config. Current supported types are `slack` and `telegram`.
+- `AlertRule`: filters, thresholds, cooldown, include/exclude scope, and message templates.
+- `AlertRuleState`: cooldown/state tracking.
+- `AlertDelivery`: one queued/sent/failed delivery attempt.
+- `AlertDeliveryItem`: matched anomaly items included in a delivery.
+
+## API Map
+
+Base prefix: `/api/v1`
+
+Routers currently registered:
+- `/projects`
+- `/projects/{slug}/event-types`
+- `/projects/{slug}/event-types/{event_type_id}/fields`
+- `/projects/{slug}/relations`
+- `/projects/{slug}/meta-fields`
+- `/projects/{slug}/variables`
+- `/projects/{slug}/events`
+- `/projects/{slug}/data-sources`
+- `/projects/{slug}/scans`
+- `/projects/{slug}/anomaly-settings`
+- `/projects/{slug}/alert-destinations`
+- `/projects/{slug}/alert-deliveries`
+- metrics routes under project, event, and event-type paths
+
+Useful endpoint groups:
+- Events: list/filter/create/update/delete, bulk create, bulk delete, reorder/move, tags.
+- Data sources: CRUD plus connection test.
+- Scans: CRUD, preview, run, list jobs, get job.
+- Metrics:
+  - `GET /projects/{slug}/events-metrics`
+  - `POST /projects/{slug}/events/window-metrics`
+  - `GET /projects/{slug}/metrics/total`
+  - `GET /projects/{slug}/events/{event_id}/metrics`
+  - `GET /projects/{slug}/event-types/{event_type_id}/metrics`
+  - `GET /projects/{slug}/anomalies/signals`
+- Alerting:
+  - destinations CRUD
+  - rules CRUD nested under a destination
+  - deliveries list/detail
+
+If you need exact request/response shapes, open the corresponding file in `backend/src/tripl/schemas` before digging into services.
+
+## Frontend Route Map
+
+Defined in [frontend/src/App.tsx](frontend/src/App.tsx):
+- `/`: projects list
+- `/data-sources`
+- `/data-sources/:dsId`
+- `/p/:slug`
+- `/p/:slug/events`
+- `/p/:slug/events/:tab`
+- `/p/:slug/events/:tab/:eventId`
+- `/p/:slug/events/detail/:eventId`
+- `/p/:slug/monitoring/:scope/:id`
+- `/p/:slug/settings`
+- `/p/:slug/settings/:tab`
+
+Main pages:
+- `ProjectsPage`: project list/create.
+- `EventsPage`: main catalog table, review/archive flows, metrics snippets, monitoring signals.
+- `EventDetailPage` and `MonitoringDetailPage`: metric drilldowns.
+- `ProjectSettingsPage`: event types, meta fields, relations, variables, monitoring, alerting, scans.
+- `ProjectAlertingTab`: destinations, rules, templates, delivery history.
+- `DataSourcesPage`: global data-source management.
+
+Settings tabs currently include:
+- `event-types`
+- `meta-fields`
+- `relations`
+- `variables`
+- `monitoring`
+- `alerting`
+- `scans`
+
+## Async Pipeline Map
+
+Scan flow:
+1. A `ScanConfig` points to a `DataSource` and query.
+2. API creates a `ScanJob`.
+3. Celery task `tripl.worker.tasks.scan.run_scan` executes.
+4. Adapter connects to ClickHouse.
+5. Cardinality analysis decides low-cardinality vs variable-like fields.
+6. Event generation creates or updates tracking-plan events and variables.
+7. Job summary is written back to `ScanJob.result_summary`.
+
+Metrics flow:
+1. Beat schedules `tripl.worker.tasks.metrics.check_metrics_due` every 60s.
+2. Due scan configs trigger collection.
+3. Metrics are collected into `event_metrics`.
+4. Anomalies are recalculated and persisted.
+5. Alert deliveries may be created for matched rules.
+
+Alert flow:
+1. Metrics/anomaly pipeline identifies matched alert-rule conditions.
+2. `AlertDelivery` and `AlertDeliveryItem` records are created.
+3. Celery task `tripl.worker.tasks.alerts.send_alert_delivery` sends to destination.
+4. Delivery status becomes `pending`, `sent`, or `failed`.
+
+Current alert channel support:
+- Slack webhook
+- Telegram bot/chat
+
+Current message formats exposed in frontend/backend types:
+- `plain`
+- `slack_mrkdwn`
+- `telegram_html`
+- `telegram_markdownv2`
+
+## Where To Look First
+
+If the task is about event catalog CRUD:
+- `backend/src/tripl/api/v1/events.py`
+- `backend/src/tripl/services/event_service.py`
+- `backend/src/tripl/schemas/event.py`
+- `frontend/src/pages/EventsPage.tsx`
+- `frontend/src/api/events.ts`
+- `backend/src/tripl/tests/test_events.py`
+
+If the task is about event types, fields, relations, meta fields, or variables:
+- matching files in `backend/src/tripl/api/v1`
+- matching service and schema files
+- `frontend/src/pages/ProjectSettingsPage.tsx`
+- backend tests: `test_event_types.py`, `test_fields.py`, `test_relations.py`, `test_meta_fields.py`, `test_variables.py`
+
+If the task is about data sources or scans:
+- `backend/src/tripl/api/v1/data_sources.py`
+- `backend/src/tripl/api/v1/scans.py`
+- `backend/src/tripl/services/datasource_service.py`
+- `backend/src/tripl/services/scan_service.py`
+- `backend/src/tripl/worker/tasks/scan.py`
+- `backend/src/tripl/worker/adapters/clickhouse.py`
+- `backend/src/tripl/tests/test_data_sources.py`
+- `backend/src/tripl/tests/test_scans.py`
+- `frontend/src/pages/DataSourcesPage.tsx`
+- `frontend/src/pages/ProjectSettingsPage.tsx`
+
+If the task is about metrics or anomaly detection:
+- `backend/src/tripl/api/v1/metrics.py`
+- `backend/src/tripl/services/metrics_service.py`
+- `backend/src/tripl/worker/tasks/metrics.py`
+- `backend/src/tripl/worker/analyzers/anomaly_detector.py`
+- `backend/src/tripl/models/event_metric.py`
+- `backend/src/tripl/models/metric_anomaly.py`
+- `backend/src/tripl/tests/test_metrics_api.py`
+- `backend/src/tripl/tests/test_metrics_tasks.py`
+- `backend/src/tripl/tests/test_anomaly_detector.py`
+- `backend/src/tripl/tests/test_project_anomaly_settings.py`
+- `frontend/src/pages/EventDetailPage.tsx`
+- `frontend/src/pages/MonitoringDetailPage.tsx`
+- `frontend/src/lib/metrics.ts`
+
+If the task is about alerting:
+- `backend/src/tripl/api/v1/alerting.py`
+- `backend/src/tripl/services/alerting_service.py`
+- `backend/src/tripl/schemas/alerting.py`
+- `backend/src/tripl/worker/tasks/alerts.py`
+- `backend/src/tripl/alert_templates.py`
+- `backend/src/tripl/alerting_validation.py`
+- `backend/src/tripl/models/alert_*.py`
+- `backend/src/tripl/tests/test_alerting.py`
+- `frontend/src/pages/ProjectAlertingTab.tsx`
+- `frontend/src/api/alerting.ts`
+
+## Practical Coding Guidance
+
+Project-specific expectations:
+- keep FastAPI routers thin; business rules go in services;
+- use Celery for heavy, retryable, or scheduled analytics work;
+- prefer extending existing adapters/analyzers/tasks rather than inventing parallel paths;
+- preserve async request paths; sync DB access is already used inside worker tasks and is acceptable there;
+- keep frontend API wrappers typed through `frontend/src/types/index.ts`;
+- when changing schemas or payloads, update both backend Pydantic models and frontend TS types;
+- if you change alert message variables or formats, update both backend template logic and `ProjectAlertingTab` helper UI;
+- if you change scan or metrics summaries, check any frontend assumptions around `ScanJob.result_summary`.
+
+Operational assumptions to preserve unless intentionally changing them:
+- RabbitMQ is the Celery broker.
+- PostgreSQL is the system of record for catalog, metrics, anomalies, and alert deliveries.
+- ClickHouse is read from external data sources and is not the app database.
+- API, worker, and beat should all be runnable together via Compose.
+
+## Commands
+
+Backend:
+- `uv sync`
+- `uv run pytest`
+- `uv run ruff check`
+- `uv run ruff format --check`
+- `uv run mypy`
+
+Frontend:
+- `pnpm install`
+- `pnpm lint`
+- `pnpm test`
+- `pnpm exec tsc --noEmit`
+
+Compose:
+- `docker compose up -d --build`
+- `docker compose config`
+
+Useful when changing DB schema:
+- `uv run alembic upgrade head`
+
+## Validation Expectations
+
+Minimum checks before finishing:
+- backend tests for touched backend domains;
+- frontend tests for touched frontend domains;
+- lint/type checks for the side you changed;
+- `docker compose config` when Compose or env wiring changes.
+
+Extra checks expected for specific areas:
+- scan/data-source changes: verify connection test or scan execution path;
+- metrics/anomaly changes: verify at least one real collection path and anomaly output path;
+- alerting changes: verify at least one delivery path and relevant template/validation behavior;
+- schema contract changes: verify both backend schema and frontend type/client usage.
+
+## PR Notes
+
+Use PR title format:
+- `[analytics] <Title>`
+
+Always call out:
+- API contract changes;
+- event schema changes;
+- queue/task/schedule changes;
+- metrics or anomaly semantics changes;
+- alerting channel/template changes;
+- environment variable changes.

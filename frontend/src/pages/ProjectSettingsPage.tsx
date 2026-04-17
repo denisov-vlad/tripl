@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, lazy, Suspense, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { eventTypesApi } from '@/api/eventTypes'
@@ -20,6 +20,7 @@ import type {
   DataSource,
   ProjectAnomalySettings,
   ScanConfig,
+  ScanConfigPreview,
   ScanJob,
 } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -44,12 +45,13 @@ import { EmptyState } from '@/components/empty-state'
 import { META_FIELD_LINK_PLACEHOLDER } from '@/lib/metaFields'
 import { Plus, Pencil, Trash2, ChevronDown, ArrowUp, ArrowDown, Play, Layers, Link2, Variable as VariableIcon, List, Search } from 'lucide-react'
 
-type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'monitoring' | 'scans'
+type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'monitoring' | 'alerting' | 'scans'
+const ProjectAlertingTab = lazy(() => import('@/pages/ProjectAlertingTab'))
 
 export default function ProjectSettingsPage() {
   const { slug, tab: urlTab } = useParams<{ slug: string; tab?: string }>()
   const navigate = useNavigate()
-  const validTabs: SettingsTab[] = ['event-types', 'meta-fields', 'relations', 'variables', 'monitoring', 'scans']
+  const validTabs: SettingsTab[] = ['event-types', 'meta-fields', 'relations', 'variables', 'monitoring', 'alerting', 'scans']
   const tab: SettingsTab = validTabs.includes(urlTab as SettingsTab) ? (urlTab as SettingsTab) : 'event-types'
 
   const changeTab = (t: string) => {
@@ -70,6 +72,7 @@ export default function ProjectSettingsPage() {
           <TabsTrigger value="relations">Relations</TabsTrigger>
           <TabsTrigger value="variables">Variables</TabsTrigger>
           <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
+          <TabsTrigger value="alerting">Alerting</TabsTrigger>
           <TabsTrigger value="scans">Scans</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -79,6 +82,11 @@ export default function ProjectSettingsPage() {
       {tab === 'relations' && slug && <RelationsTab slug={slug} />}
       {tab === 'variables' && slug && <VariablesTab slug={slug} />}
       {tab === 'monitoring' && slug && <MonitoringTab slug={slug} />}
+      {tab === 'alerting' && slug && (
+        <Suspense fallback={<p className="text-sm text-muted-foreground">Loading alerting settings…</p>}>
+          <ProjectAlertingTab slug={slug} />
+        </Suspense>
+      )}
       {tab === 'scans' && slug && <ScansTab slug={slug} />}
     </div>
   )
@@ -1267,12 +1275,106 @@ function MonitoringTab({ slug }: { slug: string }) {
   )
 }
 
+function formatPreviewCell(value: unknown): string {
+  if (value == null) return '—'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+function ScanPreviewPanel({
+  preview,
+  selectedJsonValuePaths,
+  onToggleJsonValuePath,
+}: {
+  preview: ScanConfigPreview
+  selectedJsonValuePaths: string[]
+  onToggleJsonValuePath: (path: string) => void
+}) {
+  return (
+    <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+      <div className="space-y-1">
+        <div className="text-sm font-medium">Preview</div>
+        <p className="text-xs text-muted-foreground">
+          Column pickers and JSON path options are built from this sample. Rows are picked from a larger fetch to show more variety when possible.
+        </p>
+      </div>
+
+      <div className="rounded-lg border bg-background overflow-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {preview.columns.map(column => (
+                <TableHead key={column.name}>{column.name}</TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {preview.rows.slice(0, 5).map((row, index) => (
+              <TableRow key={index}>
+                {preview.columns.map(column => (
+                  <TableCell key={column.name} className="max-w-[220px] truncate text-xs">
+                    {formatPreviewCell(row[column.name])}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      {preview.json_columns.some(column => column.paths.length > 0) && (
+        <div className="space-y-3">
+          <div>
+            <div className="text-sm font-medium">JSON values to keep as-is</div>
+            <p className="text-xs text-muted-foreground">
+              Selected paths stay as real values in generated JSON. Unselected paths become variables.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {preview.json_columns.map(jsonColumn => (
+              <div key={jsonColumn.column} className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {jsonColumn.column}
+                </div>
+                {jsonColumn.paths.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">No nested paths found in sample.</div>
+                ) : (
+                  <div className="grid gap-2">
+                    {jsonColumn.paths.map(path => (
+                      <label key={path.full_path} className="flex items-start gap-2 rounded-md border bg-background p-2 text-sm">
+                        <Checkbox
+                          checked={selectedJsonValuePaths.includes(path.full_path)}
+                          onCheckedChange={() => onToggleJsonValuePath(path.full_path)}
+                        />
+                        <span className="space-y-1">
+                          <span className="block font-mono text-xs">{path.path}</span>
+                          {path.sample_values.length > 0 && (
+                            <span className="block text-xs text-muted-foreground">
+                              sample: {path.sample_values.join(', ')}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─── Scans Tab ─── */
 function ScansTab({ slug }: { slug: string }) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editingScanId, setEditingScanId] = useState<string | null>(null)
+  const [preview, setPreview] = useState<ScanConfigPreview | null>(null)
+  const [editPreview, setEditPreview] = useState<ScanConfigPreview | null>(null)
   const { confirm, dialog } = useConfirm()
 
   // Form state
@@ -1283,6 +1385,7 @@ function ScansTab({ slug }: { slug: string }) {
   const [eventTypeColumn, setEventTypeColumn] = useState('')
   const [timeColumn, setTimeColumn] = useState('')
   const [eventNameFormat, setEventNameFormat] = useState('')
+  const [jsonValuePaths, setJsonValuePaths] = useState<string[]>([])
   const [cardinalityThreshold, setCardinalityThreshold] = useState(100)
   const [interval, setInterval] = useState('')
 
@@ -1293,6 +1396,7 @@ function ScansTab({ slug }: { slug: string }) {
   const [editEventTypeColumn, setEditEventTypeColumn] = useState('')
   const [editTimeColumn, setEditTimeColumn] = useState('')
   const [editEventNameFormat, setEditEventNameFormat] = useState('')
+  const [editJsonValuePaths, setEditJsonValuePaths] = useState<string[]>([])
   const [editCardinalityThreshold, setEditCardinalityThreshold] = useState(100)
   const [editInterval, setEditInterval] = useState('')
 
@@ -1323,6 +1427,7 @@ function ScansTab({ slug }: { slug: string }) {
         event_type_column: eventTypeColumn || null,
         time_column: timeColumn || null,
         event_name_format: eventNameFormat || null,
+        json_value_paths: jsonValuePaths,
         cardinality_threshold: cardinalityThreshold,
         interval: interval || null,
       }),
@@ -1341,12 +1446,43 @@ function ScansTab({ slug }: { slug: string }) {
         event_type_column: editEventTypeColumn || null,
         time_column: editTimeColumn || null,
         event_name_format: editEventNameFormat || null,
+        json_value_paths: editJsonValuePaths,
         cardinality_threshold: editCardinalityThreshold,
         interval: editInterval || null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scans', slug] })
       setEditingScanId(null)
+    },
+  })
+
+  const previewMut = useMutation({
+    mutationFn: () => scansApi.preview(slug, {
+      data_source_id: dsId,
+      base_query: baseQuery,
+      limit: 10,
+    }),
+    onSuccess: data => {
+      setPreview(data)
+      if (!data.columns.some(column => column.name === eventTypeColumn)) setEventTypeColumn('')
+      if (!data.columns.some(column => column.name === timeColumn)) setTimeColumn('')
+    },
+  })
+
+  const editPreviewMut = useMutation({
+    mutationFn: () => {
+      const scanConfig = scanConfigs.find(scan => scan.id === editingScanId)
+      if (!scanConfig) throw new Error('Missing scan config')
+      return scansApi.preview(slug, {
+        data_source_id: scanConfig.data_source_id,
+        base_query: editBaseQuery,
+        limit: 10,
+      })
+    },
+    onSuccess: data => {
+      setEditPreview(data)
+      if (!data.columns.some(column => column.name === editEventTypeColumn)) setEditEventTypeColumn('')
+      if (!data.columns.some(column => column.name === editTimeColumn)) setEditTimeColumn('')
     },
   })
 
@@ -1373,8 +1509,10 @@ function ScansTab({ slug }: { slug: string }) {
     setEditEventTypeColumn(sc.event_type_column ?? '')
     setEditTimeColumn(sc.time_column ?? '')
     setEditEventNameFormat(sc.event_name_format ?? '')
+    setEditJsonValuePaths(sc.json_value_paths ?? [])
     setEditCardinalityThreshold(sc.cardinality_threshold)
     setEditInterval(sc.interval ?? '')
+    setEditPreview(null)
   }
 
   const resetForm = () => {
@@ -1382,7 +1520,24 @@ function ScansTab({ slug }: { slug: string }) {
     setDsId(''); setScanName(''); setBaseQuery('')
     setEventTypeId(''); setEventTypeColumn('')
     setTimeColumn(''); setEventNameFormat('')
+    setJsonValuePaths([]); setPreview(null)
     setCardinalityThreshold(100); setInterval('')
+  }
+
+  const toggleJsonValuePath = (path: string) => {
+    setJsonValuePaths(current =>
+      current.includes(path)
+        ? current.filter(item => item !== path)
+        : [...current, path],
+    )
+  }
+
+  const toggleEditJsonValuePath = (path: string) => {
+    setEditJsonValuePaths(current =>
+      current.includes(path)
+        ? current.filter(item => item !== path)
+        : [...current, path],
+    )
   }
 
   const selectClass = "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
@@ -1404,15 +1559,15 @@ function ScansTab({ slug }: { slug: string }) {
 
       {/* Create dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) resetForm(); else setShowForm(true) }}>
-        <DialogContent className="max-w-lg">
-          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
-            <DialogHeader><DialogTitle>New Scan Config</DialogTitle></DialogHeader>
-            <div className="grid gap-4 py-4">
+        <DialogContent className="flex max-h-[calc(100vh-2rem)] max-w-4xl flex-col overflow-hidden p-0">
+          <form className="flex min-h-0 flex-1 flex-col" onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+            <DialogHeader className="px-6 pt-6"><DialogTitle>New Scan Config</DialogTitle></DialogHeader>
+            <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-6 py-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Name</Label><Input value={scanName} onChange={e => setScanName(e.target.value)} required placeholder="e.g. Main events scan" /></div>
                 <div className="grid gap-2">
                   <Label>Data Source</Label>
-                  <select value={dsId} onChange={e => setDsId(e.target.value)} className={selectClass} required>
+                  <select value={dsId} onChange={e => { setDsId(e.target.value); setPreview(null); setJsonValuePaths([]) }} className={selectClass} required>
                     <option value="">Select…</option>
                     {dataSources.map((ds: DataSource) => <option key={ds.id} value={ds.id}>{ds.name}</option>)}
                   </select>
@@ -1420,8 +1575,35 @@ function ScansTab({ slug }: { slug: string }) {
               </div>
               <div className="grid gap-2">
                 <Label>Base Query (used as subquery)</Label>
-                <Textarea value={baseQuery} onChange={e => setBaseQuery(e.target.value)} className="font-mono text-sm" rows={4} required placeholder="SELECT * FROM analytics.events" />
+                <Textarea
+                  value={baseQuery}
+                  onChange={e => { setBaseQuery(e.target.value); setPreview(null); setJsonValuePaths([]) }}
+                  className="font-mono text-sm"
+                  rows={4}
+                  required
+                  placeholder="SELECT * FROM analytics.events"
+                />
               </div>
+              <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-3">
+                <div>
+                  <div className="text-sm font-medium">Preview query</div>
+                  <p className="text-xs text-muted-foreground">
+                    Load sample rows first, then choose columns and JSON paths from the preview.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => previewMut.mutate()}
+                  disabled={previewMut.isPending || !dsId || !baseQuery.trim()}
+                >
+                  {previewMut.isPending ? 'Loading…' : 'Load Preview'}
+                </Button>
+              </div>
+              {previewMut.isError && (
+                <p className="text-sm text-destructive">{(previewMut.error as Error).message}</p>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2">
                   <Label>Event Type (optional)</Label>
@@ -1430,12 +1612,45 @@ function ScansTab({ slug }: { slug: string }) {
                     {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
                   </select>
                 </div>
-                <div className="grid gap-2"><Label>Event Type Column (optional)</Label><Input value={eventTypeColumn} onChange={e => setEventTypeColumn(e.target.value)} placeholder="e.g. event_name" /></div>
+                <div className="grid gap-2">
+                  <Label>Event Type Column (optional)</Label>
+                  <select
+                    value={eventTypeColumn}
+                    onChange={e => setEventTypeColumn(e.target.value)}
+                    className={selectClass}
+                    disabled={!preview}
+                  >
+                    <option value="">{preview ? 'No grouping' : 'Load preview first'}</option>
+                    {preview?.columns.map(column => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2"><Label>Time Column (optional)</Label><Input value={timeColumn} onChange={e => setTimeColumn(e.target.value)} placeholder="e.g. created_at" /></div>
+                <div className="grid gap-2">
+                  <Label>Time Column (optional)</Label>
+                  <select
+                    value={timeColumn}
+                    onChange={e => setTimeColumn(e.target.value)}
+                    className={selectClass}
+                    disabled={!preview}
+                  >
+                    <option value="">{preview ? 'No time series' : 'Load preview first'}</option>
+                    {preview?.columns.map(column => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="grid gap-2"><Label>Event Name Format (optional)</Label><Input value={eventNameFormat} onChange={e => setEventNameFormat(e.target.value)} placeholder="e.g. {action}:{category}" /></div>
               </div>
+              {preview && (
+                <ScanPreviewPanel
+                  preview={preview}
+                  selectedJsonValuePaths={jsonValuePaths}
+                  onToggleJsonValuePath={toggleJsonValuePath}
+                />
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={cardinalityThreshold} onChange={e => setCardinalityThreshold(Number(e.target.value))} min={1} /></div>
                 <div className="grid gap-2">
@@ -1452,7 +1667,7 @@ function ScansTab({ slug }: { slug: string }) {
               </div>
               {createMut.isError && <p className="text-sm text-destructive">{(createMut.error as Error).message}</p>}
             </div>
-            <DialogFooter>
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
               <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>
               <Button type="submit" disabled={createMut.isPending}>Create</Button>
             </DialogFooter>
@@ -1461,16 +1676,41 @@ function ScansTab({ slug }: { slug: string }) {
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog open={!!editingScanId} onOpenChange={v => { if (!v) setEditingScanId(null) }}>
-        <DialogContent className="max-w-lg">
-          <form onSubmit={e => { e.preventDefault(); if (editingScanId) updateMut.mutate(editingScanId) }}>
-            <DialogHeader><DialogTitle>Edit Scan Config</DialogTitle></DialogHeader>
-            <div className="grid gap-4 py-4">
+      <Dialog open={!!editingScanId} onOpenChange={v => { if (!v) { setEditingScanId(null); setEditPreview(null) } }}>
+        <DialogContent className="flex max-h-[calc(100vh-2rem)] max-w-4xl flex-col overflow-hidden p-0">
+          <form className="flex min-h-0 flex-1 flex-col" onSubmit={e => { e.preventDefault(); if (editingScanId) updateMut.mutate(editingScanId) }}>
+            <DialogHeader className="px-6 pt-6"><DialogTitle>Edit Scan Config</DialogTitle></DialogHeader>
+            <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-6 py-4">
               <div className="grid gap-2"><Label>Name</Label><Input value={editName} onChange={e => setEditName(e.target.value)} /></div>
               <div className="grid gap-2">
                 <Label>Base Query (used as subquery)</Label>
-                <Textarea value={editBaseQuery} onChange={e => setEditBaseQuery(e.target.value)} className="font-mono text-sm" rows={4} />
+                <Textarea
+                  value={editBaseQuery}
+                  onChange={e => { setEditBaseQuery(e.target.value); setEditPreview(null) }}
+                  className="font-mono text-sm"
+                  rows={4}
+                />
               </div>
+              <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-3">
+                <div>
+                  <div className="text-sm font-medium">Preview query</div>
+                  <p className="text-xs text-muted-foreground">
+                    Refresh preview to rebuild column pickers and JSON path options from sample rows.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => editPreviewMut.mutate()}
+                  disabled={editPreviewMut.isPending || !editBaseQuery.trim()}
+                >
+                  {editPreviewMut.isPending ? 'Loading…' : 'Load Preview'}
+                </Button>
+              </div>
+              {editPreviewMut.isError && (
+                <p className="text-sm text-destructive">{(editPreviewMut.error as Error).message}</p>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2">
                   <Label>Event Type (optional)</Label>
@@ -1479,12 +1719,45 @@ function ScansTab({ slug }: { slug: string }) {
                     {eventTypes.map((et: EventType) => <option key={et.id} value={et.id}>{et.display_name}</option>)}
                   </select>
                 </div>
-                <div className="grid gap-2"><Label>Event Type Column (optional)</Label><Input value={editEventTypeColumn} onChange={e => setEditEventTypeColumn(e.target.value)} placeholder="e.g. event_name" /></div>
+                <div className="grid gap-2">
+                  <Label>Event Type Column (optional)</Label>
+                  <select
+                    value={editEventTypeColumn}
+                    onChange={e => setEditEventTypeColumn(e.target.value)}
+                    className={selectClass}
+                    disabled={!editPreview}
+                  >
+                    <option value="">{editPreview ? 'No grouping' : 'Load preview first'}</option>
+                    {editPreview?.columns.map(column => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2"><Label>Time Column (optional)</Label><Input value={editTimeColumn} onChange={e => setEditTimeColumn(e.target.value)} placeholder="e.g. created_at" /></div>
+                <div className="grid gap-2">
+                  <Label>Time Column (optional)</Label>
+                  <select
+                    value={editTimeColumn}
+                    onChange={e => setEditTimeColumn(e.target.value)}
+                    className={selectClass}
+                    disabled={!editPreview}
+                  >
+                    <option value="">{editPreview ? 'No time series' : 'Load preview first'}</option>
+                    {editPreview?.columns.map(column => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="grid gap-2"><Label>Event Name Format (optional)</Label><Input value={editEventNameFormat} onChange={e => setEditEventNameFormat(e.target.value)} placeholder="e.g. {action}:{category}" /></div>
               </div>
+              {editPreview && (
+                <ScanPreviewPanel
+                  preview={editPreview}
+                  selectedJsonValuePaths={editJsonValuePaths}
+                  onToggleJsonValuePath={toggleEditJsonValuePath}
+                />
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2"><Label>Cardinality Threshold</Label><Input type="number" value={editCardinalityThreshold} onChange={e => setEditCardinalityThreshold(Number(e.target.value))} min={1} /></div>
                 <div className="grid gap-2">
@@ -1501,7 +1774,7 @@ function ScansTab({ slug }: { slug: string }) {
               </div>
               {updateMut.isError && <p className="text-sm text-destructive">{(updateMut.error as Error).message}</p>}
             </div>
-            <DialogFooter>
+            <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
               <Button type="button" variant="outline" onClick={() => setEditingScanId(null)}>Cancel</Button>
               <Button type="submit" disabled={updateMut.isPending}>Save</Button>
             </DialogFooter>
@@ -1518,6 +1791,9 @@ function ScansTab({ slug }: { slug: string }) {
                   <span className="font-semibold">{sc.name}</span>
                   <span className="text-muted-foreground text-sm">{dsMap.get(sc.data_source_id) ?? 'Unknown'}</span>
                   {sc.interval && <Badge variant="outline" className="text-xs">⏱ {sc.interval}</Badge>}
+                  {sc.json_value_paths.length > 0 && (
+                    <Badge variant="outline" className="text-xs">JSON keep {sc.json_value_paths.length}</Badge>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="icon" className="h-7 w-7" title="Edit scan config" onClick={e => { e.stopPropagation(); startEditScan(sc) }}><Pencil className="h-3 w-3" /></Button>
@@ -1572,6 +1848,9 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
             {scanConfig.event_type_column && <span>Group by: <strong className="text-foreground">{scanConfig.event_type_column}</strong></span>}
             {scanConfig.time_column && <span>Time col: <strong className="text-foreground">{scanConfig.time_column}</strong></span>}
             {scanConfig.event_name_format && <span>Name fmt: <strong className="text-foreground">{scanConfig.event_name_format}</strong></span>}
+            {scanConfig.json_value_paths.length > 0 && (
+              <span>JSON keep: <strong className="text-foreground">{scanConfig.json_value_paths.length}</strong></span>
+            )}
             {etName && <span>Event Type: <strong className="text-foreground">{etName}</strong></span>}
             {scanConfig.interval && <span>Interval: <strong className="text-foreground">{scanConfig.interval}</strong></span>}
             <span>
@@ -1647,6 +1926,9 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                           {job.result_summary.signals_added != null && job.result_summary.signals_added > 0 && (
                             <Badge variant="outline" className="text-[10px] text-destructive">+{job.result_summary.signals_added} signals</Badge>
                           )}
+                          {job.result_summary.alerts_queued != null && job.result_summary.alerts_queued > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-amber-600">+{job.result_summary.alerts_queued} alerts</Badge>
+                          )}
                           {job.result_summary.columns_analyzed != null && (
                             <span className="text-muted-foreground text-[10px]">{job.result_summary.columns_analyzed} cols</span>
                           )}
@@ -1682,6 +1964,12 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                                 <Card className="p-3 text-center">
                                   <div className="text-lg font-bold text-destructive">{job.result_summary.signals_added}</div>
                                   <div className="text-muted-foreground">Signals added</div>
+                                </Card>
+                              )}
+                              {job.result_summary.alerts_queued != null && (
+                                <Card className="p-3 text-center">
+                                  <div className="text-lg font-bold text-amber-600">{job.result_summary.alerts_queued}</div>
+                                  <div className="text-muted-foreground">Alerts queued</div>
                                 </Card>
                               )}
                             </div>

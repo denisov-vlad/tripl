@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.config import settings
+from tripl.json_paths import group_json_value_paths
 from tripl.models.data_source import DataSource
 from tripl.models.event_type import EventType
 from tripl.models.scan_config import ScanConfig
@@ -93,10 +94,15 @@ def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
         if config.time_column:
             columns = [c for c in columns if c.name != config.time_column]
         logger.info(f"Found {len(columns)} columns in base query")
+        json_value_paths = group_json_value_paths(config.json_value_paths)
 
         # Resolve event type: either from config or detect from event_type_column
         event_type_id = config.event_type_id
-        logger.info(f"event_type_id={event_type_id}, event_type_column={config.event_type_column!r}")
+        logger.info(
+            "event_type_id=%s, event_type_column=%r",
+            event_type_id,
+            config.event_type_column,
+        )
         if event_type_id is None and config.event_type_column:
             # Event type column groups rows into different event types.
             # Use GROUPING SETS to get per-group cardinalities in one query.
@@ -109,6 +115,7 @@ def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
                 config.base_query,
                 columns,
                 threshold=config.cardinality_threshold,
+                json_value_paths=json_value_paths,
             )
 
             event_type = session.get(EventType, event_type_id)
@@ -195,6 +202,7 @@ def _scan_with_grouping(
         columns,
         group_column=col_name,
         threshold=config.cardinality_threshold,
+        json_value_paths=group_json_value_paths(config.json_value_paths),
     )
     logger.info(f"Grouped scan: {len(group_values)} groups found for {col_name!r}")
 

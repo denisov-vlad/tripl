@@ -18,6 +18,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
 import { Plus, FolderKanban, Trash2, ArrowRight } from 'lucide-react'
 
 export default function ProjectsPage() {
@@ -29,10 +30,11 @@ export default function ProjectsPage() {
   const [description, setDescription] = useState('')
   const { confirm, dialog } = useConfirm()
 
-  const { data: projects = [], isLoading } = useQuery({
+  const projectsQuery = useQuery({
     queryKey: ['projects'],
     queryFn: projectsApi.list,
   })
+  const projects = projectsQuery.data ?? []
 
   const createMut = useMutation({
     mutationFn: () => projectsApi.create({ name, slug, description }),
@@ -134,7 +136,7 @@ export default function ProjectsPage() {
       </Dialog>
 
       {/* Loading */}
-      {isLoading && (
+      {projectsQuery.isLoading && (
         <div className="grid gap-3">
           {[1, 2, 3].map(i => (
             <Skeleton key={i} className="h-20 w-full rounded-lg" />
@@ -142,8 +144,17 @@ export default function ProjectsPage() {
         </div>
       )}
 
+      {projectsQuery.isError && (
+        <ErrorState
+          title="Failed to load projects"
+          description="The page could not fetch projects from the backend."
+          error={projectsQuery.error}
+          onRetry={() => { void projectsQuery.refetch() }}
+        />
+      )}
+
       {/* Projects */}
-      {!isLoading && projects.length > 0 && (
+      {!projectsQuery.isLoading && !projectsQuery.isError && projects.length > 0 && (
         <div className="grid gap-3">
           {projects.map((p: Project) => (
             <Card key={p.id} className="group transition-colors hover:border-primary/30">
@@ -179,7 +190,7 @@ export default function ProjectsPage() {
       )}
 
       {/* Empty */}
-      {!isLoading && projects.length === 0 && (
+      {!projectsQuery.isLoading && !projectsQuery.isError && projects.length === 0 && (
         <EmptyState
           icon={FolderKanban}
           title="No projects yet"

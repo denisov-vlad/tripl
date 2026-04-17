@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
@@ -17,6 +17,7 @@ class Event(UUIDMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(500))
     description: Mapped[str] = mapped_column(Text, default="")
+    order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     implemented: Mapped[bool] = mapped_column(Boolean, default=False)
     reviewed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -171,6 +171,7 @@ describe('EventsPage', () => {
               },
               name: 'Homepage View',
               description: '',
+              order: 0,
               implemented: true,
               reviewed: true,
               archived: false,
@@ -193,12 +194,12 @@ describe('EventsPage', () => {
     expect(await screen.findByText('Homepage View')).toBeInTheDocument()
     const eventHeader = screen.getByRole('columnheader', { name: 'Event' })
     const typeHeader = screen.getByRole('columnheader', { name: 'Type' })
-    const metricsHeader = screen.getByRole('columnheader', { name: '24h' })
+    const metricsHeader = screen.getByRole('columnheader', { name: '48h' })
     const actionsHeader = screen.getByRole('columnheader', { name: 'Actions' })
     expect(typeHeader.compareDocumentPosition(metricsHeader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(eventHeader).toBeInTheDocument()
     expect(actionsHeader.className).toContain('sticky')
-    expect(screen.getByText('24h')).toBeInTheDocument()
+    expect(screen.getByText('48h')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '7d' })).toBeInTheDocument()
     expect(screen.getByText('Hours')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '1k' })).toBeInTheDocument()
@@ -214,17 +215,135 @@ describe('EventsPage', () => {
 
     fireEvent.mouseOver(screen.getByRole('button', { name: '1k' }))
     fireEvent.focus(screen.getByRole('button', { name: '1k' }))
-    expect((await screen.findAllByText('Last 24 hours')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('Last 48 hours')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('1k events').length).toBeGreaterThan(0)
 
     fireEvent.mouseEnter(screen.getByRole('button', { name: 'More actions' }))
     const expandedActionsButton = await screen.findByRole('button', { name: 'Toggle implemented status' })
     expect(expandedActionsButton.parentElement).toHaveClass('opacity-100')
+    expect(screen.getByRole('button', { name: 'Move event up' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Move event down' })).toBeDisabled()
     expect(screen.getByRole('link', { name: 'View metrics' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Archive event' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Delete event' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Show chart'))
     expect(await screen.findByText('View signal')).toBeInTheDocument()
+  })
+
+  it('supports selecting multiple events and bulk deleting them', async () => {
+    const bulkDeleteBodies: unknown[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+
+      if (url.endsWith('/api/v1/projects/demo/event-types')) {
+        return mockJsonResponse([
+          {
+            id: 'type-1',
+            project_id: 'project-1',
+            name: 'page',
+            display_name: 'Page',
+            description: '',
+            color: '#0ea5e9',
+            order: 0,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            field_definitions: [],
+          },
+        ])
+      }
+      if (url.endsWith('/api/v1/projects/demo/meta-fields')) return mockJsonResponse([])
+      if (url.endsWith('/api/v1/projects/demo/variables')) return mockJsonResponse([])
+      if (url.endsWith('/api/v1/projects/demo/events/tags')) return mockJsonResponse([])
+      if (url.includes('/api/v1/projects/demo/events?reviewed=false')) return mockJsonResponse({ items: [], total: 0 })
+      if (url.includes('/api/v1/projects/demo/events?archived=true')) return mockJsonResponse({ items: [], total: 0 })
+      if (url.includes('/api/v1/projects/demo/events-metrics')) {
+        return mockJsonResponse({
+          scope: 'events_total',
+          scan_config_id: null,
+          event_id: null,
+          event_type_id: null,
+          interval: '1h',
+          latest_signal: null,
+          data: [],
+        })
+      }
+      if (url.endsWith('/api/v1/projects/demo/events/window-metrics') && init?.method === 'POST') {
+        return mockJsonResponse([])
+      }
+      if (url.includes('/api/v1/projects/demo/anomalies/signals')) return mockJsonResponse([])
+      if (url.endsWith('/api/v1/projects/demo/events/bulk-delete') && init?.method === 'POST') {
+        bulkDeleteBodies.push(JSON.parse(String(init.body)))
+        return new Response(null, { status: 204 })
+      }
+      if (url.includes('/api/v1/projects/demo/events')) {
+        return mockJsonResponse({
+          items: [
+            {
+              id: 'event-1',
+              project_id: 'project-1',
+              event_type_id: 'type-1',
+              event_type: {
+                id: 'type-1',
+                name: 'page',
+                display_name: 'Page',
+                color: '#0ea5e9',
+              },
+              name: 'Homepage View',
+              description: '',
+              order: 0,
+              implemented: true,
+              reviewed: true,
+              archived: false,
+              tags: [],
+              field_values: [],
+              meta_values: [],
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+            {
+              id: 'event-2',
+              project_id: 'project-1',
+              event_type_id: 'type-1',
+              event_type: {
+                id: 'type-1',
+                name: 'page',
+                display_name: 'Page',
+                color: '#0ea5e9',
+              },
+              name: 'Settings View',
+              description: '',
+              order: 1,
+              implemented: false,
+              reviewed: true,
+              archived: false,
+              tags: [],
+              field_values: [],
+              meta_values: [],
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+          total: 2,
+        })
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    renderEventsPage()
+
+    expect(await screen.findByText('Homepage View')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Select Homepage View'))
+    fireEvent.click(screen.getByLabelText('Select Settings View'))
+
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(bulkDeleteBodies).toContainEqual({ event_ids: ['event-1', 'event-2'] })
+    })
   })
 })

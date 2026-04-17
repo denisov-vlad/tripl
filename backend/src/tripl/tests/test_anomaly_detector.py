@@ -177,3 +177,29 @@ def test_detect_anomalies_detects_spike_on_top_of_repeating_daily_pattern() -> N
     )
     assert spike_anomaly.direction == "spike"
     assert spike_anomaly.expected_count > 30
+
+
+def test_detect_anomalies_detects_sustained_growth_on_top_of_daily_pattern() -> None:
+    points = [
+        SeriesPoint(bucket=_bucket(hour), count=_daily_pattern_count(hour))
+        for hour in range(24 * 10)
+    ]
+    growth_hours = [24 * 10 - 15, 24 * 10 - 14, 24 * 10 - 13]  # 09:00, 10:00, 11:00
+    for hour in growth_hours:
+        points[hour] = SeriesPoint(bucket=_bucket(hour), count=_daily_pattern_count(hour) + 35)
+
+    anomalies = detect_anomalies(
+        points,
+        interval=timedelta(hours=1),
+        evaluation_start=_bucket(24 * 10 - 24),
+        evaluation_end=_bucket(24 * 10),
+        settings=SETTINGS,
+    )
+
+    anomaly_buckets = {anomaly.bucket for anomaly in anomalies}
+    assert _bucket(growth_hours[-1]) in anomaly_buckets
+    sustained_anomaly = next(
+        anomaly for anomaly in anomalies if anomaly.bucket == _bucket(growth_hours[-1])
+    )
+    assert sustained_anomaly.direction == "spike"
+    assert sustained_anomaly.actual_count == _daily_pattern_count(growth_hours[-1]) + 35

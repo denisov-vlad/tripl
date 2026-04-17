@@ -96,11 +96,19 @@ def project_and_type(sync_session: Session):
         field_type="string",
         order=1,
     )
-    sync_session.add_all([fd_screen, fd_action])
+    fd_payload = FieldDefinition(
+        id=uuid.uuid4(),
+        event_type_id=et.id,
+        name="payload",
+        display_name="Payload",
+        field_type="json",
+        order=2,
+    )
+    sync_session.add_all([fd_screen, fd_action, fd_payload])
     sync_session.flush()
     sync_session.commit()
 
-    return project, et, {"screen": fd_screen, "action": fd_action}
+    return project, et, {"screen": fd_screen, "action": fd_action, "payload": fd_payload}
 
 
 class TestEventGeneration:
@@ -307,3 +315,45 @@ class TestEventGeneration:
         assert len(fvs) == 1
         assert fvs[0].value == "/home"
         assert fvs[0].field_definition_id == fds["screen"].id
+
+    def test_json_paths_can_keep_selected_values_as_is(
+        self,
+        sync_session: Session,
+        project_and_type,
+    ):
+        project, et, fds = project_and_type
+        analysis = BreakdownAnalysis(
+            results={
+                "payload": CardinalityResult(
+                    column=ColumnInfo("payload", "JSON"),
+                    count=1,
+                    is_low=True,
+                    json_path_combos=[("extra.key", "locale")],
+                ),
+            },
+            rows=[(("extra.key", "locale"), '"TASK-123"')],
+            reg_names=[],
+            json_names=["payload"],
+            json_value_names=["payload.extra.key"],
+        )
+
+        result = generate_events(sync_session, project.id, et.id, analysis, fds)
+        sync_session.commit()
+
+        assert result.events_created == 1
+
+        payload_value = sync_session.execute(
+            select(EventFieldValue.value).where(
+                EventFieldValue.field_definition_id == fds["payload"].id
+            )
+        ).scalar_one()
+        assert payload_value == '{"extra": {"key": "TASK-123"}, "locale": "${payload.locale}"}'
+
+        variable_names = {
+            variable.name
+            for variable in sync_session.execute(
+                select(Variable).where(Variable.project_id == project.id)
+            ).scalars()
+        }
+        assert "payload.locale" in variable_names
+        assert "payload.extra.key" not in variable_names

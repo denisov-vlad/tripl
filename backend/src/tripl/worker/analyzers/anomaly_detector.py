@@ -18,6 +18,8 @@ _SEASONAL_PERIODS_BY_INTERVAL_SECONDS: dict[int, tuple[int, ...]] = {
     24 * 60 * 60: (7,),
 }
 _MIN_CYCLES_PER_PERIOD = 2
+_SUSTAINED_SHIFT_WINDOW = 3
+_SUSTAINED_SHIFT_MIN_CURRENT_DELTA_RATIO = 0.03
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,77 @@ def _detect_with_rolling_baseline(
     return anomalies
 
 
+def _detect_sustained_shift(
+    expanded: list[SeriesPoint],
+    *,
+    evaluation_start: datetime,
+    expected_counts: list[float],
+    settings: AnomalyDetectionSettings,
+) -> list[DetectedAnomaly]:
+    anomalies: list[DetectedAnomaly] = []
+    counts = [point.count for point in expanded]
+
+    for idx, point in enumerate(expanded):
+        if point.bucket < evaluation_start:
+            continue
+        if idx + 1 < _SUSTAINED_SHIFT_WINDOW:
+            continue
+
+        recent_start = idx + 1 - _SUSTAINED_SHIFT_WINDOW
+        window_start = max(0, idx - settings.baseline_window_buckets)
+        baseline = counts[window_start:recent_start]
+        if len(baseline) < settings.min_history_buckets:
+            continue
+
+        expected_count = max(float(expected_counts[idx]), 0.0)
+        if expected_count < settings.min_expected_count:
+            continue
+
+        recent_counts = counts[recent_start:idx + 1]
+        baseline_mean, stddev = _rolling_stats(baseline)
+        recent_mean = fmean(recent_counts)
+        effective_stddev = stddev if stddev > 0 else 1.0
+        z_score = (recent_mean - baseline_mean) / effective_stddev
+        if abs(z_score) < settings.sigma_threshold:
+            continue
+
+        direction = "spike" if z_score > 0 else "drop"
+        if direction == "spike":
+            if not all(value > baseline_mean for value in recent_counts):
+                continue
+        elif not all(value < baseline_mean for value in recent_counts):
+            continue
+
+        current_delta_ratio = (
+            abs(point.count - expected_count) / expected_count if expected_count > 0 else 0.0
+        )
+        if current_delta_ratio < _SUSTAINED_SHIFT_MIN_CURRENT_DELTA_RATIO:
+            continue
+
+        anomalies.append(
+            DetectedAnomaly(
+                bucket=point.bucket,
+                actual_count=point.count,
+                expected_count=expected_count,
+                stddev=stddev,
+                z_score=z_score,
+                direction=direction,
+            )
+        )
+
+    return anomalies
+
+
+def _merge_anomalies(*anomaly_lists: list[DetectedAnomaly]) -> list[DetectedAnomaly]:
+    anomalies_by_bucket: dict[datetime, DetectedAnomaly] = {}
+    for anomaly_list in anomaly_lists:
+        for anomaly in anomaly_list:
+            existing = anomalies_by_bucket.get(anomaly.bucket)
+            if existing is None or abs(anomaly.z_score) > abs(existing.z_score):
+                anomalies_by_bucket[anomaly.bucket] = anomaly
+    return [anomalies_by_bucket[bucket] for bucket in sorted(anomalies_by_bucket)]
+
+
 def detect_anomalies(
     points: list[SeriesPoint],
     *,
@@ -188,7 +261,7 @@ def detect_anomalies(
             settings=settings,
         )
 
-    anomalies: list[DetectedAnomaly] = []
+    point_anomalies: list[DetectedAnomaly] = []
     expected_counts, residuals = expected_series
 
     for idx, point in enumerate(expanded):
@@ -210,7 +283,7 @@ def detect_anomalies(
         if abs(z_score) < settings.sigma_threshold:
             continue
 
-        anomalies.append(
+        point_anomalies.append(
             DetectedAnomaly(
                 bucket=point.bucket,
                 actual_count=point.count,
@@ -221,4 +294,10 @@ def detect_anomalies(
             )
         )
 
-    return anomalies
+    sustained_shift_anomalies = _detect_sustained_shift(
+        expanded,
+        evaluation_start=evaluation_start,
+        expected_counts=expected_counts,
+        settings=settings,
+    )
+    return _merge_anomalies(point_anomalies, sustained_shift_anomalies)

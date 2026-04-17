@@ -12,6 +12,7 @@ from tripl.worker.adapters.base import BaseAdapter, ColumnInfo
 logger = logging.getLogger(__name__)
 
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
+_IDENTIFIER_PART_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 class ClickHouseAdapter(BaseAdapter):
@@ -51,6 +52,16 @@ class ClickHouseAdapter(BaseAdapter):
         self._allowed_columns = {c.name for c in columns}
         return columns
 
+    def get_preview_rows(
+        self,
+        base_query: str,
+        limit: int = 10,
+    ) -> tuple[list[str], list[tuple]]:
+        sql = f"SELECT * FROM ({base_query}) AS _src LIMIT {int(limit)}"
+        logger.info("CH preview query: %s", sql)
+        result = self._client.query(sql)
+        return list(result.column_names), result.result_rows
+
     def _validate_column(self, column: str) -> str:
         if not _IDENTIFIER_RE.match(column):
             msg = f"Invalid column name: {column}"
@@ -60,25 +71,47 @@ class ClickHouseAdapter(BaseAdapter):
             raise ValueError(msg)
         return column
 
+    def _json_path_expression(self, column: str, path: str) -> str:
+        parts = [part for part in path.split(".") if part]
+        if not parts:
+            raise ValueError(f"Invalid JSON path: {path}")
+        if any(not _IDENTIFIER_PART_RE.match(part) for part in parts):
+            raise ValueError(f"Unsupported JSON path: {path}")
+
+        expression = f"`{self._validate_column(column)}`"
+        for part in parts:
+            expression += f".`{part}`"
+        return expression
+
     def get_full_breakdown(
         self,
         base_query: str,
         regular_columns: list[str],
         json_columns: list[str],
+        json_value_paths: dict[str, list[str]] | None = None,
         limit: int = 50000,
-    ) -> tuple[list[str], list[str], list[tuple]]:
+    ) -> tuple[list[str], list[str], list[str], list[tuple]]:
         """Single GROUP BY ALL query: regular cols + JSONAllPaths(json cols) + count().
 
         Returns (regular_col_names, json_col_names, rows).
         """
         reg_cols = [self._validate_column(c) for c in regular_columns]
         json_cols = [self._validate_column(c) for c in json_columns]
+        json_value_paths = json_value_paths or {}
+        json_value_names: list[str] = []
 
         select_parts: list[str] = []
         for c in reg_cols:
             select_parts.append(f"`{c}`")
         for c in json_cols:
             select_parts.append(f"arraySort(JSONAllPaths(`{c}`))")
+        for c in json_cols:
+            for path in json_value_paths.get(c, []):
+                full_path = f"{c}.{path}"
+                select_parts.append(
+                    f"toJSONString({self._json_path_expression(c, path)}) AS `{full_path}`"
+                )
+                json_value_names.append(full_path)
         select_parts.append("count() AS _cnt")
 
         sql = (
@@ -97,7 +130,7 @@ class ClickHouseAdapter(BaseAdapter):
         n_rows = len(result.result_rows)
         logger.info(f"CH breakdown done in {elapsed:.2f}s, {n_rows} rows")
 
-        return reg_cols, json_cols, result.result_rows
+        return reg_cols, json_cols, json_value_names, result.result_rows
 
     def get_time_bucketed_counts(
         self,
@@ -106,10 +139,11 @@ class ClickHouseAdapter(BaseAdapter):
         ch_interval: str,
         regular_columns: list[str],
         json_columns: list[str],
+        json_value_paths: dict[str, list[str]] | None,
         time_from: datetime,
         time_to: datetime,
         limit: int = 100000,
-    ) -> tuple[list[str], list[tuple]]:
+    ) -> tuple[list[str], list[str], list[tuple]]:
         """Time-bucketed GROUP BY ALL with all columns, like get_full_breakdown.
 
         Returns (column_names, rows).
@@ -118,15 +152,24 @@ class ClickHouseAdapter(BaseAdapter):
         tc = self._validate_column(time_column)
         reg_cols = [self._validate_column(c) for c in regular_columns]
         json_cols = [self._validate_column(c) for c in json_columns]
+        json_value_paths = json_value_paths or {}
 
         select_parts = [f"toStartOfInterval(`{tc}`, INTERVAL {ch_interval}) AS _bucket"]
         col_names: list[str] = []
+        json_value_names: list[str] = []
         for c in reg_cols:
             select_parts.append(f"`{c}`")
             col_names.append(c)
         for c in json_cols:
             select_parts.append(f"arraySort(JSONAllPaths(`{c}`))")
             col_names.append(c)
+        for c in json_cols:
+            for path in json_value_paths.get(c, []):
+                full_path = f"{c}.{path}"
+                select_parts.append(
+                    f"toJSONString({self._json_path_expression(c, path)}) AS `{full_path}`"
+                )
+                json_value_names.append(full_path)
         select_parts.append("count() AS _cnt")
 
         # Format timestamps for ClickHouse
@@ -149,4 +192,4 @@ class ClickHouseAdapter(BaseAdapter):
         n_rows = len(result.result_rows)
         logger.info(f"CH bucketed done in {elapsed:.2f}s, {n_rows} rows")
 
-        return col_names, result.result_rows
+        return col_names, json_value_names, result.result_rows

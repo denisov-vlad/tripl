@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+import enum
+import uuid
+
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+
+class AlertDestinationType(enum.StrEnum):
+    slack = "slack"
+    telegram = "telegram"
+
+
+class AlertDestination(UUIDMixin, TimestampMixin, Base):
+    __tablename__ = "alert_destinations"
+    __table_args__ = (
+        Index("ix_alert_destination_project", "project_id"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+    )
+    type: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    webhook_url_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bot_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chat_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    rules: Mapped[list[AlertRule]] = relationship(  # noqa: F821
+        back_populates="destination",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    deliveries: Mapped[list[AlertDelivery]] = relationship(  # noqa: F821
+        back_populates="destination",
+        cascade="all, delete-orphan",
+    )

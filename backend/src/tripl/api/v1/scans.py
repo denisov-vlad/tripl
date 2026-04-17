@@ -3,7 +3,13 @@ import uuid
 from fastapi import APIRouter
 
 from tripl.api.deps import SessionDep
-from tripl.schemas.scan_config import ScanConfigCreate, ScanConfigResponse, ScanConfigUpdate
+from tripl.schemas.scan_config import (
+    ScanConfigCreate,
+    ScanConfigPreviewRequest,
+    ScanConfigPreviewResponse,
+    ScanConfigResponse,
+    ScanConfigUpdate,
+)
 from tripl.schemas.scan_job import ScanJobResponse
 from tripl.services import scan_service
 
@@ -23,6 +29,15 @@ async def create_scan_config(
     session: SessionDep, slug: str, data: ScanConfigCreate
 ):
     return await scan_service.create_scan_config(session, slug, data)
+
+
+@router.post("/preview", response_model=ScanConfigPreviewResponse)
+async def preview_scan_config(
+    session: SessionDep,
+    slug: str,
+    data: ScanConfigPreviewRequest,
+):
+    return await scan_service.preview_scan_config(session, slug, data)
 
 
 @router.get("/{scan_id}", response_model=ScanConfigResponse)

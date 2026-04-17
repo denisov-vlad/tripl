@@ -87,6 +87,7 @@ export interface Event {
   event_type: EventTypeBrief
   name: string
   description: string
+  order: number
   implemented: boolean
   reviewed: boolean
   archived: boolean
@@ -141,10 +142,34 @@ export interface ScanConfig {
   event_type_column: string | null
   time_column: string | null
   event_name_format: string | null
+  json_value_paths: string[]
   cardinality_threshold: number
   interval: IntervalCode | null
   created_at: string
   updated_at: string
+}
+
+export interface ScanPreviewColumn {
+  name: string
+  type_name: string
+  is_nullable: boolean
+}
+
+export interface ScanPreviewJsonPath {
+  full_path: string
+  path: string
+  sample_values: string[]
+}
+
+export interface ScanPreviewJsonColumn {
+  column: string
+  paths: ScanPreviewJsonPath[]
+}
+
+export interface ScanConfigPreview {
+  columns: ScanPreviewColumn[]
+  rows: Record<string, unknown>[]
+  json_columns: ScanPreviewJsonColumn[]
 }
 
 export interface ProjectAnomalySettings {
@@ -177,6 +202,7 @@ export interface ScanJob {
     type_metrics?: number
     anomalies_detected?: number
     signals_added?: number
+    alerts_queued?: number
     details?: string[]
   } | null
   error_message: string | null
@@ -224,4 +250,96 @@ export interface EventWindowMetrics {
   interval: string | null
   total_count: number
   data: EventMetricPoint[]
+}
+
+export type AlertDestinationType = 'slack' | 'telegram'
+export type AlertDeliveryStatus = 'pending' | 'sent' | 'failed'
+export type AlertMessageFormat =
+  | 'plain'
+  | 'slack_mrkdwn'
+  | 'telegram_html'
+  | 'telegram_markdownv2'
+
+export interface AlertRule {
+  id: string
+  destination_id: string
+  name: string
+  enabled: boolean
+  include_project_total: boolean
+  include_event_types: boolean
+  include_events: boolean
+  notify_on_spike: boolean
+  notify_on_drop: boolean
+  min_percent_delta: number
+  min_absolute_delta: number
+  min_expected_count: number
+  cooldown_minutes: number
+  message_template: string | null
+  items_template: string | null
+  message_format: AlertMessageFormat
+  excluded_event_type_ids: string[]
+  excluded_event_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertDestination {
+  id: string
+  project_id: string
+  type: AlertDestinationType
+  name: string
+  enabled: boolean
+  webhook_set: boolean
+  bot_token_set: boolean
+  chat_id: string | null
+  rules: AlertRule[]
+  created_at: string
+  updated_at: string
+}
+
+export interface AlertDeliveryItem {
+  id: string
+  delivery_id: string
+  scope_type: 'project_total' | 'event_type' | 'event'
+  scope_ref: string
+  scope_name: string
+  event_type_id: string | null
+  event_id: string | null
+  bucket: string
+  direction: 'spike' | 'drop'
+  actual_count: number
+  expected_count: number
+  absolute_delta: number
+  percent_delta: number
+  details_path: string | null
+  monitoring_path: string | null
+}
+
+export interface AlertDelivery {
+  id: string
+  project_id: string
+  scan_config_id: string
+  scan_job_id: string | null
+  destination_id: string
+  rule_id: string
+  destination_name: string
+  rule_name: string
+  scan_name: string
+  status: AlertDeliveryStatus
+  channel: AlertDestinationType
+  matched_count: number
+  payload_snapshot: Record<string, unknown> | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+  sent_at: string | null
+}
+
+export interface AlertDeliveryDetail extends AlertDelivery {
+  items: AlertDeliveryItem[]
+}
+
+export interface AlertDeliveryListResponse {
+  items: AlertDelivery[]
+  total: number
 }

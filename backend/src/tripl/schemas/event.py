@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,6 +40,15 @@ class EventUpdate(BaseModel):
     meta_values: list[EventMetaValueIn] | None = None
 
 
+class EventBulkDelete(BaseModel):
+    event_ids: list[uuid.UUID] = Field(min_length=1)
+
+
+class EventMove(BaseModel):
+    direction: Literal["up", "down"]
+    visible_event_ids: list[uuid.UUID] | None = None
+
+
 class EventFieldValueResponse(BaseModel):
     id: uuid.UUID
     field_definition_id: uuid.UUID
@@ -69,6 +79,7 @@ class EventResponse(BaseModel):
     event_type: EventTypeBrief
     name: str
     description: str
+    order: int
     implemented: bool
     reviewed: bool
     archived: bool

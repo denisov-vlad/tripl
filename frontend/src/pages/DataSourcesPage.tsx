@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { dataSourcesApi } from '@/api/dataSources'
@@ -17,7 +17,10 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/empty-state'
+import { ErrorState } from '@/components/error-state'
 import { Database, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle } from 'lucide-react'
+
+const EMPTY_DATA_SOURCES: DataSource[] = []
 
 export default function DataSourcesPage() {
   const { dsId } = useParams<{ dsId?: string }>()
@@ -61,18 +64,11 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
   const [testingId, setTestingId] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null)
 
-  const { data: dataSources = [] } = useQuery({
+  const dataSourcesQuery = useQuery({
     queryKey: ['dataSources'],
     queryFn: () => dataSourcesApi.list(),
   })
-
-  // Open data source from URL
-  useEffect(() => {
-    if (openDsId && dataSources.length > 0) {
-      const ds = dataSources.find((d: DataSource) => d.id === openDsId)
-      if (ds && editingDs?.id !== ds.id) startEdit(ds)
-    }
-  }, [openDsId, dataSources])
+  const dataSources = dataSourcesQuery.data ?? EMPTY_DATA_SOURCES
 
   const createMut = useMutation({
     mutationFn: () =>
@@ -127,7 +123,7 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
     }
   }
 
-  const startEdit = (ds: DataSource) => {
+  const startEdit = useCallback((ds: DataSource) => {
     setEditingDs(ds)
     setEditName(ds.name)
     setEditHost(ds.host)
@@ -136,12 +132,20 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
     setEditUsername(ds.username)
     setEditPassword('')
     navigate(`/data-sources/${ds.id}`, { replace: true })
-  }
+  }, [navigate])
 
   const closeEdit = () => {
     setEditingDs(null)
     navigate('/data-sources', { replace: true })
   }
+
+  // Open data source from URL
+  useEffect(() => {
+    if (openDsId && dataSources.length > 0) {
+      const ds = dataSources.find((d: DataSource) => d.id === openDsId)
+      if (ds && editingDs?.id !== ds.id) startEdit(ds)
+    }
+  }, [openDsId, dataSources, editingDs?.id, startEdit])
 
   const resetForm = () => {
     setShowForm(false)
@@ -263,7 +267,16 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
       </Dialog>
 
       {/* Data source cards */}
-      {dataSources.length === 0 && (
+      {dataSourcesQuery.isError && (
+        <ErrorState
+          title="Failed to load data sources"
+          description="The page could not fetch connection data from the backend."
+          error={dataSourcesQuery.error}
+          onRetry={() => { void dataSourcesQuery.refetch() }}
+        />
+      )}
+
+      {!dataSourcesQuery.isError && dataSources.length === 0 && (
         <EmptyState
           icon={Database}
           title="No data sources"
@@ -277,7 +290,7 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
         />
       )}
 
-      {dataSources.map((ds: DataSource) => (
+      {!dataSourcesQuery.isError && dataSources.map((ds: DataSource) => (
         <Card key={ds.id}>
           <CardContent className="p-4">
             <div className="flex items-center justify-between">

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
@@ -26,6 +26,7 @@ class ScanConfig(UUIDMixin, TimestampMixin, Base):
     event_type_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
     time_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_name_format: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    json_value_paths: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
     cardinality_threshold: Mapped[int] = mapped_column(Integer, default=100)
     interval: Mapped[str | None] = mapped_column(String(10), nullable=True)
     anomaly_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

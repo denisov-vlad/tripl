@@ -3,7 +3,14 @@ import uuid
 from fastapi import APIRouter, Query
 
 from tripl.api.deps import SessionDep
-from tripl.schemas.event import EventCreate, EventListResponse, EventResponse, EventUpdate
+from tripl.schemas.event import (
+    EventBulkDelete,
+    EventCreate,
+    EventListResponse,
+    EventMove,
+    EventResponse,
+    EventUpdate,
+)
 from tripl.services import event_service
 
 router = APIRouter(prefix="/projects/{slug}/events", tags=["events"])
@@ -43,6 +50,11 @@ async def bulk_create_events(session: SessionDep, slug: str, data: list[EventCre
     return await event_service.bulk_create_events(session, slug, data)
 
 
+@router.post("/bulk-delete", status_code=204)
+async def bulk_delete_events(session: SessionDep, slug: str, data: EventBulkDelete):
+    await event_service.bulk_delete_events(session, slug, data)
+
+
 @router.get("/{event_id}", response_model=EventResponse)
 async def get_event(session: SessionDep, slug: str, event_id: uuid.UUID):
     return await event_service.get_event(session, slug, event_id)
@@ -51,6 +63,11 @@ async def get_event(session: SessionDep, slug: str, event_id: uuid.UUID):
 @router.patch("/{event_id}", response_model=EventResponse)
 async def update_event(session: SessionDep, slug: str, event_id: uuid.UUID, data: EventUpdate):
     return await event_service.update_event(session, slug, event_id, data)
+
+
+@router.patch("/{event_id}/move", response_model=EventResponse)
+async def move_event(session: SessionDep, slug: str, event_id: uuid.UUID, data: EventMove):
+    return await event_service.move_event(session, slug, event_id, data)
 
 
 @router.delete("/{event_id}", status_code=204)

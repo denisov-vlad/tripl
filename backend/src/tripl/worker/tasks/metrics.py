@@ -7,7 +7,6 @@ counts and matches them to the generated events.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from collections.abc import Sequence
@@ -20,12 +19,24 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.config import settings
+from tripl.json_paths import (
+    build_json_value,
+    decode_json_path_value,
+    format_json_path_value,
+    group_json_value_paths,
+)
+from tripl.models.alert_delivery import AlertDelivery, AlertDeliveryStatus
+from tripl.models.alert_delivery_item import AlertDeliveryItem
+from tripl.models.alert_destination import AlertDestination
+from tripl.models.alert_rule import AlertRule
+from tripl.models.alert_rule_state import AlertRuleState
 from tripl.models.data_source import DataSource
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
 from tripl.models.event_type import EventType
 from tripl.models.field_definition import FieldDefinition
 from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.project import Project
 from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob, ScanJobStatus
@@ -51,6 +62,7 @@ from tripl.worker.analyzers.event_generator import (
     generate_events,
 )
 from tripl.worker.celery_app import celery_app
+from tripl.worker.tasks.alerts import send_alert_delivery
 from tripl.worker.utils.intervals import get_interval
 
 logger = logging.getLogger(__name__)
@@ -171,10 +183,15 @@ def _build_event_name_from_row(
     reg_index: dict[str, int],
     json_index: dict[str, int],
     n_reg: int,
+    json_value_names: list[str],
     event_name_format: str | None,
 ) -> str | None:
     """Build event name from a CH row using col_meta (same logic as generate_events)."""
     kwargs: dict[str, str] = {}
+    json_value_index = {
+        name: n_reg + len(json_index) + idx
+        for idx, name in enumerate(json_value_names)
+    }
 
     for col_name, meta in col_meta.items():
         if meta.get("is_json"):
@@ -187,10 +204,15 @@ def _build_event_name_from_row(
                     sorted_paths = sorted(str(p) for p in paths)
                 else:
                     sorted_paths = [str(paths)]
-                value = json.dumps(
-                    {p: f"${{{col_name}.{p}}}" for p in sorted_paths},
-                    ensure_ascii=False,
-                    sort_keys=True,
+                preserved_values = {
+                    full_path: decode_json_path_value(data_row[json_value_index[full_path]])
+                    for full_path in meta.get("json_passthrough_paths", [])
+                    if full_path in json_value_index and full_path.startswith(f"{col_name}.")
+                }
+                value = build_json_value(
+                    col_name,
+                    sorted_paths,
+                    preserved_values=preserved_values,
                 )
             else:
                 value = "{}"
@@ -207,6 +229,15 @@ def _build_event_name_from_row(
             value = template
 
         kwargs[col_name] = value
+        if meta.get("is_json") and paths:
+            for path in sorted_paths:
+                full_path = f"{col_name}.{path}"
+                if full_path in json_value_index:
+                    kwargs[full_path] = format_json_path_value(
+                        data_row[json_value_index[full_path]]
+                    )
+                else:
+                    kwargs[full_path] = f"${{{full_path}}}"
 
     if not kwargs:
         return None
@@ -230,6 +261,10 @@ def _build_anomaly_settings(
         sigma_threshold=settings.sigma_threshold,
         min_expected_count=settings.min_expected_count,
     )
+
+
+def _get_scan_json_value_path_map(config: ScanConfig) -> dict[str, list[str]]:
+    return group_json_value_paths(config.json_value_paths)
 
 
 def _get_project_anomaly_settings(
@@ -458,6 +493,391 @@ def _get_visible_signal_scope_keys(
         )
         is not None
     }
+
+
+def _get_latest_metric_buckets(
+    session: Session,
+    scan_config_id: uuid.UUID,
+) -> dict[tuple[str, str], datetime]:
+    latest_metrics: dict[tuple[str, str], datetime] = {}
+    latest_project_total_bucket = session.execute(
+        select(sa_func.max(EventMetric.bucket)).where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id.is_not(None),
+        )
+    ).scalar_one_or_none()
+    if latest_project_total_bucket is not None:
+        latest_metrics[(SCOPE_PROJECT_TOTAL, str(scan_config_id))] = latest_project_total_bucket
+
+    for event_type_id, bucket in session.execute(
+        select(EventMetric.event_type_id, sa_func.max(EventMetric.bucket))
+        .where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id.is_not(None),
+        )
+        .group_by(EventMetric.event_type_id)
+    ).all():
+        if event_type_id is not None:
+            latest_metrics[(SCOPE_EVENT_TYPE, str(event_type_id))] = bucket
+
+    for event_id, bucket in session.execute(
+        select(EventMetric.event_id, sa_func.max(EventMetric.bucket))
+        .where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.event_id.is_not(None),
+        )
+        .group_by(EventMetric.event_id)
+    ).all():
+        if event_id is not None:
+            latest_metrics[(SCOPE_EVENT, str(event_id))] = bucket
+
+    return latest_metrics
+
+
+def _build_monitoring_url(
+    project_slug: str,
+    *,
+    scope_type: str,
+    scope_ref: str,
+) -> str | None:
+    if not settings.app_base_url:
+        return None
+    base = settings.app_base_url.rstrip("/")
+    if scope_type == SCOPE_PROJECT_TOTAL:
+        return f"{base}/p/{project_slug}/monitoring/project-total/{scope_ref}"
+    if scope_type == SCOPE_EVENT_TYPE:
+        return f"{base}/p/{project_slug}/monitoring/event-type/{scope_ref}"
+    return f"{base}/p/{project_slug}/monitoring/event/{scope_ref}"
+
+
+def _build_event_details_url(project_slug: str, event_id: uuid.UUID | None) -> str | None:
+    if not settings.app_base_url or event_id is None:
+        return None
+    base = settings.app_base_url.rstrip("/")
+    return f"{base}/p/{project_slug}/events/detail/{event_id}"
+
+
+def _get_project_slug(session: Session, project_id: uuid.UUID) -> str:
+    slug = session.execute(
+        select(Project.slug).where(Project.id == project_id)
+    ).scalar_one_or_none()
+    if slug is None:
+        msg = f"Project {project_id} not found"
+        raise ValueError(msg)
+    return slug
+
+
+def _get_latest_active_anomalies(
+    session: Session,
+    config: ScanConfig,
+) -> dict[tuple[str, str], MetricAnomaly]:
+    latest_metrics = _get_latest_metric_buckets(session, config.id)
+    latest_anomalies: dict[tuple[str, str], MetricAnomaly] = {}
+    for anomaly in session.execute(
+        select(MetricAnomaly)
+        .where(MetricAnomaly.scan_config_id == config.id)
+        .order_by(MetricAnomaly.bucket.desc())
+    ).scalars():
+        key = (anomaly.scope_type, anomaly.scope_ref)
+        latest_anomalies.setdefault(key, anomaly)
+
+    return {
+        key: anomaly
+        for key, anomaly in latest_anomalies.items()
+        if _classify_signal_state(
+            anomaly_bucket=anomaly.bucket,
+            latest_metric_bucket=latest_metrics.get(key),
+        )
+        == "latest_scan"
+    }
+
+
+def _build_alert_scope_names(
+    session: Session,
+    anomalies: list[MetricAnomaly],
+) -> dict[tuple[str, str], str]:
+    scope_names: dict[tuple[str, str], str] = {
+        (SCOPE_PROJECT_TOTAL, anomaly.scope_ref): "All events"
+        for anomaly in anomalies
+        if anomaly.scope_type == SCOPE_PROJECT_TOTAL
+    }
+
+    event_type_ids = {
+        anomaly.event_type_id
+        for anomaly in anomalies
+        if anomaly.event_type_id is not None
+    }
+    if event_type_ids:
+        for event_type_id, display_name, name in session.execute(
+            select(EventType.id, EventType.display_name, EventType.name).where(
+                EventType.id.in_(event_type_ids)
+            )
+        ).all():
+            scope_names[(SCOPE_EVENT_TYPE, str(event_type_id))] = display_name or name
+
+    event_ids = {anomaly.event_id for anomaly in anomalies if anomaly.event_id is not None}
+    if event_ids:
+        for event_id, name in session.execute(
+            select(Event.id, Event.name).where(Event.id.in_(event_ids))
+        ).all():
+            scope_names[(SCOPE_EVENT, str(event_id))] = name
+
+    for anomaly in anomalies:
+        key = (anomaly.scope_type, anomaly.scope_ref)
+        scope_names.setdefault(key, anomaly.scope_ref)
+    return scope_names
+
+
+def _load_enabled_alert_destinations(
+    session: Session,
+    project_id: uuid.UUID,
+) -> list[AlertDestination]:
+    return (
+        session.execute(
+            select(AlertDestination)
+            .where(
+                AlertDestination.project_id == project_id,
+                AlertDestination.enabled.is_(True),
+            )
+            .order_by(AlertDestination.created_at.desc())
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+
+
+def _rule_matches_anomaly(
+    rule: AlertRule,
+    anomaly: MetricAnomaly,
+) -> bool:
+    if anomaly.scope_type == SCOPE_PROJECT_TOTAL and not rule.include_project_total:
+        return False
+    if anomaly.scope_type == SCOPE_EVENT_TYPE and not rule.include_event_types:
+        return False
+    if anomaly.scope_type == SCOPE_EVENT and not rule.include_events:
+        return False
+    if anomaly.direction == "spike" and not rule.notify_on_spike:
+        return False
+    if anomaly.direction == "drop" and not rule.notify_on_drop:
+        return False
+    if anomaly.expected_count < rule.min_expected_count:
+        return False
+
+    absolute_delta = abs(anomaly.actual_count - anomaly.expected_count)
+    if absolute_delta < rule.min_absolute_delta:
+        return False
+
+    percent_delta = 0.0
+    if anomaly.expected_count > 0:
+        percent_delta = (absolute_delta / anomaly.expected_count) * 100
+    if percent_delta < rule.min_percent_delta:
+        return False
+
+    if anomaly.scope_type == SCOPE_EVENT_TYPE:
+        excluded_event_type_ids = {
+            item.event_type_id
+            for item in rule.excluded_event_types
+        }
+        if anomaly.event_type_id in excluded_event_type_ids:
+            return False
+    if anomaly.scope_type == SCOPE_EVENT:
+        excluded_event_ids = {item.event_id for item in rule.excluded_events}
+        if anomaly.event_id in excluded_event_ids:
+            return False
+    return True
+
+
+def _build_delivery_snapshot(
+    config: ScanConfig,
+    *,
+    project_slug: str,
+    rule: AlertRule,
+    destination: AlertDestination,
+    anomalies: list[MetricAnomaly],
+    scope_names: dict[tuple[str, str], str],
+) -> dict[str, object]:
+    return {
+        "project_slug": project_slug,
+        "scan_name": config.name,
+        "destination_name": destination.name,
+        "rule_name": rule.name,
+        "channel": destination.type,
+        "matched_count": len(anomalies),
+        "items": [
+            {
+                "scope_type": anomaly.scope_type,
+                "scope_ref": anomaly.scope_ref,
+                "scope_name": scope_names[(anomaly.scope_type, anomaly.scope_ref)],
+                "direction": anomaly.direction,
+                "actual_count": anomaly.actual_count,
+                "expected_count": round(anomaly.expected_count),
+                "absolute_delta": round(abs(anomaly.actual_count - anomaly.expected_count)),
+                "percent_delta": (
+                    abs(anomaly.actual_count - anomaly.expected_count)
+                    / anomaly.expected_count
+                    * 100
+                    if anomaly.expected_count > 0
+                    else 0.0
+                ),
+                "details_path": _build_event_details_url(project_slug, anomaly.event_id),
+                "monitoring_path": _build_monitoring_url(
+                    project_slug,
+                    scope_type=anomaly.scope_type,
+                    scope_ref=anomaly.scope_ref,
+                ),
+            }
+            for anomaly in anomalies
+        ],
+    }
+
+
+def _prepare_alert_deliveries(
+    session: Session,
+    config: ScanConfig,
+    *,
+    scan_job_id: uuid.UUID | None,
+) -> list[uuid.UUID]:
+    active_anomalies = _get_latest_active_anomalies(session, config)
+    destinations = _load_enabled_alert_destinations(session, config.project_id)
+    if not destinations:
+        return []
+
+    now = datetime.now(UTC)
+    project_slug = _get_project_slug(session, config.project_id)
+    scope_names = _build_alert_scope_names(session, list(active_anomalies.values()))
+    delivery_ids: list[uuid.UUID] = []
+
+    for destination in destinations:
+        enabled_rules = [rule for rule in destination.rules if rule.enabled]
+        if not enabled_rules:
+            continue
+
+        for rule in enabled_rules:
+            existing_states = {
+                (state.scope_type, state.scope_ref): state
+                for state in session.execute(
+                    select(AlertRuleState).where(
+                        AlertRuleState.rule_id == rule.id,
+                        AlertRuleState.scan_config_id == config.id,
+                    )
+                ).scalars()
+            }
+
+            matched_anomalies = [
+                anomaly
+                for key, anomaly in active_anomalies.items()
+                if _rule_matches_anomaly(rule, anomaly)
+            ]
+            matched_keys = {
+                (anomaly.scope_type, anomaly.scope_ref)
+                for anomaly in matched_anomalies
+            }
+
+            for key, state in existing_states.items():
+                if state.is_active and key not in matched_keys:
+                    state.is_active = False
+                    state.closed_at = now
+
+            anomalies_to_send: list[MetricAnomaly] = []
+            for anomaly in matched_anomalies:
+                key = (anomaly.scope_type, anomaly.scope_ref)
+                state = existing_states.get(key)
+                should_send = False
+                if state is None:
+                    state = AlertRuleState(
+                        rule_id=rule.id,
+                        scan_config_id=config.id,
+                        scope_type=anomaly.scope_type,
+                        scope_ref=anomaly.scope_ref,
+                        is_active=True,
+                        opened_at=now,
+                        closed_at=None,
+                        last_anomaly_bucket=anomaly.bucket,
+                    )
+                    session.add(state)
+                    existing_states[key] = state
+                    should_send = True
+                else:
+                    if not state.is_active:
+                        state.is_active = True
+                        state.opened_at = now
+                        state.closed_at = None
+                        should_send = True
+                    elif state.last_notified_at is None or (
+                        state.last_anomaly_bucket is None
+                        or anomaly.bucket > state.last_anomaly_bucket
+                    ) and now - state.last_notified_at >= timedelta(minutes=rule.cooldown_minutes):
+                        should_send = True
+                    state.last_anomaly_bucket = max(
+                        anomaly.bucket,
+                        state.last_anomaly_bucket or anomaly.bucket,
+                    )
+                if should_send:
+                    anomalies_to_send.append(anomaly)
+
+            if not anomalies_to_send:
+                continue
+
+            payload_snapshot = _build_delivery_snapshot(
+                config,
+                project_slug=project_slug,
+                rule=rule,
+                destination=destination,
+                anomalies=anomalies_to_send,
+                scope_names=scope_names,
+            )
+            delivery = AlertDelivery(
+                project_id=config.project_id,
+                scan_config_id=config.id,
+                scan_job_id=scan_job_id,
+                destination_id=destination.id,
+                rule_id=rule.id,
+                status=AlertDeliveryStatus.pending.value,
+                channel=destination.type,
+                matched_count=len(anomalies_to_send),
+                payload_snapshot=payload_snapshot,
+            )
+            session.add(delivery)
+            session.flush()
+
+            for anomaly in anomalies_to_send:
+                absolute_delta = abs(anomaly.actual_count - anomaly.expected_count)
+                percent_delta = (
+                    absolute_delta / anomaly.expected_count * 100
+                    if anomaly.expected_count > 0
+                    else 0.0
+                )
+                session.add(
+                    AlertDeliveryItem(
+                        delivery_id=delivery.id,
+                        scope_type=anomaly.scope_type,
+                        scope_ref=anomaly.scope_ref,
+                        scope_name=scope_names[(anomaly.scope_type, anomaly.scope_ref)],
+                        event_type_id=anomaly.event_type_id,
+                        event_id=anomaly.event_id,
+                        bucket=anomaly.bucket,
+                        direction=anomaly.direction,
+                        actual_count=anomaly.actual_count,
+                        expected_count=round(anomaly.expected_count),
+                        absolute_delta=round(absolute_delta),
+                        percent_delta=percent_delta,
+                        details_path=_build_event_details_url(
+                            project_slug,
+                            anomaly.event_id,
+                        ),
+                        monitoring_path=_build_monitoring_url(
+                            project_slug,
+                            scope_type=anomaly.scope_type,
+                            scope_ref=anomaly.scope_ref,
+                        ),
+                    )
+                )
+            delivery_ids.append(delivery.id)
+
+    return delivery_ids
 
 
 def _recalculate_metric_anomalies(
@@ -717,6 +1137,7 @@ def collect_metrics(
             skip_cols.add(config.event_type_column)
         if config.time_column:
             skip_cols.add(config.time_column)
+        json_value_path_map = _get_scan_json_value_path_map(config)
 
         # ---- PHASE 1: Sync events via exact scan pipeline ----
 
@@ -731,6 +1152,7 @@ def collect_metrics(
                 columns,
                 group_column=config.event_type_column,
                 threshold=config.cardinality_threshold,
+                json_value_paths=json_value_path_map,
             )
             logger.info(
                 f"Grouped scan: {len(group_values)} groups for {config.event_type_column!r}"
@@ -769,6 +1191,7 @@ def collect_metrics(
                 config.base_query,
                 columns,
                 threshold=config.cardinality_threshold,
+                json_value_paths=json_value_path_map,
             )
 
             event_type = session.get(EventType, config.event_type_id)
@@ -823,12 +1246,13 @@ def collect_metrics(
         regular_cols = [c.name for c in columns if not _is_json_type(c.type_name)]
         json_cols = [c.name for c in columns if _is_json_type(c.type_name)]
 
-        col_names, rows = adapter.get_time_bucketed_counts(
+        col_names, json_value_names, rows = adapter.get_time_bucketed_counts(
             config.base_query,
             config.time_column,
             interval_spec.ch_interval,
             regular_cols,
             json_cols,
+            json_value_path_map,
             time_from,
             time_to,
         )
@@ -860,6 +1284,11 @@ def collect_metrics(
                 evaluation_start=time_from,
                 evaluation_end=time_to,
             )
+            delivery_ids = _prepare_alert_deliveries(
+                session,
+                config,
+                scan_job_id=job.id if job else None,
+            )
             signals_added = len(
                 _get_visible_signal_scope_keys(session, config.id) - visible_signals_before
             )
@@ -872,13 +1301,16 @@ def collect_metrics(
                 "type_metrics": 0,
                 "anomalies_detected": anomalies_detected,
                 "signals_added": signals_added,
+                "alerts_queued": len(delivery_ids),
                 "details": all_details,
             }
             if job:
                 job.status = ScanJobStatus.completed.value
                 job.completed_at = datetime.now(UTC)
                 job.result_summary = result_summary
-                session.commit()
+            session.commit()
+            for delivery_id in delivery_ids:
+                send_alert_delivery.delay(str(delivery_id))
             return result_summary
 
         # Build indices for row navigation (same layout as BreakdownAnalysis)
@@ -937,6 +1369,7 @@ def collect_metrics(
                 reg_index,
                 json_index,
                 n_reg,
+                json_value_names,
                 config.event_name_format,
             )
 
@@ -996,6 +1429,11 @@ def collect_metrics(
             evaluation_start=time_from,
             evaluation_end=time_to,
         )
+        delivery_ids = _prepare_alert_deliveries(
+            session,
+            config,
+            scan_job_id=job.id if job else None,
+        )
         signals_added = len(
             _get_visible_signal_scope_keys(session, config.id) - visible_signals_before
         )
@@ -1009,6 +1447,7 @@ def collect_metrics(
             "type_metrics": n_tp,
             "anomalies_detected": anomalies_detected,
             "signals_added": signals_added,
+            "alerts_queued": len(delivery_ids),
             "details": all_details,
         }
 
@@ -1016,7 +1455,9 @@ def collect_metrics(
             job.status = ScanJobStatus.completed.value
             job.completed_at = datetime.now(UTC)
             job.result_summary = result_summary
-            session.commit()
+        session.commit()
+        for delivery_id in delivery_ids:
+            send_alert_delivery.delay(str(delivery_id))
 
         return result_summary
 

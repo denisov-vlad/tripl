@@ -8,6 +8,7 @@ import { metricsApi } from '@/api/metrics'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { ErrorState } from '@/components/error-state'
 import { MetricsChart } from '@/components/ui/chart'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -57,25 +58,28 @@ export default function MonitoringDetailPage() {
     return { from: from.toISOString(), to: to.toISOString() }
   }, [rangeDays])
 
-  const { data: event } = useQuery({
+  const eventQuery = useQuery({
     queryKey: ['event', slug, scopeId],
     queryFn: () => eventsApi.get(slug!, scopeId),
     enabled: scope === 'event' && !!slug && !!scopeId,
   })
+  const event = eventQuery.data
 
-  const { data: eventTypes = [] } = useQuery({
+  const eventTypesQuery = useQuery({
     queryKey: ['eventTypes', slug],
     queryFn: () => eventTypesApi.list(slug!),
     enabled: !!slug,
   })
+  const eventTypes = eventTypesQuery.data ?? []
 
-  const { data: metaFields = [] } = useQuery({
+  const metaFieldsQuery = useQuery({
     queryKey: ['metaFields', slug],
     queryFn: () => metaFieldsApi.list(slug!),
     enabled: scope === 'event' && !!slug,
   })
+  const metaFields = metaFieldsQuery.data ?? []
 
-  const { data: metrics, isLoading } = useQuery({
+  const metricsQuery = useQuery({
     queryKey: ['monitoringMetrics', slug, scope, scopeId, rangeDays],
     queryFn: () => {
       if (scope === 'project_total') {
@@ -92,6 +96,7 @@ export default function MonitoringDetailPage() {
     enabled: !!slug && !!scopeId,
     refetchInterval: 60000,
   })
+  const metrics = metricsQuery.data
 
   const chartData = useMemo(
     () => aggregateMetricPoints(metrics?.data ?? [], granularity),
@@ -127,6 +132,28 @@ export default function MonitoringDetailPage() {
   const latestSignalLabel = latestSignal
     ? `${latestSignal.state === 'recent' ? 'Recent' : 'Latest scan'} ${latestSignal.direction === 'drop' ? 'drop' : 'spike'} anomaly`
     : null
+
+  if (eventQuery.isError || eventTypesQuery.isError || metaFieldsQuery.isError || metricsQuery.isError) {
+    return (
+      <div className="p-6">
+        <ErrorState
+          title="Failed to load monitoring details"
+          description="The monitoring page could not fetch data from the backend."
+          error={eventQuery.error ?? eventTypesQuery.error ?? metaFieldsQuery.error ?? metricsQuery.error}
+          onRetry={() => {
+            const refetches: Promise<unknown>[] = [
+              eventTypesQuery.refetch(),
+              metricsQuery.refetch(),
+            ]
+            if (scope === 'event') {
+              refetches.push(eventQuery.refetch(), metaFieldsQuery.refetch())
+            }
+            void Promise.all(refetches)
+          }}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 p-6 max-w-5xl mx-auto">
@@ -238,7 +265,7 @@ export default function MonitoringDetailPage() {
               </Select>
             </div>
           </div>
-          {isLoading ? (
+          {metricsQuery.isLoading ? (
             <div className="h-[280px] flex items-center justify-center text-sm text-muted-foreground">
               Loading monitoring data…
             </div>

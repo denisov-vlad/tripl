@@ -9,6 +9,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from tripl.models import Base
+from tripl.models.alert_delivery import AlertDelivery
+from tripl.models.alert_delivery_item import AlertDeliveryItem
+from tripl.models.alert_destination import AlertDestination
+from tripl.models.alert_rule import AlertRule
 from tripl.models.data_source import DataSource
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
@@ -246,11 +250,12 @@ def test_collect_metrics_reuses_existing_pending_job(
             ch_interval: str,
             regular_columns: list[str],
             json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
             time_from: datetime,
             time_to: datetime,
             limit: int = 100000,
-        ) -> tuple[list[str], list[tuple[object, ...]]]:
-            return (["event_name"], [])
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            return (["event_name"], [], [])
 
         def close(self) -> None:
             return None
@@ -323,11 +328,12 @@ def test_collect_metrics_recalculates_and_clears_metric_anomalies(
             ch_interval: str,
             regular_columns: list[str],
             json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
             time_from: datetime,
             time_to: datetime,
             limit: int = 100000,
-        ) -> tuple[list[str], list[tuple[object, ...]]]:
-            return (["event_name"], self.rows)
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            return (["event_name"], [], self.rows)
 
         def close(self) -> None:
             return None
@@ -386,3 +392,105 @@ def test_collect_metrics_recalculates_and_clears_metric_anomalies(
     with sync_session_factory() as session:
         anomalies = session.execute(select(MetricAnomaly)).scalars().all()
         assert anomalies == []
+
+
+def test_collect_metrics_queues_alert_deliveries(
+    sync_session_factory: sessionmaker[Session],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    with sync_session_factory() as session:
+        config, _event_type, _event = _seed_anomaly_scan_state(session)
+        destination = AlertDestination(
+            id=uuid.uuid4(),
+            project_id=config.project_id,
+            type="slack",
+            name="Main Slack",
+            enabled=True,
+            webhook_url_encrypted="secret",
+        )
+        rule = AlertRule(
+            id=uuid.uuid4(),
+            destination_id=destination.id,
+            name="Main Rule",
+            enabled=True,
+            include_project_total=True,
+            include_event_types=True,
+            include_events=True,
+            notify_on_spike=True,
+            notify_on_drop=True,
+            min_percent_delta=0,
+            min_absolute_delta=0,
+            min_expected_count=0,
+            cooldown_minutes=1440,
+        )
+        session.add_all([destination, rule])
+        session.commit()
+        config_id = str(config.id)
+
+    queued_delivery_ids: list[str] = []
+
+    class FakeAdapter:
+        rows: list[tuple[object, ...]] = []
+
+        def test_connection(self) -> bool:
+            return True
+
+        def get_columns(self, base_query: str) -> list[ColumnInfo]:
+            return [
+                ColumnInfo(name="time", type_name="DateTime"),
+                ColumnInfo(name="event_name", type_name="String"),
+            ]
+
+        def get_time_bucketed_counts(
+            self,
+            base_query: str,
+            time_column: str,
+            ch_interval: str,
+            regular_columns: list[str],
+            json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
+            time_from: datetime,
+            time_to: datetime,
+            limit: int = 100000,
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            return (["event_name"], [], self.rows)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(metrics, "_get_sync_session", sync_session_factory)
+    monkeypatch.setattr(metrics, "_build_adapter", lambda ds: FakeAdapter())
+    monkeypatch.setattr(metrics, "_floor_to_interval", lambda dt, delta: datetime(2026, 1, 1, 11))
+    monkeypatch.setattr(metrics, "analyze_cardinality", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        metrics.send_alert_delivery,
+        "delay",
+        lambda delivery_id: queued_delivery_ids.append(delivery_id),
+    )
+
+    def fake_generate_events(*args: object, **kwargs: object) -> GenerationResult:
+        with sync_session_factory() as session:
+            persisted_event = session.execute(select(Event)).scalar_one()
+            return GenerationResult(
+                columns_analyzed=1,
+                col_meta={"event_name": {"is_json": False, "is_low": True}},
+                events_by_name={"event_name=Login": persisted_event},
+            )
+
+    monkeypatch.setattr(metrics, "generate_events", fake_generate_events)
+
+    FakeAdapter.rows = [
+        (datetime(2026, 1, 1, 8), "Login", 10),
+        (datetime(2026, 1, 1, 9), "Login", 10),
+    ]
+    result = metrics.collect_metrics.run(config_id)
+
+    assert result["alerts_queued"] == 1
+    assert len(queued_delivery_ids) == 1
+
+    with sync_session_factory() as session:
+        deliveries = session.execute(select(AlertDelivery)).scalars().all()
+        items = session.execute(select(AlertDeliveryItem)).scalars().all()
+        assert len(deliveries) == 1
+        assert deliveries[0].matched_count == 3
+        assert len(items) == 3

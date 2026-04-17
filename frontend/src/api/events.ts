@@ -35,4 +35,8 @@ export const eventsApi = {
     field_values?: { field_definition_id: string; value: string }[];
     meta_values?: { meta_field_definition_id: string; value: string }[];
   }[]) => api.post<Event[]>(`/projects/${slug}/events/bulk`, data),
+  bulkDelete: (slug: string, eventIds: string[]) =>
+    api.post<void>(`/projects/${slug}/events/bulk-delete`, { event_ids: eventIds }),
+  move: (slug: string, id: string, data: { direction: 'up' | 'down'; visible_event_ids?: string[] }) =>
+    api.patch<Event>(`/projects/${slug}/events/${id}/move`, data),
 }

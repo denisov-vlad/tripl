@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { ScanConfig, ScanJob } from '../types'
+import type { ScanConfig, ScanConfigPreview, ScanJob } from '../types'
 
 export const scansApi = {
   list: (slug: string) =>
@@ -16,9 +16,16 @@ export const scansApi = {
     event_type_column?: string | null
     time_column?: string | null
     event_name_format?: string | null
+    json_value_paths?: string[]
     cardinality_threshold?: number
     interval?: string | null
   }) => api.post<ScanConfig>(`/projects/${slug}/scans`, data),
+
+  preview: (slug: string, data: {
+    data_source_id: string
+    base_query: string
+    limit?: number
+  }) => api.post<ScanConfigPreview>(`/projects/${slug}/scans/preview`, data),
 
   update: (slug: string, scanId: string, data: {
     name?: string
@@ -27,6 +34,7 @@ export const scansApi = {
     event_type_column?: string | null
     time_column?: string | null
     event_name_format?: string | null
+    json_value_paths?: string[]
     cardinality_threshold?: number
     interval?: string | null
   }) => api.patch<ScanConfig>(`/projects/${slug}/scans/${scanId}`, data),

@@ -26,6 +26,7 @@ class BreakdownAnalysis:
     rows: list[tuple]
     reg_names: list[str]
     json_names: list[str]
+    json_value_names: list[str] = field(default_factory=list)
 
 
 _JSON_TYPE_MARKERS = ("JSON", "Object(", "Tuple(", "Map(")
@@ -108,21 +109,25 @@ def analyze_cardinality(
     base_query: str,
     columns: list[ColumnInfo],
     threshold: int = 100,
+    json_value_paths: dict[str, list[str]] | None = None,
     **_kwargs: object,
 ) -> BreakdownAnalysis:
     """Analyze cardinality of all columns with a single GROUP BY ALL query."""
     regular_cols = [c for c in columns if not _is_json_type(c.type_name)]
     json_cols = [c for c in columns if _is_json_type(c.type_name)]
 
-    reg_names, json_names, rows = adapter.get_full_breakdown(
+    reg_names, json_names, json_value_names, rows = adapter.get_full_breakdown(
         base_query,
         [c.name for c in regular_cols],
         [c.name for c in json_cols],
+        json_value_paths=json_value_paths,
     )
     logger.info(f"Breakdown: {len(rows)} unique combinations")
 
     col_map = {c.name: c for c in columns}
-    return _process_breakdown(rows, reg_names, json_names, col_map, threshold)
+    analysis = _process_breakdown(rows, reg_names, json_names, col_map, threshold)
+    analysis.json_value_names = json_value_names
+    return analysis
 
 
 def analyze_cardinality_grouped(
@@ -131,6 +136,7 @@ def analyze_cardinality_grouped(
     columns: list[ColumnInfo],
     group_column: str,
     threshold: int = 100,
+    json_value_paths: dict[str, list[str]] | None = None,
     **_kwargs: object,
 ) -> tuple[list[str], dict[str, BreakdownAnalysis]]:
     """Analyze cardinality per group value with a single GROUP BY ALL query.
@@ -141,10 +147,11 @@ def analyze_cardinality_grouped(
     regular_cols = [c for c in columns if not _is_json_type(c.type_name)]
     json_cols = [c for c in columns if _is_json_type(c.type_name)]
 
-    reg_names, json_names, rows = adapter.get_full_breakdown(
+    reg_names, json_names, json_value_names, rows = adapter.get_full_breakdown(
         base_query,
         [c.name for c in regular_cols],
         [c.name for c in json_cols],
+        json_value_paths=json_value_paths,
     )
     logger.info(f"Breakdown: {len(rows)} unique combinations, grouping by {group_column!r}")
 
@@ -177,5 +184,6 @@ def analyze_cardinality_grouped(
             grouped_rows[gval], reg_names, json_names, col_map, threshold,
             skip_column=group_column,
         )
+        results[gval].json_value_names = json_value_names
 
     return group_values_ordered, results

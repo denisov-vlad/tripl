@@ -45,6 +45,7 @@ async def test_create_event(client: AsyncClient):
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "Home Page View"
+    assert data["order"] == 0
     assert len(data["field_values"]) == 1
     assert len(data["meta_values"]) == 1
 
@@ -87,6 +88,7 @@ async def test_list_events(client: AsyncClient):
     data = resp.json()
     assert data["total"] == 2
     assert len(data["items"]) == 2
+    assert [item["order"] for item in data["items"]] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -146,6 +148,37 @@ async def test_delete_event(client: AsyncClient):
     event_id = create.json()["id"]
     resp = await client.delete(f"/api/v1/projects/ev-del/events/{event_id}")
     assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_events(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-bulk-del")
+    first = await client.post(
+        "/api/v1/projects/ev-bulk-del/events",
+        json={
+            "event_type_id": et_id,
+            "name": "First",
+            "field_values": [{"field_definition_id": field_id, "value": "a"}],
+        },
+    )
+    second = await client.post(
+        "/api/v1/projects/ev-bulk-del/events",
+        json={
+            "event_type_id": et_id,
+            "name": "Second",
+            "field_values": [{"field_definition_id": field_id, "value": "b"}],
+        },
+    )
+
+    resp = await client.post(
+        "/api/v1/projects/ev-bulk-del/events/bulk-delete",
+        json={"event_ids": [first.json()["id"], second.json()["id"]]},
+    )
+    assert resp.status_code == 204
+
+    list_resp = await client.get("/api/v1/projects/ev-bulk-del/events")
+    assert list_resp.status_code == 200
+    assert list_resp.json()["total"] == 0
 
 
 @pytest.mark.asyncio
@@ -269,6 +302,36 @@ async def test_update_tags_and_implemented(client: AsyncClient):
     data = resp.json()
     assert data["implemented"] is True
     assert sorted([t["name"] for t in data["tags"]]) == ["new1", "new2"]
+
+
+@pytest.mark.asyncio
+async def test_move_event_reorders_visible_list(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-move")
+    created_ids: list[str] = []
+    for name in ("Event A", "Event B", "Event C"):
+        create = await client.post(
+            "/api/v1/projects/ev-move/events",
+            json={
+                "event_type_id": et_id,
+                "name": name,
+                "field_values": [{"field_definition_id": field_id, "value": name}],
+            },
+        )
+        created_ids.append(create.json()["id"])
+
+    move_resp = await client.patch(
+        f"/api/v1/projects/ev-move/events/{created_ids[2]}/move",
+        json={"direction": "up", "visible_event_ids": created_ids},
+    )
+    assert move_resp.status_code == 200
+
+    list_resp = await client.get("/api/v1/projects/ev-move/events")
+    assert list_resp.status_code == 200
+    assert [item["name"] for item in list_resp.json()["items"]] == [
+        "Event A",
+        "Event C",
+        "Event B",
+    ]
 
 
 @pytest.mark.asyncio

@@ -7,15 +7,19 @@ maps to one event, preserving actual column correlations from the data.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from tripl.json_paths import (
+    build_json_value,
+    decode_json_path_value,
+    format_json_path_value,
+)
 from tripl.models.event import Event
 from tripl.models.event_field_value import EventFieldValue
 from tripl.models.field_definition import FieldDefinition
@@ -73,6 +77,10 @@ def generate_events(
     reg_index = {name: i for i, name in enumerate(analysis.reg_names)}
     json_index = {name: i for i, name in enumerate(analysis.json_names)}
     n_reg = len(analysis.reg_names)
+    json_value_index = {
+        name: n_reg + len(analysis.json_names) + idx
+        for idx, name in enumerate(analysis.json_value_names)
+    }
 
     # Pre-compute per-column metadata
     col_meta: dict[str, dict] = {}
@@ -94,17 +102,23 @@ def generate_events(
         if card_result.json_path_combos is not None:
             meta["is_json"] = True
             all_paths: set[str] = set()
+            passthrough_paths: list[str] = []
             for combo in card_result.json_path_combos:
                 for path in combo:
                     all_paths.add(path)
             for path in sorted(all_paths):
-                var_name = f"{col_name}.{path}"
+                full_path = f"{col_name}.{path}"
+                if full_path in json_value_index:
+                    passthrough_paths.append(full_path)
+                    continue
+                var_name = full_path
                 result.variables_created += _ensure_variable(
                     session, project_id, var_name, "string"
                 )
+            meta["json_passthrough_paths"] = passthrough_paths
             logger.info(
                 f"  {col_name}: JSON, {len(card_result.json_path_combos)} path combos, "
-                f"{len(all_paths)} variables"
+                f"{len(all_paths) - len(passthrough_paths)} variables"
             )
         else:
             meta["is_json"] = False
@@ -143,6 +157,10 @@ def generate_events(
         .all()
     )
     existing_by_name: dict[str, Event] = {ev.name: ev for ev in existing_events_list}
+    next_event_order = session.execute(
+        select(func.max(Event.order)).where(Event.project_id == project_id)
+    ).scalar_one()
+    next_event_order = 0 if next_event_order is None else int(next_event_order) + 1
     logger.info(f"Loaded {len(existing_by_name)} existing events for dedup")
 
     # Iterate breakdown rows — each row is one event
@@ -164,8 +182,16 @@ def generate_events(
                         sorted_paths = sorted(str(p) for p in paths)
                     else:
                         sorted_paths = [str(paths)]
-                    json_obj = {p: f"${{{col_name}.{p}}}" for p in sorted_paths}
-                    value = json.dumps(json_obj, ensure_ascii=False, sort_keys=True)
+                    preserved_values = {
+                        full_path: decode_json_path_value(row[json_value_index[full_path]])
+                        for full_path in meta.get("json_passthrough_paths", [])
+                        if full_path in json_value_index and full_path.startswith(f"{col_name}.")
+                    }
+                    value = build_json_value(
+                        col_name,
+                        sorted_paths,
+                        preserved_values=preserved_values,
+                    )
                 else:
                     value = "{}"
             elif meta["is_low"]:
@@ -184,6 +210,27 @@ def generate_events(
             fmt_kwargs: dict[str, str] = {}
             for _, col_name, value in field_values:
                 fmt_kwargs[col_name] = value
+            for col_name, meta in col_meta.items():
+                if not meta["is_json"]:
+                    continue
+                j = json_index.get(col_name)
+                if j is None:
+                    continue
+                paths = row[n_reg + j]
+                if not paths:
+                    continue
+                if isinstance(paths, (list, tuple)):
+                    sorted_paths = sorted(str(path) for path in paths)
+                else:
+                    sorted_paths = [str(paths)]
+                for path in sorted_paths:
+                    full_path = f"{col_name}.{path}"
+                    if full_path in json_value_index:
+                        fmt_kwargs[full_path] = format_json_path_value(
+                            row[json_value_index[full_path]]
+                        )
+                    else:
+                        fmt_kwargs[full_path] = f"${{{full_path}}}"
             event_name = _apply_name_format(event_name_format, fmt_kwargs)
         else:
             parts = []
@@ -215,11 +262,13 @@ def generate_events(
             event_type_id=event_type_id,
             name=event_name,
             description="Auto-generated from data source scan",
+            order=next_event_order,
             implemented=True,
             reviewed=False,
         )
         session.add(event)
         session.flush()
+        next_event_order += 1
 
         for fd_id, _, value in field_values:
             fv = EventFieldValue(

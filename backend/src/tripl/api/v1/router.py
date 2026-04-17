@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from tripl.api.v1.alerting import router as alerting_router
 from tripl.api.v1.data_sources import router as data_sources_router
 from tripl.api.v1.event_types import router as event_types_router
 from tripl.api.v1.events import router as events_router
@@ -15,6 +16,7 @@ from tripl.api.v1.variables import router as variables_router
 router = APIRouter(prefix="/api/v1")
 router.include_router(projects_router)
 router.include_router(project_anomaly_settings_router)
+router.include_router(alerting_router)
 router.include_router(event_types_router)
 router.include_router(fields_router)
 router.include_router(relations_router)

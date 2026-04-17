@@ -9,7 +9,7 @@ from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
 from tripl.models.event_tag import EventTag
 from tripl.models.field_definition import FieldDefinition
-from tripl.schemas.event import EventCreate, EventUpdate
+from tripl.schemas.event import EventBulkDelete, EventCreate, EventMove, EventUpdate
 from tripl.services.project_service import get_project_id_by_slug
 
 
@@ -70,9 +70,22 @@ async def list_events(
 
     total = (await session.execute(count_query)).scalar() or 0
     result = await session.execute(
-        query.order_by(Event.created_at.desc()).offset(offset).limit(limit)
+        query.order_by(
+            Event.order.asc(),
+            Event.created_at.desc(),
+            Event.id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
     )
     return list(result.scalars().all()), total
+
+
+async def _get_next_event_order(session: AsyncSession, project_id: uuid.UUID) -> int:
+    max_order = await session.scalar(
+        select(func.max(Event.order)).where(Event.project_id == project_id)
+    )
+    return int(max_order or 0) + 1 if max_order is not None else 0
 
 
 async def list_tags(session: AsyncSession, slug: str) -> list[str]:
@@ -107,6 +120,7 @@ async def create_event(session: AsyncSession, slug: str, data: EventCreate) -> E
         event_type_id=data.event_type_id,
         name=data.name,
         description=data.description,
+        order=await _get_next_event_order(session, project_id),
         implemented=data.implemented,
         reviewed=data.reviewed,
         archived=data.archived,
@@ -199,6 +213,61 @@ async def delete_event(session: AsyncSession, slug: str, event_id: uuid.UUID) ->
     event = await get_event(session, slug, event_id)
     await session.delete(event)
     await session.commit()
+
+
+async def bulk_delete_events(
+    session: AsyncSession,
+    slug: str,
+    data: EventBulkDelete,
+) -> None:
+    project_id = await get_project_id_by_slug(session, slug)
+    result = await session.execute(
+        select(Event).where(
+            Event.project_id == project_id,
+            Event.id.in_(data.event_ids),
+        )
+    )
+    events = list(result.scalars().all())
+    found_ids = {event.id for event in events}
+    missing_ids = [event_id for event_id in data.event_ids if event_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail="One or more events were not found")
+
+    for event in events:
+        await session.delete(event)
+    await session.commit()
+
+
+async def move_event(
+    session: AsyncSession,
+    slug: str,
+    event_id: uuid.UUID,
+    data: EventMove,
+) -> Event:
+    event = await get_event(session, slug, event_id)
+
+    query = select(Event).where(Event.project_id == event.project_id)
+    if data.visible_event_ids:
+        query = query.where(Event.id.in_(data.visible_event_ids))
+
+    result = await session.execute(
+        query.order_by(Event.order.asc(), Event.created_at.desc(), Event.id.asc())
+    )
+    ordered_events = list(result.scalars().all())
+    ordered_ids = [item.id for item in ordered_events]
+    if event.id not in ordered_ids:
+        raise HTTPException(status_code=400, detail="Event is not present in the visible ordering")
+
+    current_index = ordered_ids.index(event.id)
+    target_index = current_index - 1 if data.direction == "up" else current_index + 1
+    if target_index < 0 or target_index >= len(ordered_events):
+        return event
+
+    target = ordered_events[target_index]
+    event.order, target.order = target.order, event.order
+    await session.commit()
+    await session.refresh(event)
+    return event
 
 
 async def bulk_create_events(

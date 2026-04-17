@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { projectsApi } from '@/api/projects'
+import { ErrorState } from '@/components/error-state'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -25,10 +26,11 @@ export function AppSidebar() {
   const { slug } = useParams()
   const location = useLocation()
 
-  const { data: projects = [] } = useQuery({
+  const projectsQuery = useQuery({
     queryKey: ['projects'],
     queryFn: projectsApi.list,
   })
+  const projects = projectsQuery.data ?? []
 
   const isActive = (path: string) => location.pathname === path
 
@@ -62,7 +64,7 @@ export function AppSidebar() {
             Data Sources
           </SidebarLink>
 
-          {projects.length > 0 && (
+          {!projectsQuery.isError && projects.length > 0 && (
             <>
               <Separator className="my-2 bg-sidebar-border" />
               <span className="px-2 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50 mb-1">
@@ -79,6 +81,20 @@ export function AppSidebar() {
               currentPath={location.pathname}
             />
           ))}
+
+          {projectsQuery.isError && (
+            <div className="mt-3 px-1">
+              <ErrorState
+                title="Projects unavailable"
+                description="The sidebar could not load project navigation."
+                error={projectsQuery.error}
+                onRetry={() => { void projectsQuery.refetch() }}
+                retryLabel="Retry"
+                compact
+                className="border-sidebar-border bg-sidebar-accent/40"
+              />
+            </div>
+          )}
         </nav>
       </ScrollArea>
 
