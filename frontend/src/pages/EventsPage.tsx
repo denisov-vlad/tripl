@@ -35,12 +35,12 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { META_FIELD_LINK_PLACEHOLDER, resolveMetaFieldHref } from '@/lib/metaFields'
 import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
+import { cn } from '@/lib/utils'
 import {
   AlertTriangle,
   ArrowDown,
@@ -198,6 +198,33 @@ function SignalLink({
     >
       {compact ? <CompactIcon className="h-3.5 w-3.5 stroke-[2.25]" /> : <AlertTriangle className="h-3 w-3" />}
     </Link>
+  )
+}
+
+function EventsTabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium outline-none transition-all',
+        'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -970,35 +997,37 @@ export default function EventsPage() {
         <>
           {/* Tabs + search */}
           <div className="flex items-end gap-4 mb-4">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
-              <TabsList className="h-9">
-                <div className="flex items-center gap-1">
-                  <TabsTrigger value="all" className="text-xs">All</TabsTrigger>
+            <div className="min-w-0 flex-1 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <div className="inline-flex min-w-max items-center gap-1 rounded-lg bg-muted p-1">
+                <div className="flex shrink-0 items-center gap-1">
+                  <EventsTabButton active={activeTab === 'all'} onClick={() => setActiveTab('all')}>
+                    All
+                  </EventsTabButton>
                   <SignalLink slug={slug!} signal={projectTotalSignal} />
                 </div>
-                <TabsTrigger value="review" className="text-xs gap-1.5">
+                <EventsTabButton active={activeTab === 'review'} onClick={() => setActiveTab('review')}>
                   Review
                   {unreviewedCount > 0 && (
                     <Badge variant="destructive" className="h-4 min-w-4 px-1 text-[10px] leading-none">{unreviewedCount}</Badge>
                   )}
-                </TabsTrigger>
-                <TabsTrigger value="archived" className="text-xs gap-1.5">
+                </EventsTabButton>
+                <EventsTabButton active={activeTab === 'archived'} onClick={() => setActiveTab('archived')}>
                   Archived
                   {archivedCount > 0 && (
                     <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none">{archivedCount}</Badge>
                   )}
-                </TabsTrigger>
+                </EventsTabButton>
                 {eventTypes.map((et: EventType) => (
-                  <div key={et.id} className="flex items-center gap-1">
-                    <TabsTrigger value={et.name} className="text-xs gap-1.5">
+                  <div key={et.id} className="flex shrink-0 items-center gap-1">
+                    <EventsTabButton active={activeTab === et.name} onClick={() => setActiveTab(et.name)}>
                       <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
                       {et.display_name}
-                    </TabsTrigger>
+                    </EventsTabButton>
                     <SignalLink slug={slug!} signal={eventTypeSignals.get(et.id)} />
                   </div>
                 ))}
-              </TabsList>
-            </Tabs>
+              </div>
+            </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
