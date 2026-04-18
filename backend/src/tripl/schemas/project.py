@@ -15,6 +15,47 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
 
 
+class ProjectLatestScanJob(BaseModel):
+    id: uuid.UUID
+    scan_config_id: uuid.UUID
+    scan_name: str
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    result_summary: dict[str, object] | None
+    error_message: str | None
+    created_at: datetime
+
+
+class ProjectLatestSignal(BaseModel):
+    scan_config_id: uuid.UUID
+    scan_name: str
+    scope_type: str
+    scope_ref: str
+    scope_name: str
+    state: str
+    bucket: datetime
+    actual_count: int
+    expected_count: float
+    z_score: float
+    direction: str
+
+
+class ProjectSummary(BaseModel):
+    event_type_count: int = 0
+    event_count: int = 0
+    active_event_count: int = 0
+    implemented_event_count: int = 0
+    review_pending_event_count: int = 0
+    archived_event_count: int = 0
+    variable_count: int = 0
+    scan_count: int = 0
+    alert_destination_count: int = 0
+    monitoring_signal_count: int = 0
+    latest_scan_job: ProjectLatestScanJob | None = None
+    latest_signal: ProjectLatestSignal | None = None
+
+
 class ProjectResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -22,5 +63,6 @@ class ProjectResponse(BaseModel):
     description: str
     created_at: datetime
     updated_at: datetime
+    summary: ProjectSummary = Field(default_factory=ProjectSummary)
 
     model_config = {"from_attributes": True}

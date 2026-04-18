@@ -48,6 +48,6 @@ describe('App', () => {
 
   it('renders the sidebar navigation', () => {
     renderApp()
-    expect(screen.getAllByText('Projects').length).toBeGreaterThan(0)
+    expect(screen.getByText('Main')).toBeInTheDocument()
   })
 })

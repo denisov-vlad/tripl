@@ -1,3 +1,57 @@
+export interface ScanJobResultSummary {
+  events_created?: number
+  events_skipped?: number
+  variables_created?: number
+  columns_analyzed?: number
+  event_metrics?: number
+  type_metrics?: number
+  anomalies_detected?: number
+  signals_added?: number
+  alerts_queued?: number
+  details?: string[]
+}
+
+export interface ProjectLatestScanJob {
+  id: string
+  scan_config_id: string
+  scan_name: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  started_at: string | null
+  completed_at: string | null
+  result_summary: ScanJobResultSummary | null
+  error_message: string | null
+  created_at: string
+}
+
+export interface ProjectLatestSignal {
+  scan_config_id: string
+  scan_name: string
+  scope_type: 'project_total' | 'event_type' | 'event'
+  scope_ref: string
+  scope_name: string
+  state: 'latest_scan' | 'recent'
+  bucket: string
+  actual_count: number
+  expected_count: number
+  z_score: number
+  direction: 'spike' | 'drop'
+}
+
+export interface ProjectSummary {
+  event_type_count: number
+  event_count: number
+  active_event_count: number
+  implemented_event_count: number
+  review_pending_event_count: number
+  archived_event_count: number
+  variable_count: number
+  scan_count: number
+  alert_destination_count: number
+  monitoring_signal_count: number
+  latest_scan_job: ProjectLatestScanJob | null
+  latest_signal: ProjectLatestSignal | null
+}
+
 export interface Project {
   id: string
   name: string
@@ -5,6 +59,7 @@ export interface Project {
   description: string
   created_at: string
   updated_at: string
+  summary: ProjectSummary
 }
 
 export interface EventType {
@@ -193,18 +248,7 @@ export interface ScanJob {
   status: 'pending' | 'running' | 'completed' | 'failed'
   started_at: string | null
   completed_at: string | null
-  result_summary: {
-    events_created?: number
-    events_skipped?: number
-    variables_created?: number
-    columns_analyzed?: number
-    event_metrics?: number
-    type_metrics?: number
-    anomalies_detected?: number
-    signals_added?: number
-    alerts_queued?: number
-    details?: string[]
-  } | null
+  result_summary: ScanJobResultSummary | null
   error_message: string | null
   created_at: string
   updated_at: string

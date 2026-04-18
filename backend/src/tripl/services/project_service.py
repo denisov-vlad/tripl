@@ -1,16 +1,395 @@
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import String, and_, case, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl.models.alert_destination import AlertDestination
+from tripl.models.event import Event
+from tripl.models.event_metric import EventMetric
+from tripl.models.event_type import EventType
+from tripl.models.metric_anomaly import MetricAnomaly
 from tripl.models.project import Project
-from tripl.schemas.project import ProjectCreate, ProjectUpdate
+from tripl.models.scan_config import ScanConfig
+from tripl.models.scan_job import ScanJob
+from tripl.models.variable import Variable
+from tripl.schemas.project import (
+    ProjectCreate,
+    ProjectLatestScanJob,
+    ProjectLatestSignal,
+    ProjectResponse,
+    ProjectSummary,
+    ProjectUpdate,
+)
+from tripl.services.monitoring_utils import classify_signal_state
+from tripl.worker.analyzers.anomaly_detector import (
+    SCOPE_EVENT,
+    SCOPE_EVENT_TYPE,
+    SCOPE_PROJECT_TOTAL,
+)
 
 
-async def list_projects(session: AsyncSession) -> list[Project]:
+async def _get_project_summaries(
+    session: AsyncSession, project_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, ProjectSummary]:
+    summaries = {project_id: ProjectSummary() for project_id in project_ids}
+    if not project_ids:
+        return summaries
+
+    event_type_rows = await session.execute(
+        select(EventType.project_id, func.count(EventType.id))
+        .where(EventType.project_id.in_(project_ids))
+        .group_by(EventType.project_id)
+    )
+    for project_id, event_type_count in event_type_rows.all():
+        summaries[project_id].event_type_count = int(event_type_count or 0)
+
+    event_rows = await session.execute(
+        select(
+            Event.project_id,
+            func.count(Event.id),
+            func.sum(case((Event.archived.is_(False), 1), else_=0)),
+            func.sum(
+                case(
+                    (and_(Event.archived.is_(False), Event.implemented.is_(True)), 1),
+                    else_=0,
+                )
+            ),
+            func.sum(
+                case(
+                    (and_(Event.archived.is_(False), Event.reviewed.is_(False)), 1),
+                    else_=0,
+                )
+            ),
+            func.sum(case((Event.archived.is_(True), 1), else_=0)),
+        )
+        .where(Event.project_id.in_(project_ids))
+        .group_by(Event.project_id)
+    )
+    for (
+        project_id,
+        event_count,
+        active_event_count,
+        implemented_event_count,
+        review_pending_event_count,
+        archived_event_count,
+    ) in event_rows.all():
+        summary = summaries[project_id]
+        summary.event_count = int(event_count or 0)
+        summary.active_event_count = int(active_event_count or 0)
+        summary.implemented_event_count = int(implemented_event_count or 0)
+        summary.review_pending_event_count = int(review_pending_event_count or 0)
+        summary.archived_event_count = int(archived_event_count or 0)
+
+    variable_rows = await session.execute(
+        select(Variable.project_id, func.count(Variable.id))
+        .where(Variable.project_id.in_(project_ids))
+        .group_by(Variable.project_id)
+    )
+    for project_id, variable_count in variable_rows.all():
+        summaries[project_id].variable_count = int(variable_count or 0)
+
+    scan_rows = await session.execute(
+        select(ScanConfig.project_id, func.count(ScanConfig.id))
+        .where(ScanConfig.project_id.in_(project_ids))
+        .group_by(ScanConfig.project_id)
+    )
+    for project_id, scan_count in scan_rows.all():
+        summaries[project_id].scan_count = int(scan_count or 0)
+
+    alert_rows = await session.execute(
+        select(AlertDestination.project_id, func.count(AlertDestination.id))
+        .where(AlertDestination.project_id.in_(project_ids))
+        .group_by(AlertDestination.project_id)
+    )
+    for project_id, alert_destination_count in alert_rows.all():
+        summaries[project_id].alert_destination_count = int(alert_destination_count or 0)
+
+    await _populate_latest_scan_jobs(session, summaries)
+    await _populate_monitoring_signals(session, summaries)
+
+    return summaries
+
+
+async def _populate_latest_scan_jobs(
+    session: AsyncSession,
+    summaries: dict[uuid.UUID, ProjectSummary],
+) -> None:
+    if not summaries:
+        return
+
+    ranked_jobs = (
+        select(
+            ScanConfig.project_id.label("project_id"),
+            ScanJob.id.label("job_id"),
+            ScanJob.scan_config_id.label("scan_config_id"),
+            ScanConfig.name.label("scan_name"),
+            ScanJob.status.label("status"),
+            ScanJob.started_at.label("started_at"),
+            ScanJob.completed_at.label("completed_at"),
+            ScanJob.result_summary.label("result_summary"),
+            ScanJob.error_message.label("error_message"),
+            ScanJob.created_at.label("created_at"),
+            func.row_number()
+            .over(
+                partition_by=ScanConfig.project_id,
+                order_by=(ScanJob.created_at.desc(), ScanJob.id.desc()),
+            )
+            .label("row_number"),
+        )
+        .join(ScanConfig, ScanConfig.id == ScanJob.scan_config_id)
+        .where(ScanConfig.project_id.in_(list(summaries)))
+        .subquery()
+    )
+
+    rows = await session.execute(
+        select(
+            ranked_jobs.c.project_id,
+            ranked_jobs.c.job_id,
+            ranked_jobs.c.scan_config_id,
+            ranked_jobs.c.scan_name,
+            ranked_jobs.c.status,
+            ranked_jobs.c.started_at,
+            ranked_jobs.c.completed_at,
+            ranked_jobs.c.result_summary,
+            ranked_jobs.c.error_message,
+            ranked_jobs.c.created_at,
+        ).where(ranked_jobs.c.row_number == 1)
+    )
+    for row in rows.all():
+        summaries[row.project_id].latest_scan_job = ProjectLatestScanJob(
+            id=row.job_id,
+            scan_config_id=row.scan_config_id,
+            scan_name=row.scan_name,
+            status=row.status,
+            started_at=row.started_at,
+            completed_at=row.completed_at,
+            result_summary=row.result_summary,
+            error_message=row.error_message,
+            created_at=row.created_at,
+        )
+
+
+async def _load_scope_names(
+    session: AsyncSession,
+    anomalies: list[MetricAnomaly],
+) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
+    event_ids = {anomaly.event_id for anomaly in anomalies if anomaly.event_id is not None}
+    event_type_ids = {
+        anomaly.event_type_id for anomaly in anomalies if anomaly.event_type_id is not None
+    }
+
+    event_names: dict[uuid.UUID, str] = {}
+    if event_ids:
+        event_rows = await session.execute(
+            select(Event.id, Event.name).where(Event.id.in_(event_ids))
+        )
+        event_names = {event_id: name for event_id, name in event_rows.all()}
+
+    event_type_names: dict[uuid.UUID, str] = {}
+    if event_type_ids:
+        event_type_rows = await session.execute(
+            select(EventType.id, EventType.display_name).where(EventType.id.in_(event_type_ids))
+        )
+        event_type_names = {
+            event_type_id: display_name for event_type_id, display_name in event_type_rows.all()
+        }
+
+    return event_names, event_type_names
+
+
+def _resolve_scope_name(
+    anomaly: MetricAnomaly,
+    *,
+    event_names: dict[uuid.UUID, str],
+    event_type_names: dict[uuid.UUID, str],
+) -> str:
+    if anomaly.scope_type == SCOPE_PROJECT_TOTAL:
+        return "Project total"
+    if anomaly.event_type_id is not None:
+        return event_type_names.get(anomaly.event_type_id, "Event type")
+    if anomaly.event_id is not None:
+        return event_names.get(anomaly.event_id, "Event")
+    return anomaly.scope_ref
+
+
+async def _populate_monitoring_signals(
+    session: AsyncSession,
+    summaries: dict[uuid.UUID, ProjectSummary],
+) -> None:
+    if not summaries:
+        return
+
+    project_ids = list(summaries)
+    latest_anomaly_keys = (
+        select(
+            ScanConfig.project_id.label("project_id"),
+            MetricAnomaly.scan_config_id.label("scan_config_id"),
+            MetricAnomaly.scope_type.label("scope_type"),
+            MetricAnomaly.scope_ref.label("scope_ref"),
+            func.max(MetricAnomaly.bucket).label("bucket"),
+        )
+        .join(ScanConfig, ScanConfig.id == MetricAnomaly.scan_config_id)
+        .where(ScanConfig.project_id.in_(project_ids))
+        .group_by(
+            ScanConfig.project_id,
+            MetricAnomaly.scan_config_id,
+            MetricAnomaly.scope_type,
+            MetricAnomaly.scope_ref,
+        )
+        .subquery()
+    )
+
+    anomaly_rows = (
+        await session.execute(
+            select(ScanConfig.project_id, ScanConfig.name, MetricAnomaly)
+            .join(ScanConfig, ScanConfig.id == MetricAnomaly.scan_config_id)
+            .join(
+                latest_anomaly_keys,
+                (ScanConfig.project_id == latest_anomaly_keys.c.project_id)
+                & (MetricAnomaly.scan_config_id == latest_anomaly_keys.c.scan_config_id)
+                & (MetricAnomaly.scope_type == latest_anomaly_keys.c.scope_type)
+                & (MetricAnomaly.scope_ref == latest_anomaly_keys.c.scope_ref)
+                & (MetricAnomaly.bucket == latest_anomaly_keys.c.bucket),
+            )
+            .order_by(ScanConfig.project_id, MetricAnomaly.bucket.desc())
+        )
+    ).all()
+    if not anomaly_rows:
+        return
+
+    anomalies = [anomaly for _project_id, _scan_name, anomaly in anomaly_rows]
+    event_names, event_type_names = await _load_scope_names(session, anomalies)
+
+    project_total_metrics = (
+        select(
+            ScanConfig.project_id.label("project_id"),
+            EventMetric.scan_config_id.label("scan_config_id"),
+            literal(SCOPE_PROJECT_TOTAL).label("scope_type"),
+            cast(EventMetric.scan_config_id, String).label("scope_ref"),
+            func.max(EventMetric.bucket).label("latest_metric_bucket"),
+        )
+        .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+        .where(
+            ScanConfig.project_id.in_(project_ids),
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id.is_not(None),
+        )
+        .group_by(ScanConfig.project_id, EventMetric.scan_config_id)
+    )
+    event_type_metrics = (
+        select(
+            ScanConfig.project_id.label("project_id"),
+            EventMetric.scan_config_id.label("scan_config_id"),
+            literal(SCOPE_EVENT_TYPE).label("scope_type"),
+            cast(EventMetric.event_type_id, String).label("scope_ref"),
+            func.max(EventMetric.bucket).label("latest_metric_bucket"),
+        )
+        .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+        .where(
+            ScanConfig.project_id.in_(project_ids),
+            EventMetric.event_id.is_(None),
+            EventMetric.event_type_id.is_not(None),
+        )
+        .group_by(ScanConfig.project_id, EventMetric.scan_config_id, EventMetric.event_type_id)
+    )
+    event_metrics = (
+        select(
+            ScanConfig.project_id.label("project_id"),
+            EventMetric.scan_config_id.label("scan_config_id"),
+            literal(SCOPE_EVENT).label("scope_type"),
+            cast(EventMetric.event_id, String).label("scope_ref"),
+            func.max(EventMetric.bucket).label("latest_metric_bucket"),
+        )
+        .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+        .where(
+            ScanConfig.project_id.in_(project_ids),
+            EventMetric.event_id.is_not(None),
+        )
+        .group_by(ScanConfig.project_id, EventMetric.scan_config_id, EventMetric.event_id)
+    )
+    latest_metric_union = union_all(
+        project_total_metrics,
+        event_type_metrics,
+        event_metrics,
+    ).subquery()
+    latest_metric_rows = await session.execute(
+        select(
+            latest_metric_union.c.project_id,
+            latest_metric_union.c.scan_config_id,
+            latest_metric_union.c.scope_type,
+            latest_metric_union.c.scope_ref,
+            latest_metric_union.c.latest_metric_bucket,
+        )
+    )
+    latest_metric_buckets = {
+        (project_id, scan_config_id, scope_type, scope_ref): latest_metric_bucket
+        for (
+            project_id,
+            scan_config_id,
+            scope_type,
+            scope_ref,
+            latest_metric_bucket,
+        ) in latest_metric_rows.all()
+    }
+
+    for project_id, scan_name, anomaly in anomaly_rows:
+        latest_metric_bucket = latest_metric_buckets.get(
+            (project_id, anomaly.scan_config_id, anomaly.scope_type, anomaly.scope_ref)
+        )
+        state = classify_signal_state(
+            anomaly_bucket=anomaly.bucket,
+            latest_metric_bucket=latest_metric_bucket,
+        )
+        if state is None:
+            continue
+
+        signal = ProjectLatestSignal(
+            scan_config_id=anomaly.scan_config_id,
+            scan_name=scan_name,
+            scope_type=anomaly.scope_type,
+            scope_ref=anomaly.scope_ref,
+            scope_name=_resolve_scope_name(
+                anomaly,
+                event_names=event_names,
+                event_type_names=event_type_names,
+            ),
+            state=state,
+            bucket=anomaly.bucket,
+            actual_count=anomaly.actual_count,
+            expected_count=anomaly.expected_count,
+            z_score=anomaly.z_score,
+            direction=anomaly.direction,
+        )
+        summary = summaries[project_id]
+        summary.monitoring_signal_count += 1
+        if summary.latest_signal is None or signal.bucket > summary.latest_signal.bucket:
+            summary.latest_signal = signal
+
+
+async def _serialize_project(session: AsyncSession, project: Project) -> ProjectResponse:
+    summary = (await _get_project_summaries(session, [project.id]))[project.id]
+    response = ProjectResponse.model_validate(project)
+    response.summary = summary
+    return response
+
+
+def _serialize_projects(
+    projects: list[Project], summaries: dict[uuid.UUID, ProjectSummary]
+) -> list[ProjectResponse]:
+    return [
+        ProjectResponse.model_validate(project).model_copy(
+            update={"summary": summaries[project.id]}
+        )
+        for project in projects
+    ]
+
+
+async def list_projects(session: AsyncSession) -> list[ProjectResponse]:
     result = await session.execute(select(Project).order_by(Project.created_at.desc()))
-    return list(result.scalars().all())
+    projects = list(result.scalars().all())
+    summaries = await _get_project_summaries(session, [project.id for project in projects])
+    return _serialize_projects(projects, summaries)
 
 
 async def get_project_by_slug(session: AsyncSession, slug: str) -> Project:
@@ -21,7 +400,12 @@ async def get_project_by_slug(session: AsyncSession, slug: str) -> Project:
     return project
 
 
-async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
+async def get_project(session: AsyncSession, slug: str) -> ProjectResponse:
+    project = await get_project_by_slug(session, slug)
+    return await _serialize_project(session, project)
+
+
+async def create_project(session: AsyncSession, data: ProjectCreate) -> ProjectResponse:
     existing = await session.execute(select(Project).where(Project.slug == data.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Project with this slug already exists")
@@ -29,17 +413,17 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> Project:
     session.add(project)
     await session.commit()
     await session.refresh(project)
-    return project
+    return await _serialize_project(session, project)
 
 
-async def update_project(session: AsyncSession, slug: str, data: ProjectUpdate) -> Project:
+async def update_project(session: AsyncSession, slug: str, data: ProjectUpdate) -> ProjectResponse:
     project = await get_project_by_slug(session, slug)
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(project, key, value)
     await session.commit()
     await session.refresh(project)
-    return project
+    return await _serialize_project(session, project)
 
 
 async def delete_project(session: AsyncSession, slug: str) -> None:

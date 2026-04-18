@@ -8,25 +8,27 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.get("", response_model=list[ProjectResponse])
-async def list_projects(session: SessionDep):
+async def list_projects(session: SessionDep) -> list[ProjectResponse]:
     return await project_service.list_projects(session)
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
-async def create_project(session: SessionDep, data: ProjectCreate):
+async def create_project(session: SessionDep, data: ProjectCreate) -> ProjectResponse:
     return await project_service.create_project(session, data)
 
 
 @router.get("/{slug}", response_model=ProjectResponse)
-async def get_project(session: SessionDep, slug: str):
-    return await project_service.get_project_by_slug(session, slug)
+async def get_project(session: SessionDep, slug: str) -> ProjectResponse:
+    return await project_service.get_project(session, slug)
 
 
 @router.patch("/{slug}", response_model=ProjectResponse)
-async def update_project(session: SessionDep, slug: str, data: ProjectUpdate):
+async def update_project(
+    session: SessionDep, slug: str, data: ProjectUpdate
+) -> ProjectResponse:
     return await project_service.update_project(session, slug, data)
 
 
 @router.delete("/{slug}", status_code=204)
-async def delete_project(session: SessionDep, slug: str):
+async def delete_project(session: SessionDep, slug: str) -> None:
     await project_service.delete_project(session, slug)

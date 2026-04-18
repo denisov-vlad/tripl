@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -22,6 +22,7 @@ from tripl.schemas.event_metric import (
     EventWindowMetricsResponse,
     MetricSignalResponse,
 )
+from tripl.services.monitoring_utils import classify_signal_state
 from tripl.worker.analyzers.anomaly_detector import (
     SCOPE_EVENT,
     SCOPE_EVENT_TYPE,
@@ -30,8 +31,6 @@ from tripl.worker.analyzers.anomaly_detector import (
     expand_series,
 )
 from tripl.worker.utils.intervals import get_interval
-
-RECENT_SIGNAL_WINDOW = timedelta(hours=24)
 
 
 async def _resolve_project(session: AsyncSession, slug: str) -> Project:
@@ -142,7 +141,11 @@ async def _resolve_scope_scan_config_id(
         await session.execute(anomaly_query.order_by(MetricAnomaly.bucket.desc()).limit(1))
     ).first()
 
-    candidates = [row for row in (metric_row, anomaly_row) if row is not None]
+    candidates: list[tuple[uuid.UUID, datetime]] = []
+    if metric_row is not None:
+        candidates.append((metric_row[0], metric_row[1]))
+    if anomaly_row is not None:
+        candidates.append((anomaly_row[0], anomaly_row[1]))
     if not candidates:
         return await _get_default_scan_config_id(session, project_id)
 
@@ -224,24 +227,6 @@ async def _get_anomaly_rows(
 
     result = await session.execute(query)
     return list(result.scalars().all())
-
-
-def _classify_signal_state(
-    *,
-    anomaly_bucket: datetime,
-    latest_metric_bucket: datetime | None,
-) -> str | None:
-    if latest_metric_bucket is None or anomaly_bucket >= latest_metric_bucket:
-        return "latest_scan"
-
-    recent_cutoff = datetime.now(UTC)
-    if anomaly_bucket.tzinfo is None:
-        recent_cutoff = recent_cutoff.replace(tzinfo=None)
-    recent_cutoff -= RECENT_SIGNAL_WINDOW
-    if anomaly_bucket >= recent_cutoff:
-        return "recent"
-
-    return None
 
 
 def _signal_from_anomaly(
@@ -344,7 +329,7 @@ def _build_metrics_response(
     latest_metric_bucket = data[-1].bucket if data else None
     if anomalies:
         latest_anomaly = anomalies[-1]
-        state = _classify_signal_state(
+        state = classify_signal_state(
             anomaly_bucket=latest_anomaly.bucket,
             latest_metric_bucket=latest_metric_bucket,
         )
@@ -767,7 +752,7 @@ async def _get_latest_metric_bucket_map(
         }
 
     if scope_type == SCOPE_EVENT_TYPE:
-        query = (
+        event_type_query = (
             select(
                 EventMetric.scan_config_id,
                 EventMetric.event_type_id,
@@ -781,14 +766,14 @@ async def _get_latest_metric_bucket_map(
             )
             .group_by(EventMetric.scan_config_id, EventMetric.event_type_id)
         )
-        rows = (await session.execute(query)).all()
+        event_type_rows = (await session.execute(event_type_query)).all()
         return {
             (scan_config_id, SCOPE_EVENT_TYPE, str(event_type_id)): bucket
-            for scan_config_id, event_type_id, bucket in rows
+            for scan_config_id, event_type_id, bucket in event_type_rows
             if event_type_id is not None
         }
 
-    query = (
+    event_query = (
         select(EventMetric.scan_config_id, EventMetric.event_id, func.max(EventMetric.bucket))
         .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
         .where(
@@ -797,12 +782,12 @@ async def _get_latest_metric_bucket_map(
         )
     )
     if event_ids:
-        query = query.where(EventMetric.event_id.in_(event_ids))
-    query = query.group_by(EventMetric.scan_config_id, EventMetric.event_id)
-    rows = (await session.execute(query)).all()
+        event_query = event_query.where(EventMetric.event_id.in_(event_ids))
+    event_query = event_query.group_by(EventMetric.scan_config_id, EventMetric.event_id)
+    event_rows = (await session.execute(event_query)).all()
     return {
         (scan_config_id, SCOPE_EVENT, str(event_id)): bucket
-        for scan_config_id, event_id, bucket in rows
+        for scan_config_id, event_id, bucket in event_rows
         if event_id is not None
     }
 
@@ -834,7 +819,7 @@ async def get_active_signals(
         for anomaly in latest_anomalies:
             key = (anomaly.scan_config_id, anomaly.scope_type, anomaly.scope_ref)
             latest_metric_bucket = latest_metrics.get(key)
-            state = _classify_signal_state(
+            state = classify_signal_state(
                 anomaly_bucket=anomaly.bucket,
                 latest_metric_bucket=latest_metric_bucket,
             )

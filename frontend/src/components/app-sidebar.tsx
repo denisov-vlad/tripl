@@ -50,9 +50,9 @@ export function AppSidebar() {
 
       <ScrollArea className="flex-1 px-3 py-3">
         <nav className="flex flex-col gap-1">
-          {/* Home / Projects */}
+          {/* Home / Main */}
           <SidebarLink to="/" active={isActive('/')} icon={LayoutDashboard}>
-            Projects
+            Main
           </SidebarLink>
 
           {/* Data Sources */}
