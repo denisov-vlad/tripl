@@ -4,7 +4,7 @@ import Layout from './components/Layout'
 import { ThemeProvider } from './components/theme-provider'
 import { Toaster } from './components/ui/sonner'
 
-const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
+const MainPage = lazy(() => import('./pages/ProjectsPage'))
 const EventsPage = lazy(() => import('./pages/EventsPage'))
 const MonitoringDetailPage = lazy(() => import('./pages/MonitoringDetailPage'))
 const ProjectSettingsPage = lazy(() => import('./pages/ProjectSettingsPage'))
@@ -31,7 +31,7 @@ export default function App() {
     <ThemeProvider defaultTheme="dark" storageKey="tripl-ui-theme">
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={withSuspense(<ProjectsPage />)} />
+          <Route path="/" element={withSuspense(<MainPage />)} />
           <Route path="/data-sources" element={withSuspense(<DataSourcesPage />)} />
           <Route path="/data-sources/:dsId" element={withSuspense(<DataSourcesPage />)} />
           <Route path="/p/:slug/events/detail/:eventId" element={withSuspense(<MonitoringDetailPage />)} />

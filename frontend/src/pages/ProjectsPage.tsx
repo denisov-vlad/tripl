@@ -46,7 +46,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-export default function ProjectsPage() {
+export default function MainPage() {
   const queryClient = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
