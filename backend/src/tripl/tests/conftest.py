@@ -40,7 +40,21 @@ app.dependency_overrides[get_session] = override_get_session
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient]:
+async def anon_client() -> AsyncGenerator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture
+async def client(anon_client: AsyncClient) -> AsyncGenerator[AsyncClient]:
+    resp = await anon_client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "test@example.com",
+            "password": "Password123!",
+            "name": "Test User",
+        },
+    )
+    assert resp.status_code == 201
+    yield anon_client

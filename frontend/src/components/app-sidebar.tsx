@@ -7,11 +7,15 @@ import {
   Settings,
   ChevronRight,
   FolderKanban,
+  LogOut,
+  ShieldCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { projectsApi } from '@/api/projects'
+import { useAuth } from '@/components/auth-context'
 import { ErrorState } from '@/components/error-state'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -25,6 +29,7 @@ import { useState } from 'react'
 export function AppSidebar() {
   const { slug } = useParams()
   const location = useLocation()
+  const auth = useAuth()
 
   const projectsQuery = useQuery({
     queryKey: ['projects'],
@@ -101,9 +106,42 @@ export function AppSidebar() {
       <Separator className="bg-sidebar-border" />
 
       {/* Footer */}
-      <div className="flex items-center justify-between px-4 py-3">
-        <span className="text-[10px] text-sidebar-foreground/40">v0.1</span>
-        <ThemeToggle />
+      <div className="space-y-3 px-4 py-3">
+        <div className="rounded-xl border border-sidebar-border bg-sidebar-accent/35 p-3">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 rounded-full bg-sidebar-accent p-2 text-sidebar-primary-foreground">
+              <ShieldCheck className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-sidebar-foreground/45">
+                Signed In
+              </div>
+              <div className="mt-1 truncate text-sm font-medium">
+                {auth.user?.name ?? auth.user?.email}
+              </div>
+              {auth.user?.name && (
+                <div className="truncate text-xs text-sidebar-foreground/55">
+                  {auth.user.email}
+                </div>
+              )}
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-3 w-full justify-start text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            onClick={() => { void auth.logout() }}
+            disabled={auth.isLoggingOut}
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            {auth.isLoggingOut ? 'Signing out…' : 'Sign out'}
+          </Button>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-sidebar-foreground/40">v0.1</span>
+          <ThemeToggle />
+        </div>
       </div>
     </aside>
   )

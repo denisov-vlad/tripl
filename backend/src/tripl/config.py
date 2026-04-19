@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672//"
     encryption_key: str = ""  # Fernet key for encrypting data source passwords
     app_base_url: str = ""
+    session_cookie_name: str = "tripl_session"
+    session_ttl_hours: int = 24 * 7
+    session_cookie_secure: bool = False
     debug: bool = False
 
     model_config = {"env_file": ".env", "extra": "ignore"}

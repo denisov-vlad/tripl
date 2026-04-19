@@ -21,6 +21,8 @@ from tripl.models.project import Project
 from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob
+from tripl.models.user import User
+from tripl.models.user_session import UserSession
 from tripl.models.variable import Variable
 
 __all__ = [
@@ -48,4 +50,6 @@ __all__ = [
     "DataSource",
     "ScanConfig",
     "ScanJob",
+    "User",
+    "UserSession",
 ]

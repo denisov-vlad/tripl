@@ -37,6 +37,14 @@ export interface ProjectLatestSignal {
   direction: 'spike' | 'drop'
 }
 
+export interface AuthUser {
+  id: string
+  email: string
+  name: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface ProjectSummary {
   event_type_count: number
   event_count: number

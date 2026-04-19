@@ -8,6 +8,7 @@ Analytics tracking-plan, monitoring, and alerting service.
 
 Current product scope includes:
 
+- session-based authentication;
 - project-based tracking plans;
 - event types, fields, relations, meta fields, and reusable variables;
 - event catalog management with implementation, review, archive, and tag workflows;
@@ -38,6 +39,8 @@ Important runtime notes:
 cp .env.example .env
 docker compose up -d --build
 ```
+
+Open the frontend, create the first account on the sign-in page, and the app will establish an HTTP-only session cookie for subsequent API access.
 
 Endpoints:
 
