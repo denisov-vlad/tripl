@@ -627,13 +627,21 @@ export default function EventsPage() {
     [eventsData?.items],
   )
 
-  const activeSignalsQuery = useQuery({
-    queryKey: ['activeSignals', slug, eventIdsForSignals],
-    queryFn: () => metricsApi.getActiveSignals(slug!, eventIdsForSignals),
+  const tabSignalsQuery = useQuery({
+    queryKey: ['activeSignals', slug, 'tabs'],
+    queryFn: () => metricsApi.getActiveSignals(slug!),
     enabled: !!slug,
     refetchInterval: 60000,
   })
-  const activeSignals = activeSignalsQuery.data ?? EMPTY_SIGNALS
+  const tabSignals = tabSignalsQuery.data ?? EMPTY_SIGNALS
+
+  const rowSignalsQuery = useQuery({
+    queryKey: ['activeSignals', slug, 'rows', eventIdsForSignals],
+    queryFn: () => metricsApi.getActiveSignals(slug!, eventIdsForSignals),
+    enabled: !!slug && eventIdsForSignals.length > 0,
+    refetchInterval: 60000,
+  })
+  const rowSignals = rowSignalsQuery.data ?? EMPTY_SIGNALS
 
   const unreviewedDataQuery = useQuery({
     queryKey: ['events', slug, 'unreviewedCount'],
@@ -736,16 +744,16 @@ export default function EventsPage() {
     [tabMetrics?.data, tabMetricsGranularity],
   )
   const projectTotalSignal = useMemo(
-    () => pickLatestSignal(activeSignals, 'project_total'),
-    [activeSignals],
+    () => pickLatestSignal(tabSignals, 'project_total'),
+    [tabSignals],
   )
   const eventTypeSignals = useMemo(
-    () => mapLatestSignals(activeSignals, 'event_type'),
-    [activeSignals],
+    () => mapLatestSignals(tabSignals, 'event_type'),
+    [tabSignals],
   )
   const eventSignals = useMemo(
-    () => mapLatestSignals(activeSignals, 'event'),
-    [activeSignals],
+    () => mapLatestSignals(rowSignals, 'event'),
+    [rowSignals],
   )
   const activeTabSignal = useMemo(() => {
     if (activeTab === 'all') return projectTotalSignal

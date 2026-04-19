@@ -20,13 +20,13 @@ function mockJsonResponse(body: unknown) {
   })
 }
 
-function renderEventsPage() {
+function renderEventsPage(initialEntries: string[] = ['/p/demo/events']) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/p/demo/events']}>
+      <MemoryRouter initialEntries={initialEntries}>
         <Routes>
           <Route path="/p/:slug/events" element={<EventsPage />} />
           <Route path="/p/:slug/events/:tab" element={<EventsPage />} />
@@ -202,7 +202,8 @@ describe('EventsPage', () => {
     expect(screen.getByText('48h')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '7d' })).toBeInTheDocument()
     expect(screen.getByText('Hours')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '1k' })).toBeInTheDocument()
+    const metricsButton = await screen.findByRole('button', { name: '1k' })
+    expect(metricsButton).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Toggle review status' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit event' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument()
@@ -213,8 +214,8 @@ describe('EventsPage', () => {
     expect(container.querySelector('a[href="/p/demo/monitoring/event/event-1"]')).toBeInTheDocument()
     expect(screen.getAllByLabelText('Open recent anomaly')).toHaveLength(2)
 
-    fireEvent.mouseOver(screen.getByRole('button', { name: '1k' }))
-    fireEvent.focus(screen.getByRole('button', { name: '1k' }))
+    fireEvent.mouseOver(metricsButton)
+    fireEvent.focus(metricsButton)
     expect((await screen.findAllByText('Last 48 hours')).length).toBeGreaterThan(0)
     expect(screen.getAllByText('1k events').length).toBeGreaterThan(0)
 
@@ -229,6 +230,163 @@ describe('EventsPage', () => {
 
     fireEvent.click(screen.getByText('Show chart'))
     expect(await screen.findByText('View signal')).toBeInTheDocument()
+  })
+
+  it('keeps tab anomaly links when switching between archived and all tabs', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+
+      if (url.endsWith('/api/v1/projects/demo/event-types')) {
+        return mockJsonResponse([
+          {
+            id: 'type-1',
+            project_id: 'project-1',
+            name: 'page',
+            display_name: 'Page',
+            description: '',
+            color: '#ec4899',
+            order: 0,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            field_definitions: [],
+          },
+        ])
+      }
+      if (url.endsWith('/api/v1/projects/demo/meta-fields')) return mockJsonResponse([])
+      if (url.endsWith('/api/v1/projects/demo/variables')) return mockJsonResponse([])
+      if (url.endsWith('/api/v1/projects/demo/events/tags')) return mockJsonResponse([])
+      if (url.includes('/api/v1/projects/demo/events?reviewed=false')) {
+        return mockJsonResponse({ items: [], total: 0 })
+      }
+      if (url.includes('/api/v1/projects/demo/events?archived=true&limit=1')) {
+        return mockJsonResponse({ items: [], total: 1 })
+      }
+      if (url.includes('/api/v1/projects/demo/events?archived=true')) {
+        return mockJsonResponse({
+          items: [
+            {
+              id: 'archived-event-1',
+              project_id: 'project-1',
+              event_type_id: 'type-1',
+              event_type: {
+                id: 'type-1',
+                name: 'page',
+                display_name: 'Page',
+                color: '#ec4899',
+              },
+              name: 'Archived Signup',
+              description: '',
+              order: 0,
+              implemented: true,
+              reviewed: true,
+              archived: true,
+              tags: [],
+              field_values: [],
+              meta_values: [],
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+          total: 1,
+        })
+      }
+      if (url.includes('/api/v1/projects/demo/events-metrics')) {
+        return mockJsonResponse({
+          scope: 'events_total',
+          scan_config_id: null,
+          event_id: null,
+          event_type_id: null,
+          interval: '1h',
+          latest_signal: null,
+          data: [],
+        })
+      }
+      if (url.endsWith('/api/v1/projects/demo/events/window-metrics') && init?.method === 'POST') {
+        return mockJsonResponse([])
+      }
+      if (url.endsWith('/api/v1/projects/demo/anomalies/signals')) {
+        return mockJsonResponse([
+          {
+            scan_config_id: 'scan-1',
+            scope_type: 'project_total',
+            scope_ref: 'scan-1',
+            state: 'latest_scan',
+            event_id: null,
+            event_type_id: null,
+            bucket: '2026-01-02T00:00:00Z',
+            actual_count: 0,
+            expected_count: 20,
+            stddev: 0,
+            z_score: -20,
+            direction: 'drop',
+          },
+          {
+            scan_config_id: 'scan-1',
+            scope_type: 'event_type',
+            scope_ref: 'type-1',
+            state: 'recent',
+            event_id: null,
+            event_type_id: 'type-1',
+            bucket: '2026-01-02T00:00:00Z',
+            actual_count: 0,
+            expected_count: 12,
+            stddev: 0,
+            z_score: -12,
+            direction: 'drop',
+          },
+        ])
+      }
+      if (url.includes('/api/v1/projects/demo/anomalies/signals?event_id=')) {
+        return mockJsonResponse([])
+      }
+      if (url.includes('/api/v1/projects/demo/events?archived=false')) {
+        return mockJsonResponse({
+          items: [
+            {
+              id: 'active-event-1',
+              project_id: 'project-1',
+              event_type_id: 'type-1',
+              event_type: {
+                id: 'type-1',
+                name: 'page',
+                display_name: 'Page',
+                color: '#ec4899',
+              },
+              name: 'Active Signup',
+              description: '',
+              order: 0,
+              implemented: true,
+              reviewed: true,
+              archived: false,
+              tags: [],
+              field_values: [],
+              meta_values: [],
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+          total: 1,
+        })
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    const { container } = renderEventsPage(['/p/demo/events/archived'])
+
+    expect(await screen.findByText('Archived Signup')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(container.querySelector('a[href="/p/demo/monitoring/project-total/scan-1"]')).toBeInTheDocument()
+      expect(container.querySelector('a[href="/p/demo/monitoring/event-type/type-1"]')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+
+    expect(await screen.findByText('Active Signup')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(container.querySelector('a[href="/p/demo/monitoring/project-total/scan-1"]')).toBeInTheDocument()
+      expect(container.querySelector('a[href="/p/demo/monitoring/event-type/type-1"]')).toBeInTheDocument()
+    })
   })
 
   it('supports selecting multiple events and bulk deleting them', async () => {
