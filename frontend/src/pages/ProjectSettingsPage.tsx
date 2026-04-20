@@ -59,13 +59,13 @@ export default function ProjectSettingsPage() {
   }
 
   return (
-    <div>
+    <div className="min-w-0">
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Project Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Configure event types, monitoring, and scanning</p>
       </div>
 
-      <Tabs value={tab} onValueChange={changeTab} className="mb-6">
+      <Tabs value={tab} onValueChange={changeTab} className="mb-6 min-w-0">
         <TabsList>
           <TabsTrigger value="event-types">Event Types</TabsTrigger>
           <TabsTrigger value="meta-fields">Meta Fields</TabsTrigger>

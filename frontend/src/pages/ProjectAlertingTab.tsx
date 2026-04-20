@@ -1156,8 +1156,8 @@ export default function ProjectAlertingTab({ slug }: { slug: string }) {
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_1fr]">
-        <div className="space-y-4">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Destinations</h3>
             <div className="flex gap-2">
@@ -1219,7 +1219,7 @@ export default function ProjectAlertingTab({ slug }: { slug: string }) {
           ))}
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Audit</h3>
             <Badge variant="outline" className="text-[10px]">
@@ -1227,8 +1227,8 @@ export default function ProjectAlertingTab({ slug }: { slug: string }) {
             </Badge>
           </div>
 
-          <Card>
-            <CardContent className="p-4 space-y-4">
+          <Card className="min-w-0">
+            <CardContent className="min-w-0 space-y-4 p-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="grid gap-2">
                   <Label>Status</Label>

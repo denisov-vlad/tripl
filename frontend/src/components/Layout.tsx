@@ -14,8 +14,8 @@ export default function Layout() {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <AppSidebar />
-      <ScrollArea className="flex-1">
-        <main className="p-6 lg:p-8">
+      <ScrollArea className="min-w-0 flex-1">
+        <main className="min-w-0 p-6 lg:p-8">
           {projectsQuery.isError && (
             <div className="mb-6">
               <ErrorState
