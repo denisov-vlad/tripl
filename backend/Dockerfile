@@ -1,20 +1,35 @@
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+# syntax=docker/dockerfile:1.7
+
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS base
 
 WORKDIR /app
+ENV UV_LINK_MODE=copy
 
 COPY pyproject.toml uv.lock .python-version ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
-COPY . .
-RUN uv sync --frozen --no-dev
+COPY src ./src
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 
-FROM python:3.13-slim-bookworm
+FROM base AS dev
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+EXPOSE 8000
+
+CMD ["uvicorn", "tripl.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+FROM python:3.13-slim-bookworm AS runtime
 
 WORKDIR /app
-COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/src /app/src
-COPY --from=builder /app/alembic.ini /app/alembic.ini
-COPY --from=builder /app/alembic /app/alembic
+COPY --from=base /app/.venv /app/.venv
+COPY --from=base /app/src /app/src
+COPY --from=base /app/alembic.ini /app/alembic.ini
+COPY --from=base /app/alembic /app/alembic
 
 ENV PATH="/app/.venv/bin:$PATH"
 

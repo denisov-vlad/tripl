@@ -71,6 +71,19 @@ pnpm exec tsc --noEmit
 pnpm lint
 ```
 
+Docker hot reload:
+
+```bash
+docker compose up --build --watch
+```
+
+What reloads automatically:
+
+- frontend `src` and `public`: synced into the container and handled by Vite HMR;
+- backend `src`: synced into the API container and reloaded by `uvicorn --reload`;
+- Celery worker and beat: synced backend changes trigger container restart;
+- `package.json`, `pnpm-lock.yaml`, `pyproject.toml`, `uv.lock`, and Dockerfiles: trigger image rebuild.
+
 ## Documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): local setup, commands, and API overview

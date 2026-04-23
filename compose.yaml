@@ -1,3 +1,13 @@
+x-backend-build: &backend-build
+  context: ./backend
+  target: dev
+
+x-backend-environment: &backend-environment
+  DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
+  SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+
 services:
   postgres:
     image: postgres:17
@@ -28,16 +38,14 @@ services:
       start_period: 30s
 
   api:
-    build: ./backend
-    command: ["sh", "-c", "alembic upgrade head && uvicorn tripl.main:app --host 0.0.0.0 --port 8000"]
+    build: *backend-build
+    command: ["sh", "-c", "alembic upgrade head && uvicorn tripl.main:app --host 0.0.0.0 --port 8000 --reload"]
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
-      SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      <<: *backend-environment
       DEBUG: "true"
+      WATCHFILES_FORCE_POLLING: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,41 +54,124 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+        - action: sync+restart
+          path: ./backend/alembic
+          target: /app/alembic
+        - action: sync+restart
+          path: ./backend/alembic.ini
+          target: /app/alembic.ini
+        - action: rebuild
+          path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/uv.lock
+        - action: rebuild
+          path: ./backend/.python-version
+        - action: rebuild
+          path: ./backend/Dockerfile
 
   celery-worker:
-    build: ./backend
+    build: *backend-build
     command: ["celery", "-A", "tripl.worker.celery_app", "worker", "--loglevel=info"]
-    environment:
-      DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
-      SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    environment: *backend-environment
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend/src
+          target: /app/src
+        - action: sync+restart
+          path: ./backend/alembic
+          target: /app/alembic
+        - action: sync+restart
+          path: ./backend/alembic.ini
+          target: /app/alembic.ini
+        - action: rebuild
+          path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/uv.lock
+        - action: rebuild
+          path: ./backend/.python-version
+        - action: rebuild
+          path: ./backend/Dockerfile
 
   celery-beat:
-    build: ./backend
+    build: *backend-build
     command: ["celery", "-A", "tripl.worker.celery_app", "beat", "--loglevel=info"]
-    environment:
-      DATABASE_URL: postgresql+asyncpg://tripl:tripl@postgres:5432/tripl
-      SYNC_DATABASE_URL: postgresql+psycopg://tripl:tripl@postgres:5432/tripl
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672//
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    environment: *backend-environment
     depends_on:
       rabbitmq:
         condition: service_healthy
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend/src
+          target: /app/src
+        - action: sync+restart
+          path: ./backend/alembic
+          target: /app/alembic
+        - action: sync+restart
+          path: ./backend/alembic.ini
+          target: /app/alembic.ini
+        - action: rebuild
+          path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/uv.lock
+        - action: rebuild
+          path: ./backend/.python-version
+        - action: rebuild
+          path: ./backend/Dockerfile
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
     ports:
       - "5173:5173"
     environment:
       VITE_API_URL: http://localhost:8000
+      VITE_PROXY_TARGET: http://api:8000
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "200"
     depends_on:
       - api
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend/src
+          target: /app/src
+        - action: sync
+          path: ./frontend/public
+          target: /app/public
+        - action: sync+restart
+          path: ./frontend/index.html
+          target: /app/index.html
+        - action: sync+restart
+          path: ./frontend/vite.config.ts
+          target: /app/vite.config.ts
+        - action: sync+restart
+          path: ./frontend/tsconfig.json
+          target: /app/tsconfig.json
+        - action: sync+restart
+          path: ./frontend/tsconfig.app.json
+          target: /app/tsconfig.app.json
+        - action: sync+restart
+          path: ./frontend/tsconfig.node.json
+          target: /app/tsconfig.node.json
+        - action: rebuild
+          path: ./frontend/package.json
+        - action: rebuild
+          path: ./frontend/pnpm-lock.yaml
+        - action: rebuild
+          path: ./frontend/Dockerfile
 
 volumes:
   pgdata:
