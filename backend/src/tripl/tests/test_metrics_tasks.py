@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -215,6 +215,61 @@ def test_check_metrics_due_creates_pending_job_before_dispatch(
     assert str(jobs[0].id) == dispatched[0][1]
     assert jobs[0].status == ScanJobStatus.pending.value
     assert jobs[0].started_at is None
+
+
+def test_check_metrics_due_reaps_stale_active_job_and_dispatches_replacement(
+    sync_session_factory: sessionmaker[Session],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    with sync_session_factory() as session:
+        config = _create_scan_config(session)
+        stale_job = ScanJob(
+            id=uuid.uuid4(),
+            scan_config_id=config.id,
+            status=ScanJobStatus.running.value,
+            started_at=(
+                datetime.now(UTC)
+                - metrics.STALE_ACTIVE_SCAN_JOB_TIMEOUT
+                - timedelta(minutes=5)
+            ),
+        )
+        session.add(stale_job)
+        session.commit()
+        config_id = config.id
+        stale_job_id = stale_job.id
+
+    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setattr(metrics, "_get_sync_session", sync_session_factory)
+
+    def fake_delay(scan_config_id: str, scan_job_id: str) -> None:
+        dispatched.append((scan_config_id, scan_job_id))
+
+    monkeypatch.setattr(metrics.collect_metrics, "delay", fake_delay)
+
+    result = metrics.check_metrics_due.run()
+
+    assert result == {"checked": 1, "dispatched": 1}
+    assert dispatched[0][0] == str(config_id)
+
+    with sync_session_factory() as session:
+        jobs = (
+            session.execute(
+                select(ScanJob)
+                .where(ScanJob.scan_config_id == config_id)
+                .order_by(ScanJob.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    assert len(jobs) == 2
+    assert jobs[0].id == stale_job_id
+    assert jobs[0].status == ScanJobStatus.failed.value
+    assert jobs[0].completed_at is not None
+    assert jobs[0].error_message is not None
+    assert "Marked failed by scheduler" in jobs[0].error_message
+    assert str(jobs[1].id) == dispatched[0][1]
+    assert jobs[1].status == ScanJobStatus.pending.value
 
 
 def test_collect_metrics_reuses_existing_pending_job(

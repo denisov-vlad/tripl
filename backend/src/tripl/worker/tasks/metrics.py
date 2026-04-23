@@ -70,6 +70,7 @@ ACTIVE_SCAN_JOB_STATUSES = (
     ScanJobStatus.pending.value,
     ScanJobStatus.running.value,
 )
+STALE_ACTIVE_SCAN_JOB_TIMEOUT = timedelta(minutes=30)
 RECENT_SIGNAL_WINDOW = timedelta(hours=24)
 
 
@@ -126,6 +127,43 @@ def _get_active_scan_job(session: Session, scan_config_id: uuid.UUID) -> ScanJob
         .order_by(ScanJob.created_at.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def _normalize_job_timestamp(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _get_scan_job_activity_at(job: ScanJob) -> datetime:
+    activity_at = job.started_at or job.updated_at or job.created_at
+    return _normalize_job_timestamp(activity_at)
+
+
+def _fail_stale_active_scan_job(
+    session: Session,
+    job: ScanJob,
+    *,
+    now: datetime,
+    scan_name: str,
+) -> bool:
+    activity_at = _get_scan_job_activity_at(job)
+    if now - activity_at < STALE_ACTIVE_SCAN_JOB_TIMEOUT:
+        return False
+
+    logger.warning(
+        "Marking stale active job %s for %r as failed; status=%s, last_activity=%s",
+        job.id,
+        scan_name,
+        job.status,
+        activity_at.isoformat(),
+    )
+    job.status = ScanJobStatus.failed.value
+    job.completed_at = now
+    job.error_message = (
+        "Marked failed by scheduler after "
+        f"{int(STALE_ACTIVE_SCAN_JOB_TIMEOUT.total_seconds() // 60)} minutes without progress"
+    )
+    session.commit()
+    return True
 
 
 def _ensure_event_type_with_fields(
@@ -1498,7 +1536,23 @@ def check_metrics_due() -> dict[str, int]:
 
         dispatched = 0
         for config in configs:
+            now = datetime.now(UTC)
             active_job = _get_active_scan_job(session, config.id)
+            if active_job is not None:
+                if _fail_stale_active_scan_job(
+                    session,
+                    active_job,
+                    now=now,
+                    scan_name=config.name,
+                ):
+                    active_job = None
+                else:
+                    logger.info(
+                        f"Skipping collect_metrics for {config.name!r}: "
+                        f"active job {active_job.id} is {active_job.status}"
+                    )
+                    continue
+
             if active_job is not None:
                 logger.info(
                     f"Skipping collect_metrics for {config.name!r}: "
@@ -1517,7 +1571,6 @@ def check_metrics_due() -> dict[str, int]:
                 )
             ).scalar()
 
-            now = datetime.now(UTC)
             should_run = False
 
             if last_bucket is None:
