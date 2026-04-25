@@ -5,6 +5,7 @@ from httpx import AsyncClient
 
 from tripl.services import scan_service
 from tripl.worker.adapters.base import ColumnInfo
+from tripl.worker.tasks import metrics
 
 
 @pytest.fixture
@@ -78,9 +79,7 @@ class TestScanConfigsCRUD:
                     "base_query": f"SELECT * FROM t{i}",
                 },
             )
-        resp = await client.get(
-            f"/api/v1/projects/{project['slug']}/scans"
-        )
+        resp = await client.get(f"/api/v1/projects/{project['slug']}/scans")
         assert resp.status_code == 200
         assert len(resp.json()) == 3
 
@@ -104,14 +103,10 @@ class TestScanConfigsCRUD:
             json={"data_source_id": data_source["id"], "name": "DelMe", "base_query": "SELECT 1"},
         )
         scan_id = create_resp.json()["id"]
-        resp = await client.delete(
-            f"/api/v1/projects/{project['slug']}/scans/{scan_id}"
-        )
+        resp = await client.delete(f"/api/v1/projects/{project['slug']}/scans/{scan_id}")
         assert resp.status_code == 204
 
-    async def test_scan_config_not_found(
-        self, client: AsyncClient, project: dict
-    ):
+    async def test_scan_config_not_found(self, client: AsyncClient, project: dict):
         resp = await client.get(
             f"/api/v1/projects/{project['slug']}/scans/00000000-0000-0000-0000-000000000000"
         )
@@ -126,6 +121,87 @@ class TestScanConfigsCRUD:
         assert r1.status_code == 201
         r2 = await client.post(base, json=payload)
         assert r2.status_code == 409
+
+    async def test_replay_scan_metrics_dispatches_collection_job(
+        self,
+        client: AsyncClient,
+        project: dict,
+        data_source: dict,
+        event_type: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        create_resp = await client.post(
+            f"/api/v1/projects/{project['slug']}/scans",
+            json={
+                "data_source_id": data_source["id"],
+                "name": "Hourly metrics",
+                "base_query": "SELECT * FROM events",
+                "event_type_id": event_type["id"],
+                "time_column": "created_at",
+                "interval": "1h",
+            },
+        )
+        assert create_resp.status_code == 201
+        scan_id = create_resp.json()["id"]
+        dispatched: list[tuple[str, str, str, str]] = []
+
+        def fake_delay(
+            scan_config_id: str,
+            scan_job_id: str,
+            time_from: str,
+            time_to: str,
+        ) -> None:
+            dispatched.append((scan_config_id, scan_job_id, time_from, time_to))
+
+        monkeypatch.setattr(metrics.collect_metrics, "delay", fake_delay)
+
+        resp = await client.post(
+            f"/api/v1/projects/{project['slug']}/scans/{scan_id}/metrics/replay",
+            json={
+                "time_from": "2026-04-01T00:00:00Z",
+                "time_to": "2026-04-02T00:00:00Z",
+            },
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["scan_config_id"] == scan_id
+        assert body["status"] == "pending"
+        assert dispatched == [
+            (
+                scan_id,
+                body["id"],
+                "2026-04-01T00:00:00+00:00",
+                "2026-04-02T00:00:00+00:00",
+            )
+        ]
+
+    async def test_replay_scan_metrics_requires_monitoring_fields(
+        self,
+        client: AsyncClient,
+        project: dict,
+        data_source: dict,
+    ) -> None:
+        create_resp = await client.post(
+            f"/api/v1/projects/{project['slug']}/scans",
+            json={
+                "data_source_id": data_source["id"],
+                "name": "Catalog only",
+                "base_query": "SELECT * FROM events",
+            },
+        )
+        assert create_resp.status_code == 201
+        scan_id = create_resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/v1/projects/{project['slug']}/scans/{scan_id}/metrics/replay",
+            json={
+                "time_from": "2026-04-01T00:00:00Z",
+                "time_to": "2026-04-02T00:00:00Z",
+            },
+        )
+
+        assert resp.status_code == 400
 
     async def test_preview_scan_config(
         self,

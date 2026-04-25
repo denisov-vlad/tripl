@@ -43,7 +43,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/empty-state'
 import { META_FIELD_LINK_PLACEHOLDER } from '@/lib/metaFields'
-import { Plus, Pencil, Trash2, ChevronDown, ArrowUp, ArrowDown, Play, Layers, Link2, Variable as VariableIcon, List, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronDown, ArrowUp, ArrowDown, Play, RotateCcw, Layers, Link2, Variable as VariableIcon, List, Search } from 'lucide-react'
 
 type SettingsTab = 'event-types' | 'meta-fields' | 'relations' | 'variables' | 'monitoring' | 'alerting' | 'scans'
 const ProjectAlertingTab = lazy(() => import('@/pages/ProjectAlertingTab'))
@@ -1812,12 +1812,36 @@ function ScansTab({ slug }: { slug: string }) {
   )
 }
 
+function toDatetimeLocalValue(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const year = date.getFullYear()
+  const month = pad(date.getMonth() + 1)
+  const day = pad(date.getDate())
+  const hours = pad(date.getHours())
+  const minutes = pad(date.getMinutes())
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+function createDefaultReplayWindow() {
+  const to = new Date()
+  to.setMinutes(0, 0, 0)
+  const from = new Date(to.getTime() - 24 * 60 * 60 * 1000)
+  return {
+    from: toDatetimeLocalValue(from),
+    to: toDatetimeLocalValue(to),
+  }
+}
+
 /* ─── Scan Detail (jobs) ─── */
 function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig: ScanConfig; eventTypes: EventType[] }) {
   const qc = useQueryClient()
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
+  const [replayOpen, setReplayOpen] = useState(false)
+  const [replayFrom, setReplayFrom] = useState('')
+  const [replayTo, setReplayTo] = useState('')
 
   const etName = eventTypes.find((et: EventType) => et.id === scanConfig.event_type_id)?.display_name
+  const canReplayMetrics = Boolean(scanConfig.time_column && scanConfig.interval)
 
   const { data: jobs = [], isLoading } = useQuery({
     queryKey: ['scanJobs', slug, scanConfig.id],
@@ -1830,6 +1854,35 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scanJobs', slug, scanConfig.id] }),
   })
 
+  const replayMut = useMutation({
+    mutationFn: () => {
+      if (!replayFrom || !replayTo) throw new Error('Select a period to replay')
+      const from = new Date(replayFrom)
+      const to = new Date(replayTo)
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        throw new Error('Period dates are invalid')
+      }
+      if (from >= to) throw new Error('Start must be before end')
+      return scansApi.replayMetrics(slug, scanConfig.id, {
+        time_from: from.toISOString(),
+        time_to: to.toISOString(),
+      })
+    },
+    onSuccess: () => {
+      setReplayOpen(false)
+      qc.invalidateQueries({ queryKey: ['scanJobs', slug, scanConfig.id] })
+      qc.invalidateQueries({ queryKey: ['scans', slug] })
+    },
+  })
+
+  const openReplayDialog = () => {
+    const defaultWindow = createDefaultReplayWindow()
+    setReplayFrom(defaultWindow.from)
+    setReplayTo(defaultWindow.to)
+    setReplayOpen(true)
+    replayMut.reset()
+  }
+
   const statusVariant: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
     pending: 'outline',
     running: 'secondary',
@@ -1839,6 +1892,50 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
 
   return (
     <div className="border-t p-4 space-y-4">
+      <Dialog open={replayOpen} onOpenChange={setReplayOpen}>
+        <DialogContent>
+          <form
+            className="space-y-4"
+            onSubmit={e => {
+              e.preventDefault()
+              replayMut.mutate()
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Replay Metrics Period</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>From</Label>
+                <Input
+                  type="datetime-local"
+                  value={replayFrom}
+                  onChange={e => setReplayFrom(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>To</Label>
+                <Input
+                  type="datetime-local"
+                  value={replayTo}
+                  onChange={e => setReplayTo(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            {replayMut.isError && <p className="text-sm text-destructive">{(replayMut.error as Error).message}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setReplayOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={replayMut.isPending}>
+                <RotateCcw className="mr-1 h-3 w-3" />
+                {replayMut.isPending ? 'Starting…' : 'Replay Period'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Query info panel */}
       <div className="rounded-lg border bg-muted/30 overflow-hidden">
         <div className="px-3 py-2 bg-muted/50 border-b flex items-center justify-between">
@@ -1867,10 +1964,22 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
 
       <div className="flex justify-between items-center">
         <h3 className="text-sm font-semibold">Jobs</h3>
-        <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending}>
-          <Play className="mr-1 h-3 w-3" />
-          {runMut.isPending ? 'Starting…' : 'Run Scan'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={openReplayDialog}
+            disabled={!canReplayMetrics || replayMut.isPending}
+            title={canReplayMetrics ? 'Replay metrics for a past period' : 'Requires time column and interval'}
+          >
+            <RotateCcw className="mr-1 h-3 w-3" />
+            Replay Period
+          </Button>
+          <Button size="sm" onClick={() => runMut.mutate()} disabled={runMut.isPending}>
+            <Play className="mr-1 h-3 w-3" />
+            {runMut.isPending ? 'Starting…' : 'Run Scan'}
+          </Button>
+        </div>
       </div>
 
       {runMut.isError && <p className="text-sm text-destructive">{(runMut.error as Error).message}</p>}
@@ -1926,6 +2035,12 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                           {job.result_summary.signals_added != null && job.result_summary.signals_added > 0 && (
                             <Badge variant="outline" className="text-[10px] text-destructive">+{job.result_summary.signals_added} signals</Badge>
                           )}
+                          {job.result_summary.signals_removed != null && job.result_summary.signals_removed > 0 && (
+                            <Badge variant="outline" className="text-[10px] text-green-700">-{job.result_summary.signals_removed} signals</Badge>
+                          )}
+                          {job.result_summary.metrics_deleted != null && job.result_summary.metrics_deleted > 0 && (
+                            <Badge variant="outline" className="text-[10px]">{job.result_summary.metrics_deleted} replaced</Badge>
+                          )}
                           {job.result_summary.alerts_queued != null && job.result_summary.alerts_queued > 0 && (
                             <Badge variant="outline" className="text-[10px] text-amber-600">+{job.result_summary.alerts_queued} alerts</Badge>
                           )}
@@ -1936,7 +2051,7 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                       )}
                     </TableCell>
                     <TableCell>
-                      {(job.result_summary?.details?.length || job.error_message) && (
+                      {(job.result_summary || job.error_message) && (
                         <Button variant="ghost" size="icon" className="h-6 w-6"
                           onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}>
                           <ChevronDown className={`h-3 w-3 transition-transform ${expandedJobId === job.id ? 'rotate-180' : ''}`} />
@@ -1955,7 +2070,18 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                             </div>
                           )}
                           {job.result_summary && (
-                            <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-3 xl:grid-cols-5">
+                            <div className="space-y-3">
+                              {(job.result_summary.time_from || job.result_summary.time_to) && (
+                                <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground">
+                                    {job.result_summary.mode === 'metrics_replay' ? 'Replay period' : 'Collection period'}
+                                  </span>
+                                  {job.result_summary.time_from && job.result_summary.time_to && (
+                                    <span> · {new Date(job.result_summary.time_from).toLocaleString()} - {new Date(job.result_summary.time_to).toLocaleString()}</span>
+                                  )}
+                                </div>
+                              )}
+                              <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-3 xl:grid-cols-5">
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-green-600">{job.result_summary.events_created ?? 0}</div><div className="text-muted-foreground">Events created</div></Card>
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-blue-600">{job.result_summary.variables_created ?? 0}</div><div className="text-muted-foreground">Variables created</div></Card>
                               <Card className="p-3 text-center"><div className="text-lg font-bold text-foreground">{job.result_summary.events_skipped ?? 0}</div><div className="text-muted-foreground">Events skipped</div></Card>
@@ -1966,12 +2092,25 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                                   <div className="text-muted-foreground">Signals added</div>
                                 </Card>
                               )}
+                              {job.result_summary.signals_removed != null && (
+                                <Card className="p-3 text-center">
+                                  <div className="text-lg font-bold text-green-700">{job.result_summary.signals_removed}</div>
+                                  <div className="text-muted-foreground">Signals removed</div>
+                                </Card>
+                              )}
+                              {job.result_summary.metrics_deleted != null && (
+                                <Card className="p-3 text-center">
+                                  <div className="text-lg font-bold text-foreground">{job.result_summary.metrics_deleted}</div>
+                                  <div className="text-muted-foreground">Metrics replaced</div>
+                                </Card>
+                              )}
                               {job.result_summary.alerts_queued != null && (
                                 <Card className="p-3 text-center">
                                   <div className="text-lg font-bold text-amber-600">{job.result_summary.alerts_queued}</div>
                                   <div className="text-muted-foreground">Alerts queued</div>
                                 </Card>
                               )}
+                              </div>
                             </div>
                           )}
                           {job.result_summary?.details && job.result_summary.details.length > 0 && (

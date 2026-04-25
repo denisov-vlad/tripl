@@ -228,9 +228,7 @@ def test_check_metrics_due_reaps_stale_active_job_and_dispatches_replacement(
             scan_config_id=config.id,
             status=ScanJobStatus.running.value,
             started_at=(
-                datetime.now(UTC)
-                - metrics.STALE_ACTIVE_SCAN_JOB_TIMEOUT
-                - timedelta(minutes=5)
+                datetime.now(UTC) - metrics.STALE_ACTIVE_SCAN_JOB_TIMEOUT - timedelta(minutes=5)
             ),
         )
         session.add(stale_job)
@@ -356,6 +354,240 @@ def test_collect_metrics_reuses_existing_pending_job(
     assert jobs[0].result_summary["columns_analyzed"] == 1
 
 
+def test_collect_metrics_replaces_metric_rows_in_window(
+    sync_session_factory: sessionmaker[Session],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    with sync_session_factory() as session:
+        config = _create_scan_config(session, with_event_type=True)
+        assert config.event_type_id is not None
+        login_event = Event(
+            id=uuid.uuid4(),
+            project_id=config.project_id,
+            event_type_id=config.event_type_id,
+            name="event_name=Login",
+            description="",
+            implemented=True,
+            reviewed=True,
+            archived=False,
+        )
+        stale_event = Event(
+            id=uuid.uuid4(),
+            project_id=config.project_id,
+            event_type_id=config.event_type_id,
+            name="event_name=Old",
+            description="",
+            implemented=True,
+            reviewed=True,
+            archived=False,
+        )
+        bucket = datetime(2026, 1, 1, 10)
+        session.add_all(
+            [
+                login_event,
+                stale_event,
+                EventMetric(
+                    id=uuid.uuid4(),
+                    scan_config_id=config.id,
+                    event_id=login_event.id,
+                    event_type_id=None,
+                    bucket=bucket,
+                    count=1,
+                ),
+                EventMetric(
+                    id=uuid.uuid4(),
+                    scan_config_id=config.id,
+                    event_id=stale_event.id,
+                    event_type_id=None,
+                    bucket=bucket,
+                    count=99,
+                ),
+                EventMetric(
+                    id=uuid.uuid4(),
+                    scan_config_id=config.id,
+                    event_id=None,
+                    event_type_id=config.event_type_id,
+                    bucket=bucket,
+                    count=100,
+                ),
+            ]
+        )
+        session.commit()
+        config_id = str(config.id)
+        login_event_id = login_event.id
+        stale_event_id = stale_event.id
+        event_type_id = config.event_type_id
+
+    class FakeAdapter:
+        def test_connection(self) -> bool:
+            return True
+
+        def get_columns(self, base_query: str) -> list[ColumnInfo]:
+            return [
+                ColumnInfo(name="time", type_name="DateTime"),
+                ColumnInfo(name="event_name", type_name="String"),
+            ]
+
+        def get_time_bucketed_counts(
+            self,
+            base_query: str,
+            time_column: str,
+            ch_interval: str,
+            regular_columns: list[str],
+            json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
+            time_from: datetime,
+            time_to: datetime,
+            limit: int = 100000,
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            return (["event_name"], [], [(datetime(2026, 1, 1, 10), "Login", 12)])
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(metrics, "_get_sync_session", sync_session_factory)
+    monkeypatch.setattr(metrics, "_build_adapter", lambda ds: FakeAdapter())
+    monkeypatch.setattr(
+        metrics,
+        "_resolve_collection_window",
+        lambda *args, **kwargs: (datetime(2026, 1, 1, 10), datetime(2026, 1, 1, 11), False),
+    )
+    monkeypatch.setattr(metrics, "analyze_cardinality", lambda *args, **kwargs: object())
+
+    def fake_generate_events(*args: object, **kwargs: object) -> GenerationResult:
+        with sync_session_factory() as session:
+            persisted_event = session.get(Event, login_event_id)
+            assert persisted_event is not None
+            return GenerationResult(
+                columns_analyzed=1,
+                col_meta={"event_name": {"is_json": False, "is_low": True}},
+                events_by_name={"event_name=Login": persisted_event},
+            )
+
+    monkeypatch.setattr(metrics, "generate_events", fake_generate_events)
+
+    result = metrics.collect_metrics.run(config_id)
+
+    assert result["metrics_deleted"] == 3
+    assert result["event_metrics"] == 1
+    assert result["type_metrics"] == 1
+
+    with sync_session_factory() as session:
+        stale_metric = session.execute(
+            select(EventMetric).where(EventMetric.event_id == stale_event_id)
+        ).scalar_one_or_none()
+        assert stale_metric is None
+        login_metric = session.execute(
+            select(EventMetric).where(EventMetric.event_id == login_event_id)
+        ).scalar_one()
+        assert login_metric.count == 12
+        type_metric = session.execute(
+            select(EventMetric).where(EventMetric.event_type_id == event_type_id)
+        ).scalar_one()
+        assert type_metric.count == 12
+
+
+def test_collect_metrics_rolls_back_metric_delete_when_job_fails(
+    sync_session_factory: sessionmaker[Session],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    with sync_session_factory() as session:
+        config = _create_scan_config(session, with_event_type=True)
+        assert config.event_type_id is not None
+        event = Event(
+            id=uuid.uuid4(),
+            project_id=config.project_id,
+            event_type_id=config.event_type_id,
+            name="event_name=Login",
+            description="",
+            implemented=True,
+            reviewed=True,
+            archived=False,
+        )
+        metric = EventMetric(
+            id=uuid.uuid4(),
+            scan_config_id=config.id,
+            event_id=event.id,
+            event_type_id=None,
+            bucket=datetime(2026, 1, 1, 10),
+            count=9,
+        )
+        job = ScanJob(
+            id=uuid.uuid4(),
+            scan_config_id=config.id,
+            status=ScanJobStatus.pending.value,
+        )
+        session.add_all([event, metric, job])
+        session.commit()
+        config_id = str(config.id)
+        event_id = event.id
+        job_id = str(job.id)
+
+    class FakeAdapter:
+        def test_connection(self) -> bool:
+            return True
+
+        def get_columns(self, base_query: str) -> list[ColumnInfo]:
+            return [
+                ColumnInfo(name="time", type_name="DateTime"),
+                ColumnInfo(name="event_name", type_name="String"),
+            ]
+
+        def get_time_bucketed_counts(
+            self,
+            base_query: str,
+            time_column: str,
+            ch_interval: str,
+            regular_columns: list[str],
+            json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
+            time_from: datetime,
+            time_to: datetime,
+            limit: int = 100000,
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            return (["event_name"], [], [(datetime(2026, 1, 1, 10), "Login", 12)])
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(metrics, "_get_sync_session", sync_session_factory)
+    monkeypatch.setattr(metrics, "_build_adapter", lambda ds: FakeAdapter())
+    monkeypatch.setattr(
+        metrics,
+        "_resolve_collection_window",
+        lambda *args, **kwargs: (datetime(2026, 1, 1, 10), datetime(2026, 1, 1, 11), False),
+    )
+    monkeypatch.setattr(metrics, "analyze_cardinality", lambda *args, **kwargs: object())
+
+    def fake_generate_events(*args: object, **kwargs: object) -> GenerationResult:
+        with sync_session_factory() as session:
+            persisted_event = session.get(Event, event_id)
+            assert persisted_event is not None
+            return GenerationResult(
+                columns_analyzed=1,
+                col_meta={"event_name": {"is_json": False, "is_low": True}},
+                events_by_name={"event_name=Login": persisted_event},
+            )
+
+    def fail_upsert(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("upsert failed")
+
+    monkeypatch.setattr(metrics, "generate_events", fake_generate_events)
+    monkeypatch.setattr(metrics, "_upsert_event_metrics_rows", fail_upsert)
+
+    with pytest.raises(RuntimeError, match="upsert failed"):
+        metrics.collect_metrics.run(config_id, job_id)
+
+    with sync_session_factory() as session:
+        persisted_metric = session.execute(
+            select(EventMetric).where(EventMetric.event_id == event_id)
+        ).scalar_one()
+        assert persisted_metric.count == 9
+        persisted_job = session.get(ScanJob, uuid.UUID(job_id))
+        assert persisted_job is not None
+        assert persisted_job.status == ScanJobStatus.failed.value
+
+
 def test_collect_metrics_recalculates_and_clears_metric_anomalies(
     sync_session_factory: sessionmaker[Session],
     monkeypatch: MonkeyPatch,
@@ -434,6 +666,7 @@ def test_collect_metrics_recalculates_and_clears_metric_anomalies(
     repeated_result = metrics.collect_metrics.run(config_id)
     assert repeated_result["anomalies_detected"] == 3
     assert repeated_result["signals_added"] == 0
+    assert repeated_result["signals_removed"] == 0
 
     FakeAdapter.rows = [
         (datetime(2026, 1, 1, 8), "Login", 10),
@@ -443,6 +676,7 @@ def test_collect_metrics_recalculates_and_clears_metric_anomalies(
     second_result = metrics.collect_metrics.run(config_id)
     assert second_result["anomalies_detected"] == 0
     assert second_result["signals_added"] == 0
+    assert second_result["signals_removed"] == 3
 
     with sync_session_factory() as session:
         anomalies = session.execute(select(MetricAnomaly)).scalars().all()

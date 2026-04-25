@@ -22,6 +22,7 @@ from tripl.schemas.scan_config import (
     ScanConfigPreviewRequest,
     ScanConfigPreviewResponse,
     ScanConfigUpdate,
+    ScanMetricsReplayRequest,
     ScanPreviewColumnResponse,
     ScanPreviewJsonColumnResponse,
     ScanPreviewJsonPathResponse,
@@ -40,9 +41,7 @@ async def _get_project_id(session: AsyncSession, slug: str) -> uuid.UUID:
 
 
 async def _verify_data_source(session: AsyncSession, ds_id: uuid.UUID) -> DataSource:
-    result = await session.execute(
-        select(DataSource).where(DataSource.id == ds_id)
-    )
+    result = await session.execute(select(DataSource).where(DataSource.id == ds_id))
     ds = result.scalar_one_or_none()
     if ds is None:
         raise HTTPException(status_code=404, detail="Data source not found")
@@ -154,9 +153,7 @@ def _select_diverse_preview_rows(
 
         chosen_indices.append(best_index)
         seen_features.update(
-            feature
-            for feature in row_features[best_index]
-            if feature[0] in eligible_feature_names
+            feature for feature in row_features[best_index] if feature[0] in eligible_feature_names
         )
         remaining_indices.remove(best_index)
 
@@ -184,9 +181,7 @@ async def list_scan_configs(session: AsyncSession, slug: str) -> list[ScanConfig
     return list(result.scalars().all())
 
 
-async def get_scan_config(
-    session: AsyncSession, slug: str, scan_id: uuid.UUID
-) -> ScanConfig:
+async def get_scan_config(session: AsyncSession, slug: str, scan_id: uuid.UUID) -> ScanConfig:
     project_id = await _get_project_id(session, slug)
     result = await session.execute(
         select(ScanConfig).where(ScanConfig.id == scan_id, ScanConfig.project_id == project_id)
@@ -260,10 +255,7 @@ async def preview_scan_config(
         )
 
         sampled_rows = [
-            {
-                name: value
-                for name, value in zip(row_column_names, row, strict=False)
-            }
+            {name: value for name, value in zip(row_column_names, row, strict=False)}
             for row in row_values
         ]
         raw_rows = _select_diverse_preview_rows(columns, sampled_rows, limit=data.limit)
@@ -331,17 +323,13 @@ async def preview_scan_config(
             adapter.close()
 
 
-async def delete_scan_config(
-    session: AsyncSession, slug: str, scan_id: uuid.UUID
-) -> None:
+async def delete_scan_config(session: AsyncSession, slug: str, scan_id: uuid.UUID) -> None:
     config = await get_scan_config(session, slug, scan_id)
     await session.delete(config)
     await session.commit()
 
 
-async def trigger_scan(
-    session: AsyncSession, slug: str, scan_id: uuid.UUID
-) -> ScanJob:
+async def trigger_scan(session: AsyncSession, slug: str, scan_id: uuid.UUID) -> ScanJob:
     """Create a ScanJob and dispatch the Celery task."""
     config = await get_scan_config(session, slug, scan_id)
 
@@ -366,9 +354,46 @@ async def trigger_scan(
     return job
 
 
-async def list_scan_jobs(
-    session: AsyncSession, slug: str, scan_id: uuid.UUID
-) -> list[ScanJob]:
+async def trigger_metrics_replay(
+    session: AsyncSession,
+    slug: str,
+    scan_id: uuid.UUID,
+    data: ScanMetricsReplayRequest,
+) -> ScanJob:
+    """Create a ScanJob and dispatch metrics collection for an explicit window."""
+    config = await get_scan_config(session, slug, scan_id)
+    if not config.time_column or not config.interval:
+        raise HTTPException(
+            status_code=400,
+            detail="Scan config requires time_column and interval to replay metrics",
+        )
+
+    job = ScanJob(
+        scan_config_id=config.id,
+        status=ScanJobStatus.pending.value,
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    from tripl.worker.tasks.metrics import collect_metrics
+
+    try:
+        collect_metrics.delay(
+            str(config.id),
+            str(job.id),
+            data.time_from.isoformat(),
+            data.time_to.isoformat(),
+        )
+    except Exception:
+        job.status = ScanJobStatus.failed.value
+        job.error_message = "Failed to dispatch task to worker (broker unavailable)"
+        await session.commit()
+        await session.refresh(job)
+    return job
+
+
+async def list_scan_jobs(session: AsyncSession, slug: str, scan_id: uuid.UUID) -> list[ScanJob]:
     await get_scan_config(session, slug, scan_id)
     result = await session.execute(
         select(ScanJob).where(ScanJob.scan_config_id == scan_id).order_by(ScanJob.created_at.desc())

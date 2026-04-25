@@ -188,6 +188,125 @@ describe('ProjectSettingsPage', () => {
     expect(await screen.findByText('+1 alerts')).toBeInTheDocument()
   })
 
+  it('starts metrics replay for a selected scan period', async () => {
+    const replayBodies: unknown[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+
+      if (url.endsWith('/api/v1/data-sources')) {
+        return mockJsonResponse([
+          {
+            id: 'ds-1',
+            name: 'Main DS',
+            db_type: 'clickhouse',
+            host: 'localhost',
+            port: 8123,
+            database_name: 'default',
+            username: 'default',
+            password_set: false,
+            extra_params: null,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          },
+        ])
+      }
+
+      if (url.endsWith('/api/v1/projects/demo/event-types')) {
+        return mockJsonResponse([
+          {
+            id: 'type-1',
+            project_id: 'project-1',
+            name: 'page',
+            display_name: 'Page',
+            description: '',
+            color: '#0ea5e9',
+            order: 0,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            field_definitions: [],
+          },
+        ])
+      }
+
+      if (url.endsWith('/api/v1/projects/demo/scans') && (!init || !init.method || init.method === 'GET')) {
+        return mockJsonResponse([
+          {
+            id: 'scan-1',
+            data_source_id: 'ds-1',
+            project_id: 'project-1',
+            event_type_id: 'type-1',
+            name: 'Main scan',
+            base_query: 'SELECT * FROM analytics.events',
+            event_type_column: null,
+            time_column: 'created_at',
+            event_name_format: null,
+            json_value_paths: [],
+            cardinality_threshold: 100,
+            interval: '1h',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+          },
+        ])
+      }
+
+      if (url.endsWith('/api/v1/projects/demo/scans/scan-1/jobs')) {
+        return mockJsonResponse([])
+      }
+
+      if (url.endsWith('/api/v1/projects/demo/scans/scan-1/metrics/replay') && init?.method === 'POST') {
+        replayBodies.push(JSON.parse(String(init.body)))
+        return mockJsonResponse({
+          id: 'job-2',
+          scan_config_id: 'scan-1',
+          status: 'pending',
+          started_at: null,
+          completed_at: null,
+          result_summary: null,
+          error_message: null,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        })
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/p/demo/settings/scans']}>
+          <Routes>
+            <Route path="/p/:slug/settings/:tab" element={<ProjectSettingsPage />} />
+            <Route path="/p/:slug/settings" element={<ProjectSettingsPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    fireEvent.click(await screen.findByText('Main scan'))
+    fireEvent.click(await screen.findByRole('button', { name: /Replay Period/i }))
+
+    const inputs = document.querySelectorAll('input[type="datetime-local"]')
+    expect(inputs).toHaveLength(2)
+    fireEvent.change(inputs[0], { target: { value: '2026-04-01T00:00' } })
+    fireEvent.change(inputs[1], { target: { value: '2026-04-02T00:00' } })
+
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /Replay Period/i }))
+
+    await waitFor(() => {
+      expect(replayBodies).toEqual([
+        {
+          time_from: new Date('2026-04-01T00:00').toISOString(),
+          time_to: new Date('2026-04-02T00:00').toISOString(),
+        },
+      ])
+    })
+  })
+
   it('renders alert destinations on the alerting tab', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const url = String(input)

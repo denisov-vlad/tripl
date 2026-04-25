@@ -45,6 +45,11 @@ export const scansApi = {
   run: (slug: string, scanId: string) =>
     api.post<ScanJob>(`/projects/${slug}/scans/${scanId}/run`, {}),
 
+  replayMetrics: (slug: string, scanId: string, data: {
+    time_from: string
+    time_to: string
+  }) => api.post<ScanJob>(`/projects/${slug}/scans/${scanId}/metrics/replay`, data),
+
   listJobs: (slug: string, scanId: string) =>
     api.get<ScanJob[]>(`/projects/${slug}/scans/${scanId}/jobs`),
 

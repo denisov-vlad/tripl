@@ -9,6 +9,7 @@ from tripl.schemas.scan_config import (
     ScanConfigPreviewResponse,
     ScanConfigResponse,
     ScanConfigUpdate,
+    ScanMetricsReplayRequest,
 )
 from tripl.schemas.scan_job import ScanJobResponse
 from tripl.services import scan_service
@@ -20,14 +21,12 @@ router = APIRouter(
 
 
 @router.get("", response_model=list[ScanConfigResponse])
-async def list_scan_configs(session: SessionDep, slug: str):
+async def list_scan_configs(session: SessionDep, slug: str) -> object:
     return await scan_service.list_scan_configs(session, slug)
 
 
 @router.post("", response_model=ScanConfigResponse, status_code=201)
-async def create_scan_config(
-    session: SessionDep, slug: str, data: ScanConfigCreate
-):
+async def create_scan_config(session: SessionDep, slug: str, data: ScanConfigCreate) -> object:
     return await scan_service.create_scan_config(session, slug, data)
 
 
@@ -36,12 +35,12 @@ async def preview_scan_config(
     session: SessionDep,
     slug: str,
     data: ScanConfigPreviewRequest,
-):
+) -> object:
     return await scan_service.preview_scan_config(session, slug, data)
 
 
 @router.get("/{scan_id}", response_model=ScanConfigResponse)
-async def get_scan_config(session: SessionDep, slug: str, scan_id: uuid.UUID):
+async def get_scan_config(session: SessionDep, slug: str, scan_id: uuid.UUID) -> object:
     return await scan_service.get_scan_config(session, slug, scan_id)
 
 
@@ -51,22 +50,32 @@ async def update_scan_config(
     slug: str,
     scan_id: uuid.UUID,
     data: ScanConfigUpdate,
-):
+) -> object:
     return await scan_service.update_scan_config(session, slug, scan_id, data)
 
 
 @router.delete("/{scan_id}", status_code=204)
-async def delete_scan_config(session: SessionDep, slug: str, scan_id: uuid.UUID):
+async def delete_scan_config(session: SessionDep, slug: str, scan_id: uuid.UUID) -> None:
     await scan_service.delete_scan_config(session, slug, scan_id)
 
 
 @router.post("/{scan_id}/run", response_model=ScanJobResponse, status_code=201)
-async def run_scan(session: SessionDep, slug: str, scan_id: uuid.UUID):
+async def run_scan(session: SessionDep, slug: str, scan_id: uuid.UUID) -> object:
     return await scan_service.trigger_scan(session, slug, scan_id)
 
 
+@router.post("/{scan_id}/metrics/replay", response_model=ScanJobResponse, status_code=201)
+async def replay_scan_metrics(
+    session: SessionDep,
+    slug: str,
+    scan_id: uuid.UUID,
+    data: ScanMetricsReplayRequest,
+) -> object:
+    return await scan_service.trigger_metrics_replay(session, slug, scan_id, data)
+
+
 @router.get("/{scan_id}/jobs", response_model=list[ScanJobResponse])
-async def list_scan_jobs(session: SessionDep, slug: str, scan_id: uuid.UUID):
+async def list_scan_jobs(session: SessionDep, slug: str, scan_id: uuid.UUID) -> object:
     return await scan_service.list_scan_jobs(session, slug, scan_id)
 
 
@@ -76,5 +85,5 @@ async def get_scan_job(
     slug: str,
     scan_id: uuid.UUID,
     job_id: uuid.UUID,
-):
+) -> object:
     return await scan_service.get_scan_job(session, slug, scan_id, job_id)

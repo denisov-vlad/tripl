@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tripl.json_paths import normalize_json_value_paths
 
@@ -99,3 +99,21 @@ class ScanConfigPreviewResponse(BaseModel):
     columns: list[ScanPreviewColumnResponse]
     rows: list[dict[str, object]]
     json_columns: list[ScanPreviewJsonColumnResponse]
+
+
+class ScanMetricsReplayRequest(BaseModel):
+    time_from: datetime
+    time_to: datetime
+
+    @field_validator("time_from", "time_to")
+    @classmethod
+    def normalize_datetime(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> "ScanMetricsReplayRequest":
+        if self.time_from >= self.time_to:
+            raise ValueError("time_from must be earlier than time_to")
+        return self

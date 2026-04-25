@@ -1,12 +1,17 @@
 export interface ScanJobResultSummary {
+  mode?: 'metrics_collection' | 'metrics_replay'
+  time_from?: string
+  time_to?: string
   events_created?: number
   events_skipped?: number
   variables_created?: number
   columns_analyzed?: number
   event_metrics?: number
   type_metrics?: number
+  metrics_deleted?: number
   anomalies_detected?: number
   signals_added?: number
+  signals_removed?: number
   alerts_queued?: number
   details?: string[]
 }

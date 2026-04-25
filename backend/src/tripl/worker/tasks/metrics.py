@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session
 
 from tripl import cache
 from tripl.config import settings
-from tripl.worker.db import SyncSessionLocal
 from tripl.json_paths import (
     build_json_value,
     decode_json_path_value,
@@ -64,6 +63,7 @@ from tripl.worker.analyzers.event_generator import (
     generate_events,
 )
 from tripl.worker.celery_app import celery_app
+from tripl.worker.db import SyncSessionLocal
 from tripl.worker.tasks.alerts import send_alert_delivery
 from tripl.worker.utils.intervals import get_interval
 
@@ -110,10 +110,67 @@ def _build_adapter(ds: DataSource) -> BaseAdapter:
 def _floor_to_interval(dt: datetime, delta: timedelta) -> datetime:
     """Floor a datetime to the nearest interval boundary."""
     epoch = datetime(2000, 1, 1, tzinfo=UTC)
+    if dt.tzinfo is None:
+        epoch = epoch.replace(tzinfo=None)
     total_seconds = delta.total_seconds()
     elapsed = (dt - epoch).total_seconds()
     floored = int(elapsed // total_seconds) * total_seconds
     return epoch + timedelta(seconds=floored)
+
+
+def _ceil_to_interval(dt: datetime, delta: timedelta) -> datetime:
+    floored = _floor_to_interval(dt, delta)
+    if floored == dt:
+        return floored
+    return floored + delta
+
+
+def _parse_task_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _resolve_collection_window(
+    session: Session,
+    *,
+    config: ScanConfig,
+    delta: timedelta,
+    manual_time_from: str | None,
+    manual_time_to: str | None,
+) -> tuple[datetime, datetime, bool]:
+    if (manual_time_from is None) != (manual_time_to is None):
+        msg = "Both time_from and time_to are required for metrics replay"
+        raise ValueError(msg)
+
+    now = datetime.now(UTC)
+    time_to = _floor_to_interval(now, delta)
+    if manual_time_from is not None and manual_time_to is not None:
+        requested_from = _parse_task_datetime(manual_time_from)
+        requested_to = _parse_task_datetime(manual_time_to)
+        if requested_from >= requested_to:
+            msg = "time_from must be earlier than time_to"
+            raise ValueError(msg)
+
+        effective_from = _floor_to_interval(requested_from, delta)
+        effective_to = _ceil_to_interval(requested_to, delta)
+        latest_complete_boundary = _floor_to_interval(now, delta)
+        if effective_to > latest_complete_boundary:
+            msg = "time_to must not include the current incomplete interval"
+            raise ValueError(msg)
+        if effective_from >= effective_to:
+            msg = "Replay window does not include a complete interval"
+            raise ValueError(msg)
+        return effective_from, effective_to, True
+
+    last_bucket = session.execute(
+        select(sa_func.max(EventMetric.bucket)).where(
+            EventMetric.scan_config_id == config.id,
+        )
+    ).scalar()
+    time_from = last_bucket - delta if last_bucket is not None else time_to - delta * 30
+    return time_from, time_to, False
 
 
 def _get_active_scan_job(session: Session, scan_config_id: uuid.UUID) -> ScanJob | None:
@@ -227,8 +284,7 @@ def _build_event_name_from_row(
     """Build event name from a CH row using col_meta (same logic as generate_events)."""
     kwargs: dict[str, str] = {}
     json_value_index = {
-        name: n_reg + len(json_index) + idx
-        for idx, name in enumerate(json_value_names)
+        name: n_reg + len(json_index) + idx for idx, name in enumerate(json_value_names)
     }
 
     for col_name, meta in col_meta.items():
@@ -242,9 +298,12 @@ def _build_event_name_from_row(
                     sorted_paths = sorted(str(p) for p in paths)
                 else:
                     sorted_paths = [str(paths)]
+                passthrough_paths = meta.get("json_passthrough_paths", [])
+                if not isinstance(passthrough_paths, list):
+                    passthrough_paths = []
                 preserved_values = {
                     full_path: decode_json_path_value(data_row[json_value_index[full_path]])
-                    for full_path in meta.get("json_passthrough_paths", [])
+                    for full_path in passthrough_paths
                     if full_path in json_value_index and full_path.startswith(f"{col_name}.")
                 }
                 value = build_json_value(
@@ -429,8 +488,7 @@ def _collect_scope_ids(
     ids = {
         value
         for value in session.execute(
-            select(metric_column)
-            .where(
+            select(metric_column).where(
                 EventMetric.scan_config_id == scan_config_id,
                 metric_column.is_not(None),
                 EventMetric.bucket >= history_from,
@@ -442,8 +500,7 @@ def _collect_scope_ids(
     ids.update(
         value
         for value in session.execute(
-            select(anomaly_column)
-            .where(
+            select(anomaly_column).where(
                 MetricAnomaly.scan_config_id == scan_config_id,
                 MetricAnomaly.scope_type == scope_type,
                 anomaly_column.is_not(None),
@@ -643,9 +700,7 @@ def _build_alert_scope_names(
     }
 
     event_type_ids = {
-        anomaly.event_type_id
-        for anomaly in anomalies
-        if anomaly.event_type_id is not None
+        anomaly.event_type_id for anomaly in anomalies if anomaly.event_type_id is not None
     }
     if event_type_ids:
         for event_type_id, display_name, name in session.execute(
@@ -672,7 +727,7 @@ def _load_enabled_alert_destinations(
     session: Session,
     project_id: uuid.UUID,
 ) -> list[AlertDestination]:
-    return (
+    return list(
         session.execute(
             select(AlertDestination)
             .where(
@@ -715,10 +770,7 @@ def _rule_matches_anomaly(
         return False
 
     if anomaly.scope_type == SCOPE_EVENT_TYPE:
-        excluded_event_type_ids = {
-            item.event_type_id
-            for item in rule.excluded_event_types
-        }
+        excluded_event_type_ids = {item.event_type_id for item in rule.excluded_event_types}
         if anomaly.event_type_id in excluded_event_type_ids:
             return False
     if anomaly.scope_type == SCOPE_EVENT:
@@ -810,22 +862,21 @@ def _prepare_alert_deliveries(
                 if _rule_matches_anomaly(rule, anomaly)
             ]
             matched_keys = {
-                (anomaly.scope_type, anomaly.scope_ref)
-                for anomaly in matched_anomalies
+                (anomaly.scope_type, anomaly.scope_ref) for anomaly in matched_anomalies
             }
 
-            for key, state in existing_states.items():
-                if state.is_active and key not in matched_keys:
-                    state.is_active = False
-                    state.closed_at = now
+            for key, existing_state in existing_states.items():
+                if existing_state.is_active and key not in matched_keys:
+                    existing_state.is_active = False
+                    existing_state.closed_at = now
 
             anomalies_to_send: list[MetricAnomaly] = []
             for anomaly in matched_anomalies:
                 key = (anomaly.scope_type, anomaly.scope_ref)
-                state = existing_states.get(key)
+                current_state = existing_states.get(key)
                 should_send = False
-                if state is None:
-                    state = AlertRuleState(
+                if current_state is None:
+                    current_state = AlertRuleState(
                         rule_id=rule.id,
                         scan_config_id=config.id,
                         scope_type=anomaly.scope_type,
@@ -835,23 +886,28 @@ def _prepare_alert_deliveries(
                         closed_at=None,
                         last_anomaly_bucket=anomaly.bucket,
                     )
-                    session.add(state)
-                    existing_states[key] = state
+                    session.add(current_state)
+                    existing_states[key] = current_state
                     should_send = True
                 else:
-                    if not state.is_active:
-                        state.is_active = True
-                        state.opened_at = now
-                        state.closed_at = None
+                    if not current_state.is_active:
+                        current_state.is_active = True
+                        current_state.opened_at = now
+                        current_state.closed_at = None
                         should_send = True
-                    elif state.last_notified_at is None or (
-                        state.last_anomaly_bucket is None
-                        or anomaly.bucket > state.last_anomaly_bucket
-                    ) and now - state.last_notified_at >= timedelta(minutes=rule.cooldown_minutes):
+                    elif (
+                        current_state.last_notified_at is None
+                        or (
+                            current_state.last_anomaly_bucket is None
+                            or anomaly.bucket > current_state.last_anomaly_bucket
+                        )
+                        and now - current_state.last_notified_at
+                        >= timedelta(minutes=rule.cooldown_minutes)
+                    ):
                         should_send = True
-                    state.last_anomaly_bucket = max(
+                    current_state.last_anomaly_bucket = max(
                         anomaly.bucket,
-                        state.last_anomaly_bucket or anomaly.bucket,
+                        current_state.last_anomaly_bucket or anomaly.bucket,
                     )
                 if should_send:
                     anomalies_to_send.append(anomaly)
@@ -927,9 +983,7 @@ def _recalculate_metric_anomalies(
 ) -> int:
     project_settings = _get_project_anomaly_settings(session, config.project_id)
     if project_settings is None or not project_settings.anomaly_detection_enabled:
-        session.execute(
-            delete(MetricAnomaly).where(MetricAnomaly.scan_config_id == config.id)
-        )
+        session.execute(delete(MetricAnomaly).where(MetricAnomaly.scan_config_id == config.id))
         session.flush()
         return 0
 
@@ -937,9 +991,7 @@ def _recalculate_metric_anomalies(
         return 0
 
     interval_spec = get_interval(config.interval)
-    history_from = (
-        evaluation_start - interval_spec.delta * project_settings.baseline_window_buckets
-    )
+    history_from = evaluation_start - interval_spec.delta * project_settings.baseline_window_buckets
     settings = _build_anomaly_settings(project_settings)
     anomalies_detected = 0
 
@@ -1083,22 +1135,40 @@ def _upsert_event_metrics_rows(
         return
 
     if session.bind is not None and session.bind.dialect.name == "sqlite":
-        stmt = sqlite_insert(EventMetric).values(rows)
-        stmt = stmt.on_conflict_do_update(
+        sqlite_stmt = sqlite_insert(EventMetric).values(rows)
+        sqlite_stmt = sqlite_stmt.on_conflict_do_update(
             index_elements=["scan_config_id", "event_id", "bucket"]
             if constraint == "uq_event_metric_config_event_bucket"
             else ["scan_config_id", "event_type_id", "bucket"],
-            set_={"count": stmt.excluded.count},
+            set_={"count": sqlite_stmt.excluded.count},
         )
-        session.execute(stmt)
+        session.execute(sqlite_stmt)
         return
 
-    stmt = pg_insert(EventMetric).values(rows)
-    stmt = stmt.on_conflict_do_update(
+    pg_stmt = pg_insert(EventMetric).values(rows)
+    pg_stmt = pg_stmt.on_conflict_do_update(
         constraint=constraint,
-        set_={"count": stmt.excluded.count},
+        set_={"count": pg_stmt.excluded.count},
     )
-    session.execute(stmt)
+    session.execute(pg_stmt)
+
+
+def _delete_event_metrics_window(
+    session: Session,
+    *,
+    scan_config_id: uuid.UUID,
+    time_from: datetime,
+    time_to: datetime,
+) -> int:
+    result = session.execute(
+        delete(EventMetric).where(
+            EventMetric.scan_config_id == scan_config_id,
+            EventMetric.bucket >= time_from,
+            EventMetric.bucket < time_to,
+        )
+    )
+    rowcount = getattr(result, "rowcount", 0)
+    return int(rowcount or 0)
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]
@@ -1110,6 +1180,8 @@ def collect_metrics(
     self: object,
     scan_config_id: str,
     job_id: str | None = None,
+    time_from: str | None = None,
+    time_to: str | None = None,
 ) -> dict[str, object]:
     """Collect time-bucketed event counts from ClickHouse and store in event_metrics.
 
@@ -1264,20 +1336,17 @@ def collect_metrics(
         assert config.interval is not None
         interval_spec = get_interval(config.interval)
         delta = interval_spec.delta
-        now = datetime.now(UTC)
-        time_to = _floor_to_interval(now, delta)
-
-        last_bucket = session.execute(
-            select(sa_func.max(EventMetric.bucket)).where(
-                EventMetric.scan_config_id == config.id,
-            )
-        ).scalar()
-
-        time_from = last_bucket - delta if last_bucket is not None else time_to - delta * 30
+        time_from_dt, time_to_dt, is_replay = _resolve_collection_window(
+            session,
+            config=config,
+            delta=delta,
+            manual_time_from=time_from,
+            manual_time_to=time_to,
+        )
 
         logger.info(
-            f"Collecting metrics: {time_from.isoformat()} to {time_to.isoformat()}, "
-            f"interval={config.interval}"
+            f"Collecting metrics: {time_from_dt.isoformat()} to {time_to_dt.isoformat()}, "
+            f"interval={config.interval}, replay={is_replay}"
         )
 
         # Split columns for the CH query (same split as cardinality.py uses)
@@ -1291,10 +1360,17 @@ def collect_metrics(
             regular_cols,
             json_cols,
             json_value_path_map,
-            time_from,
-            time_to,
+            time_from_dt,
+            time_to_dt,
         )
         logger.info(f"Got {len(rows)} bucketed rows from ClickHouse")
+
+        metrics_deleted = _delete_event_metrics_window(
+            session,
+            scan_config_id=config.id,
+            time_from=time_from_dt,
+            time_to=time_to_dt,
+        )
 
         # Collect totals from Phase 1 for result_summary
         total_created = 0
@@ -1319,26 +1395,31 @@ def collect_metrics(
             anomalies_detected = _recalculate_metric_anomalies(
                 session,
                 config,
-                evaluation_start=time_from,
-                evaluation_end=time_to,
+                evaluation_start=time_from_dt,
+                evaluation_end=time_to_dt,
             )
             delivery_ids = _prepare_alert_deliveries(
                 session,
                 config,
                 scan_job_id=job.id if job else None,
             )
-            signals_added = len(
-                _get_visible_signal_scope_keys(session, config.id) - visible_signals_before
-            )
-            result_summary = {
+            visible_signals_after = _get_visible_signal_scope_keys(session, config.id)
+            signals_added = len(visible_signals_after - visible_signals_before)
+            signals_removed = len(visible_signals_before - visible_signals_after)
+            result_summary: dict[str, object] = {
+                "mode": "metrics_replay" if is_replay else "metrics_collection",
+                "time_from": time_from_dt.isoformat(),
+                "time_to": time_to_dt.isoformat(),
                 "events_created": total_created,
                 "events_skipped": total_skipped,
                 "variables_created": total_vars,
                 "columns_analyzed": total_cols,
                 "event_metrics": 0,
                 "type_metrics": 0,
+                "metrics_deleted": metrics_deleted,
                 "anomalies_detected": anomalies_detected,
                 "signals_added": signals_added,
+                "signals_removed": signals_removed,
                 "alerts_queued": len(delivery_ids),
                 "details": all_details,
             }
@@ -1347,6 +1428,8 @@ def collect_metrics(
                 job.completed_at = datetime.now(UTC)
                 job.result_summary = result_summary
             session.commit()
+            cache.sync_delete_prefix(cache.prefix_signals())
+            cache.sync_delete_prefix(cache.prefix_projects())
             for delivery_id in delivery_ids:
                 send_alert_delivery.delay(str(delivery_id))
             return result_summary
@@ -1422,7 +1505,7 @@ def collect_metrics(
                 type_agg[key] = type_agg.get(key, 0) + cnt
 
         # Build metrics rows for UPSERT
-        event_rows = [
+        event_rows: list[dict[str, object]] = [
             {
                 "id": uuid.uuid4(),
                 "scan_config_id": sc_id,
@@ -1433,7 +1516,7 @@ def collect_metrics(
             }
             for (sc_id, ev_id, bucket), total in event_agg.items()
         ]
-        type_rows = [
+        type_rows: list[dict[str, object]] = [
             {
                 "id": uuid.uuid4(),
                 "scan_config_id": sc_id,
@@ -1464,27 +1547,32 @@ def collect_metrics(
         anomalies_detected = _recalculate_metric_anomalies(
             session,
             config,
-            evaluation_start=time_from,
-            evaluation_end=time_to,
+            evaluation_start=time_from_dt,
+            evaluation_end=time_to_dt,
         )
         delivery_ids = _prepare_alert_deliveries(
             session,
             config,
             scan_job_id=job.id if job else None,
         )
-        signals_added = len(
-            _get_visible_signal_scope_keys(session, config.id) - visible_signals_before
-        )
+        visible_signals_after = _get_visible_signal_scope_keys(session, config.id)
+        signals_added = len(visible_signals_after - visible_signals_before)
+        signals_removed = len(visible_signals_before - visible_signals_after)
 
         result_summary = {
+            "mode": "metrics_replay" if is_replay else "metrics_collection",
+            "time_from": time_from_dt.isoformat(),
+            "time_to": time_to_dt.isoformat(),
             "events_created": total_created,
             "events_skipped": total_skipped,
             "variables_created": total_vars,
             "columns_analyzed": total_cols,
             "event_metrics": n_ev,
             "type_metrics": n_tp,
+            "metrics_deleted": metrics_deleted,
             "anomalies_detected": anomalies_detected,
             "signals_added": signals_added,
+            "signals_removed": signals_removed,
             "alerts_queued": len(delivery_ids),
             "details": all_details,
         }
@@ -1508,6 +1596,7 @@ def collect_metrics(
         logger.exception(f"Metrics collection failed for {scan_config_id}")
         if job:
             try:
+                session.rollback()
                 job.status = ScanJobStatus.failed.value
                 job.completed_at = datetime.now(UTC)
                 job.error_message = str(exc)
