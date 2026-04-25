@@ -24,7 +24,7 @@ class BaseAdapter(abc.ABC):
         self,
         base_query: str,
         limit: int = 10,
-    ) -> tuple[list[str], list[tuple]]: ...
+    ) -> tuple[list[str], list[tuple[object, ...]]]: ...
 
     @abc.abstractmethod
     def get_full_breakdown(
@@ -34,7 +34,7 @@ class BaseAdapter(abc.ABC):
         json_columns: list[str],
         json_value_paths: dict[str, list[str]] | None = None,
         limit: int = 50000,
-    ) -> tuple[list[str], list[str], list[str], list[tuple]]:
+    ) -> tuple[list[str], list[str], list[str], list[tuple[object, ...]]]:
         """Single GROUP BY ALL query that returns everything.
 
         Builds: SELECT reg1, reg2, ..., JSONAllPaths(j1), ...,
@@ -58,7 +58,7 @@ class BaseAdapter(abc.ABC):
         time_from: datetime,
         time_to: datetime,
         limit: int = 100000,
-    ) -> tuple[list[str], list[str], list[tuple]]:
+    ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
         """Time-bucketed GROUP BY ALL, like get_full_breakdown but with a time bucket.
 
         Builds: SELECT toStartOfInterval(time_col, INTERVAL ...) AS _bucket,
@@ -68,6 +68,59 @@ class BaseAdapter(abc.ABC):
 
         Returns (column_names, json_value_names, rows).
         Row layout: (_bucket, col1_val, col2_val, ..., keep_json_value1, ..., count).
+        """
+        ...
+
+    @abc.abstractmethod
+    def get_time_bucketed_breakdown_counts(
+        self,
+        base_query: str,
+        time_column: str,
+        ch_interval: str,
+        breakdown_column: str,
+        regular_columns: list[str],
+        json_columns: list[str],
+        json_value_paths: dict[str, list[str]] | None,
+        time_from: datetime,
+        time_to: datetime,
+        values_limit: int | None = None,
+        limit: int = 100000,
+    ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+        """Time-bucketed counts grouped by one breakdown column in the database.
+
+        Returns (column_names, json_value_names, rows).
+        Row layout: (
+            _bucket, _breakdown_value, _is_other,
+            col1_val, col2_val, ..., keep_json_value1, ..., count
+        ).
+        """
+        ...
+
+    @abc.abstractmethod
+    def get_time_bucketed_breakdown_counts_multi(
+        self,
+        base_query: str,
+        time_column: str,
+        ch_interval: str,
+        breakdown_columns: list[str],
+        regular_columns: list[str],
+        json_columns: list[str],
+        json_value_paths: dict[str, list[str]] | None,
+        time_from: datetime,
+        time_to: datetime,
+        values_limit: int | None = None,
+        limit: int = 100000,
+    ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+        """Time-bucketed counts for multiple independent breakdown columns.
+
+        Implementations should aggregate in the database. For ClickHouse this
+        uses GROUPING SETS so selected breakdown dimensions share one source scan.
+
+        Returns (column_names, json_value_names, rows).
+        Row layout: (
+            _bucket, _breakdown_column, _breakdown_value, _is_other,
+            col1_val, col2_val, ..., keep_json_value1, ..., count
+        ).
         """
         ...
 

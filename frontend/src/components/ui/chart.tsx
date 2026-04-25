@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, useMemo } from 'react'
 import {
   Area,
   Bar,
@@ -29,6 +29,18 @@ interface MiniMetricsChartProps {
   className?: string
   color?: string
   height?: number
+}
+
+interface MetricsMultiSeriesChartProps {
+  series: Array<{
+    label: string
+    data: EventMetricPoint[]
+    color?: string
+  }>
+  className?: string
+  height?: number
+  granularity?: MetricsGranularity
+  seriesLabel?: string
 }
 
 function formatTick(dateStr: string, granularity: MetricsGranularity) {
@@ -119,6 +131,41 @@ function CustomTooltip({
   )
 }
 
+function MultiSeriesTooltip({
+  active,
+  payload,
+  label,
+  granularity,
+  seriesLabel,
+}: {
+  active?: boolean
+  payload?: Array<{ value: number; dataKey?: string; color?: string; name?: string }>
+  label?: string | number
+  granularity: MetricsGranularity
+  seriesLabel: string
+}) {
+  if (!active || !payload?.length) return null
+  const visiblePayload = payload.filter(item => typeof item.value === 'number')
+  if (!visiblePayload.length) return null
+
+  return (
+    <div className="max-w-xs rounded-lg border bg-background px-3 py-2 shadow-md">
+      <p className="text-xs text-muted-foreground">{formatTooltipLabel(String(label ?? ''), granularity)}</p>
+      <div className="mt-1 space-y-1">
+        {visiblePayload.map(item => (
+          <div key={item.dataKey} className="flex items-center justify-between gap-4 text-xs">
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="truncate">{item.name}</span>
+            </span>
+            <span className="font-medium">{Number(item.value).toLocaleString()} {seriesLabel}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function MetricsChart({
   data,
   className,
@@ -189,6 +236,111 @@ export function MetricsChart({
             gradientId,
             mini: false,
           })}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+const MULTI_SERIES_COLORS = [
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  '#0f766e',
+  '#b45309',
+  '#be123c',
+]
+
+export function MetricsMultiSeriesChart({
+  series,
+  className,
+  height = 300,
+  granularity = 'hour',
+  seriesLabel = 'events',
+}: MetricsMultiSeriesChartProps) {
+  const chartSeries = useMemo(
+    () => series
+      .filter(item => item.data.length > 0)
+      .map((item, index) => ({
+        ...item,
+        key: `series_${index}`,
+        color: item.color ?? MULTI_SERIES_COLORS[index % MULTI_SERIES_COLORS.length],
+      })),
+    [series],
+  )
+  const chartData = useMemo(() => {
+    const rows = new Map<string, Record<string, string | number | boolean>>()
+    for (const item of chartSeries) {
+      for (const point of item.data) {
+        const row = rows.get(point.bucket) ?? { bucket: point.bucket }
+        row[item.key] = point.count
+        row[`${item.key}__anomaly`] = point.is_anomaly
+        rows.set(point.bucket, row)
+      }
+    }
+    return Array.from(rows.values()).sort((left, right) =>
+      String(left.bucket).localeCompare(String(right.bucket)),
+    )
+  }, [chartSeries])
+
+  if (!chartSeries.length || !chartData.length) {
+    return (
+      <div className={cn('flex items-center justify-center text-muted-foreground text-sm', className)} style={{ height }}>
+        No breakdown metrics available
+      </div>
+    )
+  }
+
+  return (
+    <div className={cn('w-full', className)} style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+          <XAxis
+            dataKey="bucket"
+            tickFormatter={value => formatTick(String(value), granularity)}
+            className="text-xs fill-muted-foreground"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+          />
+          <YAxis
+            tickFormatter={formatCount}
+            className="text-xs fill-muted-foreground"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            width={48}
+          />
+          <Tooltip content={<MultiSeriesTooltip granularity={granularity} seriesLabel={seriesLabel} />} />
+          {chartSeries.map(item => (
+            <Line
+              key={item.key}
+              type="monotone"
+              dataKey={item.key}
+              name={item.label}
+              stroke={item.color}
+              strokeWidth={2}
+              dot={(props: { cx?: number; cy?: number; payload?: Record<string, unknown> }) => {
+                if (!props.payload?.[`${item.key}__anomaly`]) return <></>
+                return (
+                  <circle
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={4}
+                    fill="var(--destructive)"
+                    stroke="var(--background)"
+                    strokeWidth={2}
+                    data-testid="anomaly-dot"
+                  />
+                )
+              }}
+              activeDot={{ r: 4, strokeWidth: 0 }}
+              connectNulls={false}
+            />
+          ))}
         </ComposedChart>
       </ResponsiveContainer>
     </div>

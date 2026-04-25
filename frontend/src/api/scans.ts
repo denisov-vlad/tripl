@@ -17,6 +17,8 @@ export const scansApi = {
     time_column?: string | null
     event_name_format?: string | null
     json_value_paths?: string[]
+    metric_breakdown_columns?: string[]
+    metric_breakdown_values_limit?: number | null
     cardinality_threshold?: number
     interval?: string | null
   }) => api.post<ScanConfig>(`/projects/${slug}/scans`, data),
@@ -35,6 +37,8 @@ export const scansApi = {
     time_column?: string | null
     event_name_format?: string | null
     json_value_paths?: string[]
+    metric_breakdown_columns?: string[]
+    metric_breakdown_values_limit?: number | null
     cardinality_threshold?: number
     interval?: string | null
   }) => api.patch<ScanConfig>(`/projects/${slug}/scans/${scanId}`, data),

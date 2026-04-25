@@ -16,8 +16,10 @@ from tripl.models.alert_rule import AlertRule
 from tripl.models.data_source import DataSource
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
+from tripl.models.event_metric_breakdown import EventMetricBreakdown
 from tripl.models.event_type import EventType
 from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.metric_breakdown_anomaly import MetricBreakdownAnomaly
 from tripl.models.project import Project
 from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
@@ -487,6 +489,207 @@ def test_collect_metrics_replaces_metric_rows_in_window(
         assert type_metric.count == 12
 
 
+def test_collect_metrics_uses_database_grouped_breakdown_rows(
+    sync_session_factory: sessionmaker[Session],
+    monkeypatch: MonkeyPatch,
+) -> None:
+    with sync_session_factory() as session:
+        config = _create_scan_config(session, with_event_type=True)
+        assert config.event_type_id is not None
+        config.metric_breakdown_columns = ["country", "device"]
+        config.metric_breakdown_values_limit = 2
+        login_event = Event(
+            id=uuid.uuid4(),
+            project_id=config.project_id,
+            event_type_id=config.event_type_id,
+            name="event_name=Login",
+            description="",
+            implemented=True,
+            reviewed=True,
+            archived=False,
+        )
+        stale_metric = EventMetricBreakdown(
+            id=uuid.uuid4(),
+            scan_config_id=config.id,
+            event_id=login_event.id,
+            event_type_id=None,
+            bucket=datetime(2026, 1, 1, 10),
+            breakdown_column="country",
+            breakdown_value="Old",
+            is_other=False,
+            count=99,
+        )
+        session.add_all([login_event, stale_metric])
+        session.commit()
+        config_id = str(config.id)
+        login_event_id = login_event.id
+        event_type_id = config.event_type_id
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.breakdown_calls: list[tuple[list[str], int | None]] = []
+
+        def test_connection(self) -> bool:
+            return True
+
+        def get_columns(self, base_query: str) -> list[ColumnInfo]:
+            return [
+                ColumnInfo(name="time", type_name="DateTime"),
+                ColumnInfo(name="event_name", type_name="String"),
+                ColumnInfo(name="country", type_name="String"),
+                ColumnInfo(name="device", type_name="String"),
+            ]
+
+        def get_time_bucketed_counts(
+            self,
+            base_query: str,
+            time_column: str,
+            ch_interval: str,
+            regular_columns: list[str],
+            json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
+            time_from: datetime,
+            time_to: datetime,
+            limit: int = 100000,
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            return (
+                ["event_name", "country", "device"],
+                [],
+                [(datetime(2026, 1, 1, 10), "Login", "US", "mobile", 30)],
+            )
+
+        def get_time_bucketed_breakdown_counts_multi(
+            self,
+            base_query: str,
+            time_column: str,
+            ch_interval: str,
+            breakdown_columns: list[str],
+            regular_columns: list[str],
+            json_columns: list[str],
+            json_value_paths: dict[str, list[str]] | None,
+            time_from: datetime,
+            time_to: datetime,
+            values_limit: int | None = None,
+            limit: int = 100000,
+        ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+            self.breakdown_calls.append((breakdown_columns, values_limit))
+            assert regular_columns == ["event_name", "country", "device"]
+            return (
+                ["event_name", "country", "device"],
+                [],
+                [
+                    (
+                        datetime(2026, 1, 1, 10),
+                        "country",
+                        "US",
+                        False,
+                        "Login",
+                        "US",
+                        "mobile",
+                        10,
+                    ),
+                    (
+                        datetime(2026, 1, 1, 10),
+                        "country",
+                        "Other",
+                        True,
+                        "Login",
+                        "FR",
+                        "desktop",
+                        20,
+                    ),
+                    (
+                        datetime(2026, 1, 1, 10),
+                        "device",
+                        "mobile",
+                        False,
+                        "Login",
+                        "US",
+                        "mobile",
+                        15,
+                    ),
+                    (
+                        datetime(2026, 1, 1, 10),
+                        "device",
+                        "Other",
+                        True,
+                        "Login",
+                        "FR",
+                        "desktop",
+                        15,
+                    ),
+                ],
+            )
+
+        def close(self) -> None:
+            return None
+
+    adapter = FakeAdapter()
+    monkeypatch.setattr(metrics, "_get_sync_session", sync_session_factory)
+    monkeypatch.setattr(metrics, "_build_adapter", lambda ds: adapter)
+    monkeypatch.setattr(
+        metrics,
+        "_resolve_collection_window",
+        lambda *args, **kwargs: (datetime(2026, 1, 1, 10), datetime(2026, 1, 1, 11), False),
+    )
+    monkeypatch.setattr(metrics, "analyze_cardinality", lambda *args, **kwargs: object())
+
+    def fake_generate_events(*args: object, **kwargs: object) -> GenerationResult:
+        with sync_session_factory() as session:
+            persisted_event = session.get(Event, login_event_id)
+            assert persisted_event is not None
+            return GenerationResult(
+                columns_analyzed=2,
+                col_meta={"event_name": {"is_json": False, "is_low": True}},
+                events_by_name={"event_name=Login": persisted_event},
+            )
+
+    monkeypatch.setattr(metrics, "generate_events", fake_generate_events)
+
+    result = metrics.collect_metrics.run(config_id)
+
+    assert adapter.breakdown_calls == [(["country", "device"], 2)]
+    assert result["breakdown_event_metrics"] == 4
+    assert result["breakdown_type_metrics"] == 4
+    assert result["breakdown_metrics_deleted"] == 1
+
+    with sync_session_factory() as session:
+        event_breakdowns = (
+            session.execute(
+                select(EventMetricBreakdown).where(EventMetricBreakdown.event_id == login_event_id)
+            )
+            .scalars()
+            .all()
+        )
+        assert {
+            (row.breakdown_column, row.breakdown_value, row.is_other, row.count)
+            for row in event_breakdowns
+        } == {
+            ("country", "US", False, 10),
+            ("country", "Other", True, 20),
+            ("device", "mobile", False, 15),
+            ("device", "Other", True, 15),
+        }
+        type_breakdowns = (
+            session.execute(
+                select(EventMetricBreakdown).where(
+                    EventMetricBreakdown.event_type_id == event_type_id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert {
+            (row.breakdown_column, row.breakdown_value, row.is_other, row.count)
+            for row in type_breakdowns
+        } == {
+            ("country", "US", False, 10),
+            ("country", "Other", True, 20),
+            ("device", "mobile", False, 15),
+            ("device", "Other", True, 15),
+        }
+
+
 def test_collect_metrics_rolls_back_metric_delete_when_job_fails(
     sync_session_factory: sessionmaker[Session],
     monkeypatch: MonkeyPatch,
@@ -783,3 +986,59 @@ def test_collect_metrics_queues_alert_deliveries(
         assert len(deliveries) == 1
         assert deliveries[0].matched_count == 3
         assert len(items) == 3
+
+
+def test_breakdown_anomalies_do_not_queue_alert_deliveries(
+    sync_session_factory: sessionmaker[Session],
+) -> None:
+    with sync_session_factory() as session:
+        config, _event_type, event = _seed_anomaly_scan_state(session)
+        destination = AlertDestination(
+            id=uuid.uuid4(),
+            project_id=config.project_id,
+            type="slack",
+            name="Main Slack",
+            enabled=True,
+            webhook_url_encrypted="secret",
+        )
+        rule = AlertRule(
+            id=uuid.uuid4(),
+            destination_id=destination.id,
+            name="Main Rule",
+            enabled=True,
+            include_project_total=True,
+            include_event_types=True,
+            include_events=True,
+            notify_on_spike=True,
+            notify_on_drop=True,
+            min_percent_delta=0,
+            min_absolute_delta=0,
+            min_expected_count=0,
+            cooldown_minutes=1440,
+        )
+        session.add_all([destination, rule])
+        session.add(
+            MetricBreakdownAnomaly(
+                id=uuid.uuid4(),
+                scan_config_id=config.id,
+                scope_type="event",
+                scope_ref=str(event.id),
+                event_id=event.id,
+                event_type_id=None,
+                bucket=datetime(2026, 1, 1, 11),
+                breakdown_column="country",
+                breakdown_value="US",
+                is_other=False,
+                actual_count=0,
+                expected_count=10,
+                stddev=1,
+                z_score=-10,
+                direction="drop",
+            )
+        )
+        session.commit()
+
+        delivery_ids = metrics._prepare_alert_deliveries(session, config, scan_job_id=None)
+
+        assert delivery_ids == []
+        assert session.execute(select(AlertDelivery)).scalars().all() == []

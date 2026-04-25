@@ -1490,6 +1490,84 @@ function ScanPreviewPanel({
   )
 }
 
+function isJsonPreviewType(typeName: string) {
+  return typeName.toLowerCase().includes('json')
+}
+
+function MetricBreakdownPicker({
+  columns,
+  selectedColumns,
+  eventTypeColumn,
+  timeColumn,
+  valuesLimit,
+  onToggleColumn,
+  onValuesLimitChange,
+}: {
+  columns: ScanConfigPreview['columns']
+  selectedColumns: string[]
+  eventTypeColumn: string
+  timeColumn: string
+  valuesLimit: string
+  onToggleColumn: (column: string) => void
+  onValuesLimitChange: (value: string) => void
+}) {
+  const availableColumns = columns.filter(column => !isJsonPreviewType(column.type_name))
+  const reservedColumns = new Set([eventTypeColumn, timeColumn].filter(Boolean))
+
+  return (
+    <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium">Metric breakdowns</div>
+          <p className="text-xs text-muted-foreground">
+            Each selected scalar column is collected as a separate database-level grouping.
+          </p>
+        </div>
+        <div className="grid w-40 gap-1">
+          <Label className="text-xs">Value limit</Label>
+          <Input
+            type="number"
+            min={1}
+            value={valuesLimit}
+            onChange={e => onValuesLimitChange(e.target.value)}
+            placeholder="Unlimited"
+            className="h-8"
+          />
+        </div>
+      </div>
+      {selectedColumns.length > 0 && !valuesLimit && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Unlimited breakdowns can be expensive for high-cardinality columns. Set a limit to keep top values and aggregate the rest into Other.
+        </div>
+      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {availableColumns.map(column => {
+          const disabled = reservedColumns.has(column.name)
+          return (
+            <label
+              key={column.name}
+              className="flex items-center gap-2 rounded-md border bg-background p-2 text-sm"
+            >
+              <Checkbox
+                checked={selectedColumns.includes(column.name)}
+                disabled={disabled}
+                onCheckedChange={() => {
+                  if (!disabled) onToggleColumn(column.name)
+                }}
+              />
+              <span className="min-w-0 flex-1 truncate font-mono text-xs">{column.name}</span>
+              {disabled && <Badge variant="outline" className="text-[10px]">reserved</Badge>}
+            </label>
+          )
+        })}
+      </div>
+      {availableColumns.length === 0 && (
+        <p className="text-xs text-muted-foreground">No scalar columns found in preview.</p>
+      )}
+    </div>
+  )
+}
+
 /* ─── Scans Tab ─── */
 function ScansTab({ slug }: { slug: string }) {
   const qc = useQueryClient()
@@ -1509,6 +1587,8 @@ function ScansTab({ slug }: { slug: string }) {
   const [timeColumn, setTimeColumn] = useState('')
   const [eventNameFormat, setEventNameFormat] = useState('')
   const [jsonValuePaths, setJsonValuePaths] = useState<string[]>([])
+  const [metricBreakdownColumns, setMetricBreakdownColumns] = useState<string[]>([])
+  const [metricBreakdownValuesLimit, setMetricBreakdownValuesLimit] = useState('')
   const [cardinalityThreshold, setCardinalityThreshold] = useState(100)
   const [interval, setInterval] = useState('')
 
@@ -1520,6 +1600,8 @@ function ScansTab({ slug }: { slug: string }) {
   const [editTimeColumn, setEditTimeColumn] = useState('')
   const [editEventNameFormat, setEditEventNameFormat] = useState('')
   const [editJsonValuePaths, setEditJsonValuePaths] = useState<string[]>([])
+  const [editMetricBreakdownColumns, setEditMetricBreakdownColumns] = useState<string[]>([])
+  const [editMetricBreakdownValuesLimit, setEditMetricBreakdownValuesLimit] = useState('')
   const [editCardinalityThreshold, setEditCardinalityThreshold] = useState(100)
   const [editInterval, setEditInterval] = useState('')
 
@@ -1551,6 +1633,8 @@ function ScansTab({ slug }: { slug: string }) {
         time_column: timeColumn || null,
         event_name_format: eventNameFormat || null,
         json_value_paths: jsonValuePaths,
+        metric_breakdown_columns: metricBreakdownColumns,
+        metric_breakdown_values_limit: metricBreakdownValuesLimit ? Number(metricBreakdownValuesLimit) : null,
         cardinality_threshold: cardinalityThreshold,
         interval: interval || null,
       }),
@@ -1570,6 +1654,8 @@ function ScansTab({ slug }: { slug: string }) {
         time_column: editTimeColumn || null,
         event_name_format: editEventNameFormat || null,
         json_value_paths: editJsonValuePaths,
+        metric_breakdown_columns: editMetricBreakdownColumns,
+        metric_breakdown_values_limit: editMetricBreakdownValuesLimit ? Number(editMetricBreakdownValuesLimit) : null,
         cardinality_threshold: editCardinalityThreshold,
         interval: editInterval || null,
       }),
@@ -1589,6 +1675,13 @@ function ScansTab({ slug }: { slug: string }) {
       setPreview(data)
       if (!data.columns.some(column => column.name === eventTypeColumn)) setEventTypeColumn('')
       if (!data.columns.some(column => column.name === timeColumn)) setTimeColumn('')
+      setMetricBreakdownColumns(current =>
+        current.filter(column =>
+          data.columns.some(item => item.name === column)
+          && column !== eventTypeColumn
+          && column !== timeColumn,
+        ),
+      )
     },
   })
 
@@ -1606,6 +1699,13 @@ function ScansTab({ slug }: { slug: string }) {
       setEditPreview(data)
       if (!data.columns.some(column => column.name === editEventTypeColumn)) setEditEventTypeColumn('')
       if (!data.columns.some(column => column.name === editTimeColumn)) setEditTimeColumn('')
+      setEditMetricBreakdownColumns(current =>
+        current.filter(column =>
+          data.columns.some(item => item.name === column)
+          && column !== editEventTypeColumn
+          && column !== editTimeColumn,
+        ),
+      )
     },
   })
 
@@ -1633,6 +1733,8 @@ function ScansTab({ slug }: { slug: string }) {
     setEditTimeColumn(sc.time_column ?? '')
     setEditEventNameFormat(sc.event_name_format ?? '')
     setEditJsonValuePaths(sc.json_value_paths ?? [])
+    setEditMetricBreakdownColumns(sc.metric_breakdown_columns ?? [])
+    setEditMetricBreakdownValuesLimit(sc.metric_breakdown_values_limit ? String(sc.metric_breakdown_values_limit) : '')
     setEditCardinalityThreshold(sc.cardinality_threshold)
     setEditInterval(sc.interval ?? '')
     setEditPreview(null)
@@ -1643,7 +1745,8 @@ function ScansTab({ slug }: { slug: string }) {
     setDsId(''); setScanName(''); setBaseQuery('')
     setEventTypeId(''); setEventTypeColumn('')
     setTimeColumn(''); setEventNameFormat('')
-    setJsonValuePaths([]); setPreview(null)
+    setJsonValuePaths([]); setMetricBreakdownColumns([])
+    setMetricBreakdownValuesLimit(''); setPreview(null)
     setCardinalityThreshold(100); setInterval('')
   }
 
@@ -1660,6 +1763,22 @@ function ScansTab({ slug }: { slug: string }) {
       current.includes(path)
         ? current.filter(item => item !== path)
         : [...current, path],
+    )
+  }
+
+  const toggleMetricBreakdownColumn = (column: string) => {
+    setMetricBreakdownColumns(current =>
+      current.includes(column)
+        ? current.filter(item => item !== column)
+        : [...current, column],
+    )
+  }
+
+  const toggleEditMetricBreakdownColumn = (column: string) => {
+    setEditMetricBreakdownColumns(current =>
+      current.includes(column)
+        ? current.filter(item => item !== column)
+        : [...current, column],
     )
   }
 
@@ -1739,7 +1858,11 @@ function ScansTab({ slug }: { slug: string }) {
                   <Label>Event Type Column (optional)</Label>
                   <select
                     value={eventTypeColumn}
-                    onChange={e => setEventTypeColumn(e.target.value)}
+                    onChange={e => {
+                      const next = e.target.value
+                      setEventTypeColumn(next)
+                      setMetricBreakdownColumns(current => current.filter(column => column !== next))
+                    }}
                     className={selectClass}
                     disabled={!preview}
                   >
@@ -1755,7 +1878,11 @@ function ScansTab({ slug }: { slug: string }) {
                   <Label>Time Column (optional)</Label>
                   <select
                     value={timeColumn}
-                    onChange={e => setTimeColumn(e.target.value)}
+                    onChange={e => {
+                      const next = e.target.value
+                      setTimeColumn(next)
+                      setMetricBreakdownColumns(current => current.filter(column => column !== next))
+                    }}
                     className={selectClass}
                     disabled={!preview}
                   >
@@ -1772,6 +1899,17 @@ function ScansTab({ slug }: { slug: string }) {
                   preview={preview}
                   selectedJsonValuePaths={jsonValuePaths}
                   onToggleJsonValuePath={toggleJsonValuePath}
+                />
+              )}
+              {preview && (
+                <MetricBreakdownPicker
+                  columns={preview.columns}
+                  selectedColumns={metricBreakdownColumns}
+                  eventTypeColumn={eventTypeColumn}
+                  timeColumn={timeColumn}
+                  valuesLimit={metricBreakdownValuesLimit}
+                  onToggleColumn={toggleMetricBreakdownColumn}
+                  onValuesLimitChange={setMetricBreakdownValuesLimit}
                 />
               )}
               <div className="grid grid-cols-2 gap-3">
@@ -1846,7 +1984,11 @@ function ScansTab({ slug }: { slug: string }) {
                   <Label>Event Type Column (optional)</Label>
                   <select
                     value={editEventTypeColumn}
-                    onChange={e => setEditEventTypeColumn(e.target.value)}
+                    onChange={e => {
+                      const next = e.target.value
+                      setEditEventTypeColumn(next)
+                      setEditMetricBreakdownColumns(current => current.filter(column => column !== next))
+                    }}
                     className={selectClass}
                     disabled={!editPreview}
                   >
@@ -1862,7 +2004,11 @@ function ScansTab({ slug }: { slug: string }) {
                   <Label>Time Column (optional)</Label>
                   <select
                     value={editTimeColumn}
-                    onChange={e => setEditTimeColumn(e.target.value)}
+                    onChange={e => {
+                      const next = e.target.value
+                      setEditTimeColumn(next)
+                      setEditMetricBreakdownColumns(current => current.filter(column => column !== next))
+                    }}
                     className={selectClass}
                     disabled={!editPreview}
                   >
@@ -1879,6 +2025,17 @@ function ScansTab({ slug }: { slug: string }) {
                   preview={editPreview}
                   selectedJsonValuePaths={editJsonValuePaths}
                   onToggleJsonValuePath={toggleEditJsonValuePath}
+                />
+              )}
+              {editPreview && (
+                <MetricBreakdownPicker
+                  columns={editPreview.columns}
+                  selectedColumns={editMetricBreakdownColumns}
+                  eventTypeColumn={editEventTypeColumn}
+                  timeColumn={editTimeColumn}
+                  valuesLimit={editMetricBreakdownValuesLimit}
+                  onToggleColumn={toggleEditMetricBreakdownColumn}
+                  onValuesLimitChange={setEditMetricBreakdownValuesLimit}
                 />
               )}
               <div className="grid grid-cols-2 gap-3">
@@ -1916,6 +2073,9 @@ function ScansTab({ slug }: { slug: string }) {
                   {sc.interval && <Badge variant="outline" className="text-xs">⏱ {sc.interval}</Badge>}
                   {sc.json_value_paths.length > 0 && (
                     <Badge variant="outline" className="text-xs">JSON keep {sc.json_value_paths.length}</Badge>
+                  )}
+                  {sc.metric_breakdown_columns.length > 0 && (
+                    <Badge variant="outline" className="text-xs">Breakdowns {sc.metric_breakdown_columns.length}</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -2071,6 +2231,16 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
             {scanConfig.json_value_paths.length > 0 && (
               <span>JSON keep: <strong className="text-foreground">{scanConfig.json_value_paths.length}</strong></span>
             )}
+            {scanConfig.metric_breakdown_columns.length > 0 && (
+              <span>
+                Breakdowns:
+                <strong className="text-foreground">
+                  {' '}
+                  {scanConfig.metric_breakdown_columns.join(', ')}
+                  {scanConfig.metric_breakdown_values_limit ? ` · top ${scanConfig.metric_breakdown_values_limit}` : ' · unlimited'}
+                </strong>
+              </span>
+            )}
             {etName && <span>Event Type: <strong className="text-foreground">{etName}</strong></span>}
             {scanConfig.interval && <span>Interval: <strong className="text-foreground">{scanConfig.interval}</strong></span>}
             <span>
@@ -2164,6 +2334,9 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                           {job.result_summary.metrics_deleted != null && job.result_summary.metrics_deleted > 0 && (
                             <Badge variant="outline" className="text-[10px]">{job.result_summary.metrics_deleted} replaced</Badge>
                           )}
+                          {job.result_summary.breakdown_event_metrics != null && job.result_summary.breakdown_event_metrics > 0 && (
+                            <Badge variant="outline" className="text-[10px]">{job.result_summary.breakdown_event_metrics} breakdowns</Badge>
+                          )}
                           {job.result_summary.alerts_queued != null && job.result_summary.alerts_queued > 0 && (
                             <Badge variant="outline" className="text-[10px] text-amber-600">+{job.result_summary.alerts_queued} alerts</Badge>
                           )}
@@ -2225,6 +2398,18 @@ function ScanDetail({ slug, scanConfig, eventTypes }: { slug: string; scanConfig
                                 <Card className="p-3 text-center">
                                   <div className="text-lg font-bold text-foreground">{job.result_summary.metrics_deleted}</div>
                                   <div className="text-muted-foreground">Metrics replaced</div>
+                                </Card>
+                              )}
+                              {job.result_summary.breakdown_event_metrics != null && (
+                                <Card className="p-3 text-center">
+                                  <div className="text-lg font-bold text-foreground">{job.result_summary.breakdown_event_metrics}</div>
+                                  <div className="text-muted-foreground">Event breakdowns</div>
+                                </Card>
+                              )}
+                              {job.result_summary.breakdown_anomalies_detected != null && (
+                                <Card className="p-3 text-center">
+                                  <div className="text-lg font-bold text-destructive">{job.result_summary.breakdown_anomalies_detected}</div>
+                                  <div className="text-muted-foreground">Breakdown anomalies</div>
                                 </Card>
                               )}
                               {job.result_summary.alerts_queued != null && (

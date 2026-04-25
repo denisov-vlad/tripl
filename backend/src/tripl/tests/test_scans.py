@@ -55,6 +55,8 @@ class TestScanConfigsCRUD:
                 "name": "Daily scan",
                 "base_query": "SELECT * FROM events",
                 "event_type_id": event_type["id"],
+                "metric_breakdown_columns": ["country", "platform"],
+                "metric_breakdown_values_limit": 20,
                 "cardinality_threshold": 50,
             },
         )
@@ -67,6 +69,8 @@ class TestScanConfigsCRUD:
         assert data["data_source_id"] == data_source["id"]
         assert data["project_id"] == project["id"]
         assert data["json_value_paths"] == []
+        assert data["metric_breakdown_columns"] == ["country", "platform"]
+        assert data["metric_breakdown_values_limit"] == 20
         assert "anomaly_detection_enabled" not in data
 
     async def test_list_scan_configs(self, client: AsyncClient, project: dict, data_source: dict):
@@ -91,11 +95,18 @@ class TestScanConfigsCRUD:
         scan_id = create_resp.json()["id"]
         resp = await client.patch(
             f"/api/v1/projects/{project['slug']}/scans/{scan_id}",
-            json={"name": "New", "cardinality_threshold": 200},
+            json={
+                "name": "New",
+                "cardinality_threshold": 200,
+                "metric_breakdown_columns": ["country"],
+                "metric_breakdown_values_limit": None,
+            },
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "New"
         assert resp.json()["cardinality_threshold"] == 200
+        assert resp.json()["metric_breakdown_columns"] == ["country"]
+        assert resp.json()["metric_breakdown_values_limit"] is None
 
     async def test_delete_scan_config(self, client: AsyncClient, project: dict, data_source: dict):
         create_resp = await client.post(

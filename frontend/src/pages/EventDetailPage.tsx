@@ -14,10 +14,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
-import { MetricsChart } from '@/components/ui/chart'
+import { MetricsChart, MetricsMultiSeriesChart } from '@/components/ui/chart'
 import { resolveMetaFieldHref } from '@/lib/metaFields'
 import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
-import { ArrowLeft, CircleCheck, Eye, Tag } from 'lucide-react'
+import { ArrowLeft, CircleCheck, Eye, Layers, Tag } from 'lucide-react'
 
 const RANGE_OPTIONS = [
   { label: '7d', days: 7 },
@@ -37,6 +37,7 @@ export default function EventDetailPage() {
   const navigate = useNavigate()
   const [rangeDays, setRangeDays] = useState(30)
   const [granularity, setGranularity] = useState<MetricsGranularity>('hour')
+  const [breakdownColumn, setBreakdownColumn] = useState('')
 
   const eventQuery = useQuery({
     queryKey: ['event', slug, eventId],
@@ -77,23 +78,45 @@ export default function EventDetailPage() {
     [granularity, metrics?.data],
   )
 
+  const breakdownQuery = useQuery({
+    queryKey: ['eventMetricBreakdowns', slug, eventId, breakdownColumn, rangeDays],
+    queryFn: () => metricsApi.getEventMetricBreakdowns(slug!, eventId!, {
+      column: breakdownColumn || undefined,
+      ...timeRange,
+    }),
+    enabled: !!slug && !!eventId,
+    refetchInterval: 60000,
+  })
+  const breakdowns = breakdownQuery.data
+  const selectedBreakdownColumn = breakdownColumn || breakdowns?.selected_column || ''
+  const breakdownChartSeries = useMemo(
+    () => (breakdowns?.series ?? [])
+      .slice(0, 8)
+      .map(series => ({
+        label: series.is_other ? 'Other' : (series.breakdown_value || '(empty)'),
+        data: aggregateMetricPoints(series.data, granularity),
+      })),
+    [breakdowns?.series, granularity],
+  )
+
   if (eventQuery.isLoading) {
     return <div className="p-6 text-muted-foreground">Loading…</div>
   }
 
-  if (eventQuery.isError || eventTypesQuery.isError || metaFieldsQuery.isError || metricsQuery.isError) {
+  if (eventQuery.isError || eventTypesQuery.isError || metaFieldsQuery.isError || metricsQuery.isError || breakdownQuery.isError) {
     return (
       <div className="p-6">
         <ErrorState
           title="Failed to load event details"
           description="The detail page could not fetch data from the backend."
-          error={eventQuery.error ?? eventTypesQuery.error ?? metaFieldsQuery.error ?? metricsQuery.error}
+          error={eventQuery.error ?? eventTypesQuery.error ?? metaFieldsQuery.error ?? metricsQuery.error ?? breakdownQuery.error}
           onRetry={() => {
             void Promise.all([
               eventQuery.refetch(),
               eventTypesQuery.refetch(),
               metaFieldsQuery.refetch(),
               metricsQuery.refetch(),
+              breakdownQuery.refetch(),
             ])
           }}
         />
@@ -201,6 +224,53 @@ export default function EventDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {(breakdowns?.columns.length || breakdownQuery.isLoading) && (
+        <Card>
+          <CardContent className="p-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                <h2 className="text-lg font-semibold">Breakdowns</h2>
+              </div>
+              <Select
+                value={selectedBreakdownColumn}
+                onValueChange={value => setBreakdownColumn(value)}
+                disabled={!breakdowns?.columns.length}
+              >
+                <SelectTrigger className="h-8 w-[180px]">
+                  <SelectValue placeholder="Column" />
+                </SelectTrigger>
+                <SelectContent>
+                  {breakdowns?.columns.map(column => (
+                    <SelectItem key={column} value={column}>
+                      {column}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {breakdownQuery.isLoading ? (
+              <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
+                Loading breakdowns…
+              </div>
+            ) : (
+              <>
+                <MetricsMultiSeriesChart
+                  series={breakdownChartSeries}
+                  height={280}
+                  granularity={granularity}
+                />
+                {breakdowns?.interval && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Collection interval: {breakdowns.interval}
+                  </p>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Field Values */}
       {event.field_values.length > 0 && (

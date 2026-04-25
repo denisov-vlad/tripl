@@ -6,18 +6,22 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import String, cast, func, literal, select, union_all
+from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tripl import cache
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
+from tripl.models.event_metric_breakdown import EventMetricBreakdown
 from tripl.models.event_tag import EventTag
 from tripl.models.event_type import EventType
 from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.metric_breakdown_anomaly import MetricBreakdownAnomaly
 from tripl.models.project import Project
 from tripl.models.scan_config import ScanConfig
 from tripl.schemas.event_metric import (
+    EventMetricBreakdownSeries,
+    EventMetricBreakdownsResponse,
     EventMetricPoint,
     EventMetricsResponse,
     EventWindowMetricsResponse,
@@ -251,17 +255,12 @@ def _signal_from_anomaly(
     )
 
 
-def _build_metrics_response(
+def _build_metric_points(
     *,
-    scope: str,
-    scan_config_id: uuid.UUID | None,
-    scope_ref: str | None,
     interval: str | None,
     metric_rows: list[tuple[datetime, int]],
-    anomalies: list[MetricAnomaly],
-    event_id: uuid.UUID | None = None,
-    event_type_id: uuid.UUID | None = None,
-) -> EventMetricsResponse:
+    anomalies: list[MetricAnomaly] | list[MetricBreakdownAnomaly],
+) -> list[EventMetricPoint]:
     counts_by_bucket = {bucket: count for bucket, count in metric_rows}
     anomalies_by_bucket = {anomaly.bucket: anomaly for anomaly in anomalies}
 
@@ -313,19 +312,34 @@ def _build_metrics_response(
                 ),
                 is_anomaly=bucket in anomalies_by_bucket,
                 anomaly_direction=(
-                    anomalies_by_bucket[bucket].direction
-                    if bucket in anomalies_by_bucket
-                    else None
+                    anomalies_by_bucket[bucket].direction if bucket in anomalies_by_bucket else None
                 ),
                 z_score=(
-                    anomalies_by_bucket[bucket].z_score
-                    if bucket in anomalies_by_bucket
-                    else None
+                    anomalies_by_bucket[bucket].z_score if bucket in anomalies_by_bucket else None
                 ),
             )
             for bucket, count in sorted(counts_by_bucket.items())
         ]
 
+    return data
+
+
+def _build_metrics_response(
+    *,
+    scope: str,
+    scan_config_id: uuid.UUID | None,
+    scope_ref: str | None,
+    interval: str | None,
+    metric_rows: list[tuple[datetime, int]],
+    anomalies: list[MetricAnomaly],
+    event_id: uuid.UUID | None = None,
+    event_type_id: uuid.UUID | None = None,
+) -> EventMetricsResponse:
+    data = _build_metric_points(
+        interval=interval,
+        metric_rows=metric_rows,
+        anomalies=anomalies,
+    )
     latest_signal = None
     latest_metric_bucket = data[-1].bucket if data else None
     if anomalies:
@@ -395,6 +409,131 @@ async def get_event_metrics(
         metric_rows=metric_rows,
         anomalies=anomalies,
         event_id=event.id,
+    )
+
+
+async def get_event_metric_breakdowns(
+    session: AsyncSession,
+    slug: str,
+    event_id: uuid.UUID,
+    column: str | None = None,
+    time_from: datetime | None = None,
+    time_to: datetime | None = None,
+) -> EventMetricBreakdownsResponse:
+    project = await _resolve_project(session, slug)
+    event = await _resolve_event(session, project.id, event_id)
+    scan_config_id = await _resolve_scope_scan_config_id(
+        session,
+        project.id,
+        event_id=event.id,
+    )
+    if scan_config_id is None:
+        return EventMetricBreakdownsResponse(event_id=event.id, columns=[], series=[])
+
+    config = await session.get(ScanConfig, scan_config_id)
+    if config is None or config.project_id != project.id:
+        return EventMetricBreakdownsResponse(event_id=event.id, columns=[], series=[])
+
+    columns = list(config.metric_breakdown_columns or [])
+    if not columns:
+        return EventMetricBreakdownsResponse(
+            event_id=event.id,
+            scan_config_id=scan_config_id,
+            interval=config.interval,
+            columns=[],
+            series=[],
+        )
+
+    if column is not None and column not in columns:
+        raise HTTPException(400, "Breakdown column is not configured for this scan")
+
+    selected_column = column
+    if selected_column is None:
+        data_column_query = select(EventMetricBreakdown.breakdown_column).where(
+            EventMetricBreakdown.scan_config_id == scan_config_id,
+            EventMetricBreakdown.event_id == event.id,
+        )
+        if time_from is not None:
+            data_column_query = data_column_query.where(EventMetricBreakdown.bucket >= time_from)
+        if time_to is not None:
+            data_column_query = data_column_query.where(EventMetricBreakdown.bucket < time_to)
+        data_columns = set((await session.execute(data_column_query.distinct())).scalars())
+        selected_column = next((item for item in columns if item in data_columns), columns[0])
+
+    metric_query = (
+        select(
+            EventMetricBreakdown.breakdown_value,
+            EventMetricBreakdown.is_other,
+            EventMetricBreakdown.bucket,
+            func.sum(EventMetricBreakdown.count),
+        )
+        .where(
+            EventMetricBreakdown.scan_config_id == scan_config_id,
+            EventMetricBreakdown.event_id == event.id,
+            EventMetricBreakdown.breakdown_column == selected_column,
+        )
+        .group_by(
+            EventMetricBreakdown.breakdown_value,
+            EventMetricBreakdown.is_other,
+            EventMetricBreakdown.bucket,
+        )
+        .order_by(EventMetricBreakdown.breakdown_value, EventMetricBreakdown.bucket)
+    )
+    if time_from is not None:
+        metric_query = metric_query.where(EventMetricBreakdown.bucket >= time_from)
+    if time_to is not None:
+        metric_query = metric_query.where(EventMetricBreakdown.bucket < time_to)
+
+    metric_rows_by_series: dict[tuple[str, bool], list[tuple[datetime, int]]] = {}
+    for value, is_other, bucket, count in (await session.execute(metric_query)).all():
+        key = (value, bool(is_other))
+        metric_rows_by_series.setdefault(key, []).append((bucket, int(count)))
+
+    anomaly_query = (
+        select(MetricBreakdownAnomaly)
+        .where(
+            MetricBreakdownAnomaly.scan_config_id == scan_config_id,
+            MetricBreakdownAnomaly.scope_type == SCOPE_EVENT,
+            MetricBreakdownAnomaly.event_id == event.id,
+            MetricBreakdownAnomaly.breakdown_column == selected_column,
+        )
+        .order_by(MetricBreakdownAnomaly.breakdown_value, MetricBreakdownAnomaly.bucket)
+    )
+    if time_from is not None:
+        anomaly_query = anomaly_query.where(MetricBreakdownAnomaly.bucket >= time_from)
+    if time_to is not None:
+        anomaly_query = anomaly_query.where(MetricBreakdownAnomaly.bucket < time_to)
+
+    anomalies_by_series: dict[tuple[str, bool], list[MetricBreakdownAnomaly]] = {}
+    for anomaly in (await session.execute(anomaly_query)).scalars():
+        key = (anomaly.breakdown_value, anomaly.is_other)
+        anomalies_by_series.setdefault(key, []).append(anomaly)
+
+    series: list[EventMetricBreakdownSeries] = []
+    for key in set(metric_rows_by_series) | set(anomalies_by_series):
+        value, is_other = key
+        data = _build_metric_points(
+            interval=config.interval,
+            metric_rows=metric_rows_by_series.get(key, []),
+            anomalies=anomalies_by_series.get(key, []),
+        )
+        series.append(
+            EventMetricBreakdownSeries(
+                breakdown_value=value,
+                is_other=is_other,
+                total_count=sum(point.count for point in data),
+                data=data,
+            )
+        )
+
+    series.sort(key=lambda item: (item.is_other, -item.total_count, item.breakdown_value))
+    return EventMetricBreakdownsResponse(
+        event_id=event.id,
+        scan_config_id=scan_config_id,
+        interval=config.interval,
+        columns=columns,
+        selected_column=selected_column,
+        series=series,
     )
 
 
@@ -647,8 +786,8 @@ async def get_project_total_metrics(
     time_to: datetime | None = None,
 ) -> EventMetricsResponse:
     project = await _resolve_project(session, slug)
-    resolved_scan_config_id = (
-        scan_config_id or await _get_default_scan_config_id(session, project.id)
+    resolved_scan_config_id = scan_config_id or await _get_default_scan_config_id(
+        session, project.id
     )
     if resolved_scan_config_id is None:
         return EventMetricsResponse(scope=SCOPE_PROJECT_TOTAL, data=[])

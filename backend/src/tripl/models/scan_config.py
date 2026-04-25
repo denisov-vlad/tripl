@@ -28,9 +28,7 @@ class ScanConfig(UUIDMixin, TimestampMixin, Base):
     data_source_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("data_sources.id", ondelete="CASCADE")
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE")
-    )
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     event_type_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("event_types.id", ondelete="SET NULL"), nullable=True
     )
@@ -40,6 +38,12 @@ class ScanConfig(UUIDMixin, TimestampMixin, Base):
     time_column: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_name_format: Mapped[str | None] = mapped_column(String(500), nullable=True)
     json_value_paths: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    metric_breakdown_columns: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+        server_default="[]",
+    )
+    metric_breakdown_values_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cardinality_threshold: Mapped[int] = mapped_column(Integer, default=100)
     interval: Mapped[str | None] = mapped_column(String(10), nullable=True)
     anomaly_detection_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

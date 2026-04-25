@@ -11,12 +11,14 @@ from tripl.models.event import Event
 from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
 from tripl.models.event_metric import EventMetric
+from tripl.models.event_metric_breakdown import EventMetricBreakdown
 from tripl.models.event_tag import EventTag
 from tripl.models.event_type import EventType
 from tripl.models.event_type_relation import EventTypeRelation
 from tripl.models.field_definition import FieldDefinition
 from tripl.models.meta_field_definition import MetaFieldDefinition
 from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.metric_breakdown_anomaly import MetricBreakdownAnomaly
 from tripl.models.project import Project
 from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
@@ -44,7 +46,9 @@ __all__ = [
     "EventMetaValue",
     "EventTag",
     "EventMetric",
+    "EventMetricBreakdown",
     "MetricAnomaly",
+    "MetricBreakdownAnomaly",
     "ProjectAnomalySettings",
     "Variable",
     "DataSource",

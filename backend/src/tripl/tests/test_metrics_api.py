@@ -7,7 +7,9 @@ from httpx import AsyncClient
 
 from tripl.models.data_source import DataSource
 from tripl.models.event_metric import EventMetric
+from tripl.models.event_metric_breakdown import EventMetricBreakdown
 from tripl.models.metric_anomaly import MetricAnomaly
+from tripl.models.metric_breakdown_anomaly import MetricBreakdownAnomaly
 from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.models.scan_config import ScanConfig
 from tripl.tests.conftest import TestSessionLocal
@@ -144,14 +146,16 @@ async def _seed_monitoring_metrics(
             cardinality_threshold=100,
             interval="1h",
         )
-        session.add_all([
-            data_source,
-            scan_config,
-            ProjectAnomalySettings(
-                project_id=uuid.UUID(project_id),
-                anomaly_detection_enabled=True,
-            ),
-        ])
+        session.add_all(
+            [
+                data_source,
+                scan_config,
+                ProjectAnomalySettings(
+                    project_id=uuid.UUID(project_id),
+                    anomaly_detection_enabled=True,
+                ),
+            ]
+        )
         session.add_all(
             [
                 EventMetric(
@@ -228,9 +232,8 @@ async def _seed_recent_monitoring_metrics(
     page_type_id: str,
     event_id: str,
 ) -> str:
-    latest_bucket = (
-        datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
-        - timedelta(hours=1)
+    latest_bucket = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(
+        hours=1
     )
     anomaly_bucket = latest_bucket - timedelta(hours=1)
     stable_bucket = latest_bucket - timedelta(hours=2)
@@ -257,14 +260,16 @@ async def _seed_recent_monitoring_metrics(
             cardinality_threshold=100,
             interval="1h",
         )
-        session.add_all([
-            data_source,
-            scan_config,
-            ProjectAnomalySettings(
-                project_id=uuid.UUID(project_id),
-                anomaly_detection_enabled=True,
-            ),
-        ])
+        session.add_all(
+            [
+                data_source,
+                scan_config,
+                ProjectAnomalySettings(
+                    project_id=uuid.UUID(project_id),
+                    anomaly_detection_enabled=True,
+                ),
+            ]
+        )
         session.add_all(
             [
                 EventMetric(
@@ -594,6 +599,111 @@ async def test_get_event_metrics_returns_enriched_monitoring_series(client: Asyn
 
 
 @pytest.mark.asyncio
+async def test_get_event_metric_breakdowns_returns_series(client: AsyncClient) -> None:
+    setup = await _setup_metrics_project(client, "breakdown-event")
+
+    event_resp = await client.post(
+        "/api/v1/projects/breakdown-event/events",
+        json={
+            "event_type_id": setup["page_type_id"],
+            "name": "event_name=Login",
+            "implemented": True,
+            "reviewed": True,
+            "field_values": [{"field_definition_id": setup["page_field_id"], "value": "home"}],
+        },
+    )
+    event_id = event_resp.json()["id"]
+
+    async with TestSessionLocal() as session:
+        data_source = DataSource(
+            id=uuid.uuid4(),
+            name=f"Breakdown DS {uuid.uuid4().hex[:8]}",
+            db_type="clickhouse",
+            host="localhost",
+            port=8123,
+            database_name="default",
+            username="default",
+            password_encrypted="",
+        )
+        scan_config = ScanConfig(
+            id=uuid.uuid4(),
+            data_source_id=data_source.id,
+            project_id=uuid.UUID(setup["project_id"]),
+            event_type_id=uuid.UUID(setup["page_type_id"]),
+            name="Breakdown Config",
+            base_query="SELECT time, event_name, country FROM events",
+            time_column="time",
+            metric_breakdown_columns=["country", "platform"],
+            cardinality_threshold=100,
+            interval="1h",
+        )
+        session.add_all([data_source, scan_config])
+        for bucket, country, count, is_other in [
+            (datetime(2026, 1, 1, 10, tzinfo=UTC), "US", 10, False),
+            (datetime(2026, 1, 1, 11, tzinfo=UTC), "US", 12, False),
+            (datetime(2026, 1, 1, 10, tzinfo=UTC), "Other", 5, True),
+        ]:
+            session.add(
+                EventMetricBreakdown(
+                    id=uuid.uuid4(),
+                    scan_config_id=scan_config.id,
+                    event_id=uuid.UUID(event_id),
+                    event_type_id=None,
+                    bucket=bucket,
+                    breakdown_column="country",
+                    breakdown_value=country,
+                    is_other=is_other,
+                    count=count,
+                )
+            )
+        session.add(
+            EventMetric(
+                id=uuid.uuid4(),
+                scan_config_id=scan_config.id,
+                event_id=uuid.UUID(event_id),
+                event_type_id=None,
+                bucket=datetime(2026, 1, 1, 11, tzinfo=UTC),
+                count=17,
+            )
+        )
+        session.add(
+            MetricBreakdownAnomaly(
+                id=uuid.uuid4(),
+                scan_config_id=scan_config.id,
+                scope_type="event",
+                scope_ref=event_id,
+                event_id=uuid.UUID(event_id),
+                event_type_id=None,
+                bucket=datetime(2026, 1, 1, 10, tzinfo=UTC),
+                breakdown_column="country",
+                breakdown_value="Other",
+                is_other=True,
+                actual_count=5,
+                expected_count=20,
+                stddev=2,
+                z_score=-7.5,
+                direction="drop",
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(
+        f"/api/v1/projects/breakdown-event/events/{event_id}/metrics/breakdowns"
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["columns"] == ["country", "platform"]
+    assert body["selected_column"] == "country"
+    assert [series["breakdown_value"] for series in body["series"]] == ["US", "Other"]
+    assert body["series"][0]["total_count"] == 22
+    other_series = body["series"][1]
+    assert other_series["is_other"] is True
+    assert other_series["data"][0]["is_anomaly"] is True
+    assert other_series["data"][0]["anomaly_direction"] == "drop"
+
+
+@pytest.mark.asyncio
 async def test_get_project_total_metrics_and_active_signals(client: AsyncClient) -> None:
     setup = await _setup_metrics_project(client, "monitoring-total")
 
@@ -673,9 +783,7 @@ async def test_get_recent_signals_when_anomaly_is_within_last_24_hours(client: A
     assert total_resp.status_code == 200
     assert total_resp.json()["latest_signal"]["state"] == "recent"
 
-    event_resp = await client.get(
-        f"/api/v1/projects/monitoring-recent/events/{event_id}/metrics"
-    )
+    event_resp = await client.get(f"/api/v1/projects/monitoring-recent/events/{event_id}/metrics")
     assert event_resp.status_code == 200
     assert event_resp.json()["latest_signal"]["state"] == "recent"
 

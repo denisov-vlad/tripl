@@ -133,6 +133,8 @@ describe('ProjectSettingsPage', () => {
             time_column: 'created_at',
             event_name_format: null,
             json_value_paths: [],
+            metric_breakdown_columns: [],
+            metric_breakdown_values_limit: null,
             cardinality_threshold: 100,
             interval: '1h',
             created_at: '2026-01-01T00:00:00Z',
@@ -242,6 +244,8 @@ describe('ProjectSettingsPage', () => {
             time_column: 'created_at',
             event_name_format: null,
             json_value_paths: [],
+            metric_breakdown_columns: [],
+            metric_breakdown_values_limit: null,
             cardinality_threshold: 100,
             interval: '1h',
             created_at: '2026-01-01T00:00:00Z',
@@ -736,6 +740,8 @@ describe('ProjectSettingsPage', () => {
           time_column: body.time_column,
           event_name_format: body.event_name_format,
           json_value_paths: body.json_value_paths,
+          metric_breakdown_columns: body.metric_breakdown_columns,
+          metric_breakdown_values_limit: body.metric_breakdown_values_limit,
           cardinality_threshold: body.cardinality_threshold,
           interval: body.interval,
           created_at: '2026-04-12T00:00:00Z',
@@ -779,6 +785,8 @@ describe('ProjectSettingsPage', () => {
     const updatedSelects = within(dialog).getAllByRole('combobox')
     fireEvent.change(updatedSelects[3], { target: { value: 'created_at' } })
     fireEvent.click(within(dialog).getByText('extra.key'))
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'event_name' }))
+    fireEvent.change(within(dialog).getByPlaceholderText('Unlimited'), { target: { value: '2' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
 
     await waitFor(() => {
@@ -791,6 +799,8 @@ describe('ProjectSettingsPage', () => {
         time_column: 'created_at',
         event_name_format: null,
         json_value_paths: ['payload.extra.key'],
+        metric_breakdown_columns: ['event_name'],
+        metric_breakdown_values_limit: 2,
         cardinality_threshold: 100,
         interval: null,
       })

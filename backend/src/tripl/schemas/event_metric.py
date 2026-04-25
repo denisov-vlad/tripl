@@ -38,6 +38,22 @@ class EventMetricsResponse(BaseModel):
     data: list[EventMetricPoint]
 
 
+class EventMetricBreakdownSeries(BaseModel):
+    breakdown_value: str
+    is_other: bool = False
+    total_count: int
+    data: list[EventMetricPoint]
+
+
+class EventMetricBreakdownsResponse(BaseModel):
+    event_id: uuid.UUID
+    scan_config_id: uuid.UUID | None = None
+    interval: str | None = None
+    columns: list[str]
+    selected_column: str | None = None
+    series: list[EventMetricBreakdownSeries]
+
+
 class EventWindowMetricsRequest(BaseModel):
     event_ids: list[uuid.UUID]
     time_from: datetime | None = None

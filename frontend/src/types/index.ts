@@ -8,8 +8,12 @@ export interface ScanJobResultSummary {
   columns_analyzed?: number
   event_metrics?: number
   type_metrics?: number
+  breakdown_event_metrics?: number
+  breakdown_type_metrics?: number
   metrics_deleted?: number
+  breakdown_metrics_deleted?: number
   anomalies_detected?: number
+  breakdown_anomalies_detected?: number
   signals_added?: number
   signals_removed?: number
   alerts_queued?: number
@@ -239,6 +243,8 @@ export interface ScanConfig {
   time_column: string | null
   event_name_format: string | null
   json_value_paths: string[]
+  metric_breakdown_columns: string[]
+  metric_breakdown_values_limit: number | null
   cardinality_threshold: number
   interval: IntervalCode | null
   created_at: string
@@ -327,6 +333,22 @@ export interface EventMetricsResponse {
   interval: string | null
   latest_signal: MonitoringSignal | null
   data: EventMetricPoint[]
+}
+
+export interface EventMetricBreakdownSeries {
+  breakdown_value: string
+  is_other: boolean
+  total_count: number
+  data: EventMetricPoint[]
+}
+
+export interface EventMetricBreakdownsResponse {
+  event_id: string
+  scan_config_id: string | null
+  interval: string | null
+  columns: string[]
+  selected_column: string | null
+  series: EventMetricBreakdownSeries[]
 }
 
 export interface EventWindowMetrics {

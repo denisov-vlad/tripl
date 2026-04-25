@@ -1,5 +1,10 @@
 import { api } from './client'
-import type { EventMetricsResponse, EventWindowMetrics, MonitoringSignal } from '../types'
+import type {
+  EventMetricBreakdownsResponse,
+  EventMetricsResponse,
+  EventWindowMetrics,
+  MonitoringSignal,
+} from '../types'
 
 export interface EventsMetricsParams {
   event_type_id?: string
@@ -45,6 +50,21 @@ export const metricsApi = {
     if (params?.to) sp.set('to', params.to)
     const qs = sp.toString()
     return api.get<EventMetricsResponse>(`/projects/${slug}/events/${eventId}/metrics${qs ? `?${qs}` : ''}`)
+  },
+
+  getEventMetricBreakdowns: (
+    slug: string,
+    eventId: string,
+    params?: { column?: string; from?: string; to?: string },
+  ) => {
+    const sp = new URLSearchParams()
+    if (params?.column) sp.set('column', params.column)
+    if (params?.from) sp.set('from', params.from)
+    if (params?.to) sp.set('to', params.to)
+    const qs = sp.toString()
+    return api.get<EventMetricBreakdownsResponse>(
+      `/projects/${slug}/events/${eventId}/metrics/breakdowns${qs ? `?${qs}` : ''}`,
+    )
   },
 
   getEventTypeMetrics: (slug: string, eventTypeId: string, params?: { from?: string; to?: string }) => {

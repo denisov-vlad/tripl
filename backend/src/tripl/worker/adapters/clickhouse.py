@@ -5,7 +5,7 @@ import re
 import time
 from datetime import datetime
 
-import clickhouse_connect
+import clickhouse_connect  # type: ignore[import-untyped]
 
 from tripl.worker.adapters.base import BaseAdapter, ColumnInfo
 
@@ -31,7 +31,7 @@ class ClickHouseAdapter(BaseAdapter):
             database=database,
             username=username or "default",
             password=password or "",
-            **kwargs,  # type: ignore[arg-type]
+            **kwargs,
         )
         self._allowed_columns: set[str] = set()
 
@@ -40,7 +40,7 @@ class ClickHouseAdapter(BaseAdapter):
 
     def test_connection(self) -> bool:
         result = self._client.query("SELECT 1")
-        return result.first_row[0] == 1
+        return bool(result.first_row[0] == 1)
 
     def get_columns(self, base_query: str) -> list[ColumnInfo]:
         result = self._client.query(f"SELECT * FROM ({base_query}) AS _src LIMIT 0")
@@ -56,7 +56,7 @@ class ClickHouseAdapter(BaseAdapter):
         self,
         base_query: str,
         limit: int = 10,
-    ) -> tuple[list[str], list[tuple]]:
+    ) -> tuple[list[str], list[tuple[object, ...]]]:
         sql = f"SELECT * FROM ({base_query}) AS _src LIMIT {int(limit)}"
         logger.info("CH preview query: %s", sql)
         result = self._client.query(sql)
@@ -83,6 +83,66 @@ class ClickHouseAdapter(BaseAdapter):
             expression += f".`{part}`"
         return expression
 
+    def _string_value_expression(self, column: str) -> str:
+        return f"ifNull(toString(`{self._validate_column(column)}`), '')"
+
+    def _quote_string(self, value: str) -> str:
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        return f"'{escaped}'"
+
+    def _top_breakdown_values_multi(
+        self,
+        base_query: str,
+        time_column: str,
+        breakdown_columns: list[str],
+        time_from: datetime,
+        time_to: datetime,
+        limit: int,
+    ) -> dict[str, list[str]]:
+        if limit <= 0 or not breakdown_columns:
+            return {column: [] for column in breakdown_columns}
+
+        tc = self._validate_column(time_column)
+        breakdown_cols = [self._validate_column(column) for column in breakdown_columns]
+        t_from = time_from.strftime("%Y-%m-%d %H:%M:%S")
+        t_to = time_to.strftime("%Y-%m-%d %H:%M:%S")
+        prepared_parts = [
+            f"{self._string_value_expression(column)} AS `__bd_raw_{idx}`"
+            for idx, column in enumerate(breakdown_cols)
+        ]
+        branch_conditions = [
+            f"GROUPING(`__bd_raw_{idx}`) = 0, {self._quote_string(column)}"
+            for idx, column in enumerate(breakdown_cols)
+        ]
+        value_conditions = [
+            f"GROUPING(`__bd_raw_{idx}`) = 0, `__bd_raw_{idx}`"
+            for idx in range(len(breakdown_cols))
+        ]
+        grouping_sets = ", ".join(f"(`__bd_raw_{idx}`)" for idx in range(len(breakdown_cols)))
+        sql = (
+            "SELECT _breakdown_column, _breakdown_value "
+            "FROM ("
+            "SELECT "
+            f"multiIf({', '.join(branch_conditions)}, '') AS _breakdown_column, "
+            f"multiIf({', '.join(value_conditions)}, '') AS _breakdown_value, "
+            "count() AS _cnt "
+            "FROM ("
+            f"SELECT {', '.join(prepared_parts)} "
+            f"FROM ({base_query}) AS _src "
+            f"WHERE `{tc}` >= '{t_from}' AND `{tc}` < '{t_to}'"
+            ") AS _prepared "
+            f"GROUP BY GROUPING SETS ({grouping_sets})"
+            ") "
+            "ORDER BY _breakdown_column, _cnt DESC "
+            f"LIMIT {int(limit)} BY _breakdown_column"
+        )
+        logger.info("CH breakdown top-values GROUPING SETS query: %s", sql)
+        result = self._client.query(sql)
+        top_values: dict[str, list[str]] = {column: [] for column in breakdown_cols}
+        for column, value in result.result_rows:
+            top_values.setdefault(str(column), []).append(str(value))
+        return top_values
+
     def get_full_breakdown(
         self,
         base_query: str,
@@ -90,7 +150,7 @@ class ClickHouseAdapter(BaseAdapter):
         json_columns: list[str],
         json_value_paths: dict[str, list[str]] | None = None,
         limit: int = 50000,
-    ) -> tuple[list[str], list[str], list[str], list[tuple]]:
+    ) -> tuple[list[str], list[str], list[str], list[tuple[object, ...]]]:
         """Single GROUP BY ALL query: regular cols + JSONAllPaths(json cols) + count().
 
         Returns (regular_col_names, json_col_names, rows).
@@ -143,7 +203,7 @@ class ClickHouseAdapter(BaseAdapter):
         time_from: datetime,
         time_to: datetime,
         limit: int = 100000,
-    ) -> tuple[list[str], list[str], list[tuple]]:
+    ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
         """Time-bucketed GROUP BY ALL with all columns, like get_full_breakdown.
 
         Returns (column_names, rows).
@@ -191,5 +251,175 @@ class ClickHouseAdapter(BaseAdapter):
         elapsed = time.monotonic() - t0
         n_rows = len(result.result_rows)
         logger.info(f"CH bucketed done in {elapsed:.2f}s, {n_rows} rows")
+
+        return col_names, json_value_names, result.result_rows
+
+    def get_time_bucketed_breakdown_counts(
+        self,
+        base_query: str,
+        time_column: str,
+        ch_interval: str,
+        breakdown_column: str,
+        regular_columns: list[str],
+        json_columns: list[str],
+        json_value_paths: dict[str, list[str]] | None,
+        time_from: datetime,
+        time_to: datetime,
+        values_limit: int | None = None,
+        limit: int = 100000,
+    ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+        col_names, json_value_names, rows = self.get_time_bucketed_breakdown_counts_multi(
+            base_query,
+            time_column,
+            ch_interval,
+            [breakdown_column],
+            regular_columns,
+            json_columns,
+            json_value_paths,
+            time_from,
+            time_to,
+            values_limit=values_limit,
+            limit=limit,
+        )
+        return col_names, json_value_names, [(row[0], row[2], row[3], *row[4:]) for row in rows]
+
+    def get_time_bucketed_breakdown_counts_multi(
+        self,
+        base_query: str,
+        time_column: str,
+        ch_interval: str,
+        breakdown_columns: list[str],
+        regular_columns: list[str],
+        json_columns: list[str],
+        json_value_paths: dict[str, list[str]] | None,
+        time_from: datetime,
+        time_to: datetime,
+        values_limit: int | None = None,
+        limit: int = 100000,
+    ) -> tuple[list[str], list[str], list[tuple[object, ...]]]:
+        """Time-bucketed GROUPING SETS query for independent breakdown columns.
+
+        All event matching columns stay in every grouping set so rows can still
+        be mapped to catalog events after ClickHouse has done the counting.
+        """
+        if not breakdown_columns:
+            return [], [], []
+
+        tc = self._validate_column(time_column)
+        reg_cols = [self._validate_column(c) for c in regular_columns]
+        json_cols = [self._validate_column(c) for c in json_columns]
+        breakdown_cols = [self._validate_column(c) for c in breakdown_columns]
+        invalid_breakdown_cols = [column for column in breakdown_cols if column not in reg_cols]
+        if invalid_breakdown_cols:
+            msg = f"Breakdown columns must be scalar columns: {', '.join(invalid_breakdown_cols)}"
+            raise ValueError(msg)
+
+        json_value_paths = json_value_paths or {}
+        top_values_by_column: dict[str, list[str]] | None = None
+        if values_limit is not None:
+            top_count = max(values_limit - 1, 0)
+            top_values_by_column = self._top_breakdown_values_multi(
+                base_query,
+                time_column,
+                breakdown_cols,
+                time_from,
+                time_to,
+                top_count,
+            )
+
+        prepared_parts = [f"toStartOfInterval(`{tc}`, INTERVAL {ch_interval}) AS _bucket"]
+        col_names: list[str] = []
+        json_value_names: list[str] = []
+        for c in reg_cols:
+            prepared_parts.append(f"`{c}` AS `{c}`")
+            col_names.append(c)
+        for c in json_cols:
+            prepared_parts.append(f"arraySort(JSONAllPaths(`{c}`)) AS `{c}`")
+            col_names.append(c)
+        for c in json_cols:
+            for path in json_value_paths.get(c, []):
+                full_path = f"{c}.{path}"
+                prepared_parts.append(
+                    f"toJSONString({self._json_path_expression(c, path)}) AS `{full_path}`"
+                )
+                json_value_names.append(full_path)
+
+        grouping_columns = [f"`{name}`" for name in [*reg_cols, *json_cols, *json_value_names]]
+        breakdown_label_conditions: list[str] = []
+        breakdown_value_conditions: list[str] = []
+        breakdown_other_conditions: list[str] = []
+        grouping_sets: list[str] = []
+
+        for idx, column in enumerate(breakdown_cols):
+            raw_expr = self._string_value_expression(column)
+            value_alias = f"__bd_value_{idx}"
+            other_alias = f"__bd_other_{idx}"
+            top_values = (
+                None if top_values_by_column is None else top_values_by_column.get(column, [])
+            )
+            if top_values is None:
+                breakdown_expr = raw_expr
+                is_other_expr = "0"
+            elif top_values:
+                quoted_values = ", ".join(self._quote_string(value) for value in top_values)
+                in_values = f"{raw_expr} IN ({quoted_values})"
+                breakdown_expr = f"if({in_values}, {raw_expr}, 'Other')"
+                is_other_expr = f"if({in_values}, 0, 1)"
+            else:
+                breakdown_expr = "'Other'"
+                is_other_expr = "1"
+
+            prepared_parts.append(f"{breakdown_expr} AS `{value_alias}`")
+            prepared_parts.append(f"{is_other_expr} AS `{other_alias}`")
+            grouping_check = f"GROUPING(`{value_alias}`) = 0"
+            breakdown_label_conditions.append(f"{grouping_check}, {self._quote_string(column)}")
+            breakdown_value_conditions.append(f"{grouping_check}, `{value_alias}`")
+            breakdown_other_conditions.append(f"{grouping_check}, `{other_alias}`")
+            grouping_sets.append(
+                "("
+                + ", ".join(
+                    [
+                        "`_bucket`",
+                        f"`{value_alias}`",
+                        f"`{other_alias}`",
+                        *grouping_columns,
+                    ]
+                )
+                + ")"
+            )
+
+        select_parts = [
+            "`_bucket`",
+            f"multiIf({', '.join(breakdown_label_conditions)}, '') AS _breakdown_column",
+            f"multiIf({', '.join(breakdown_value_conditions)}, '') AS _breakdown_value",
+            f"multiIf({', '.join(breakdown_other_conditions)}, 0) AS _is_other",
+            *grouping_columns,
+            "count() AS _cnt",
+        ]
+
+        t_from = time_from.strftime("%Y-%m-%d %H:%M:%S")
+        t_to = time_to.strftime("%Y-%m-%d %H:%M:%S")
+        sql = (
+            f"SELECT {', '.join(select_parts)} "
+            "FROM ("
+            f"SELECT {', '.join(prepared_parts)} "
+            f"FROM ({base_query}) AS _src "
+            f"WHERE `{tc}` >= '{t_from}' AND `{tc}` < '{t_to}'"
+            ") AS _prepared "
+            f"GROUP BY GROUPING SETS ({', '.join(grouping_sets)}) "
+            "ORDER BY _bucket, _breakdown_column, _breakdown_value "
+            f"LIMIT {int(limit)}"
+        )
+
+        logger.info(
+            "CH bucketed breakdown GROUPING SETS query for %s: %s",
+            ", ".join(breakdown_cols),
+            sql,
+        )
+        t0 = time.monotonic()
+        result = self._client.query(sql)
+        elapsed = time.monotonic() - t0
+        n_rows = len(result.result_rows)
+        logger.info("CH bucketed breakdown GROUPING SETS done in %.2fs, %s rows", elapsed, n_rows)
 
         return col_names, json_value_names, result.result_rows

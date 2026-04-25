@@ -17,6 +17,8 @@ class ScanConfigCreate(BaseModel):
     time_column: str | None = None
     event_name_format: str | None = None
     json_value_paths: list[str] = Field(default_factory=list)
+    metric_breakdown_columns: list[str] = Field(default_factory=list)
+    metric_breakdown_values_limit: int | None = Field(default=None, ge=1)
     cardinality_threshold: int = Field(default=100, ge=1)
     interval: str | None = Field(None, pattern=r"^(15m|1h|6h|1d|1w)$")
 
@@ -29,6 +31,22 @@ class ScanConfigCreate(BaseModel):
             raise ValueError("json_value_paths must use <json_column>.<nested.path> format")
         return normalized
 
+    @field_validator("metric_breakdown_columns")
+    @classmethod
+    def validate_metric_breakdown_columns(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            column = item.strip()
+            if not column:
+                continue
+            if "." in column:
+                raise ValueError("metric_breakdown_columns supports scalar columns only")
+            if column not in seen:
+                normalized.append(column)
+                seen.add(column)
+        return normalized
+
 
 class ScanConfigUpdate(BaseModel):
     event_type_id: uuid.UUID | None = None
@@ -38,6 +56,8 @@ class ScanConfigUpdate(BaseModel):
     time_column: str | None = None
     event_name_format: str | None = None
     json_value_paths: list[str] | None = None
+    metric_breakdown_columns: list[str] | None = None
+    metric_breakdown_values_limit: int | None = Field(default=None, ge=1)
     cardinality_threshold: int | None = Field(None, ge=1)
     interval: str | None = Field(None, pattern=r"^(15m|1h|6h|1d|1w)$")
 
@@ -52,6 +72,24 @@ class ScanConfigUpdate(BaseModel):
             raise ValueError("json_value_paths must use <json_column>.<nested.path> format")
         return normalized
 
+    @field_validator("metric_breakdown_columns")
+    @classmethod
+    def validate_metric_breakdown_columns(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            column = item.strip()
+            if not column:
+                continue
+            if "." in column:
+                raise ValueError("metric_breakdown_columns supports scalar columns only")
+            if column not in seen:
+                normalized.append(column)
+                seen.add(column)
+        return normalized
+
 
 class ScanConfigResponse(BaseModel):
     id: uuid.UUID
@@ -64,6 +102,8 @@ class ScanConfigResponse(BaseModel):
     time_column: str | None
     event_name_format: str | None
     json_value_paths: list[str]
+    metric_breakdown_columns: list[str]
+    metric_breakdown_values_limit: int | None
     cardinality_threshold: int
     interval: str | None
     created_at: datetime

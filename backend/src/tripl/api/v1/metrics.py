@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from tripl.api.deps import SessionDep
 from tripl.schemas.event_metric import (
     ActiveSignalsQuery,
+    EventMetricBreakdownsResponse,
     EventMetricsResponse,
     EventWindowMetricsRequest,
     EventWindowMetricsResponse,
@@ -101,6 +102,28 @@ async def get_event_metrics(
     time_to: TimeTo = None,
 ) -> EventMetricsResponse:
     return await metrics_service.get_event_metrics(session, slug, event_id, time_from, time_to)
+
+
+@router.get(
+    "/projects/{slug}/events/{event_id}/metrics/breakdowns",
+    response_model=EventMetricBreakdownsResponse,
+)
+async def get_event_metric_breakdowns(
+    session: SessionDep,
+    slug: str,
+    event_id: uuid.UUID,
+    column: str | None = None,
+    time_from: TimeFrom = None,
+    time_to: TimeTo = None,
+) -> EventMetricBreakdownsResponse:
+    return await metrics_service.get_event_metric_breakdowns(
+        session,
+        slug,
+        event_id,
+        column=column,
+        time_from=time_from,
+        time_to=time_to,
+    )
 
 
 @router.get(

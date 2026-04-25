@@ -70,6 +70,21 @@ def _build_adapter(ds: DataSource) -> BaseAdapter:
     )
 
 
+def _validate_metric_breakdown_selection(
+    *,
+    metric_breakdown_columns: list[str],
+    event_type_column: str | None,
+    time_column: str | None,
+) -> None:
+    reserved = {column for column in (event_type_column, time_column) if column}
+    invalid = sorted(set(metric_breakdown_columns) & reserved)
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail="metric_breakdown_columns cannot include event_type_column or time_column",
+        )
+
+
 def _serialize_preview_value(value: object) -> object:
     if value is None or isinstance(value, (str, int, float, bool, list, dict)):
         return value
@@ -208,6 +223,12 @@ async def create_scan_config(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Scan config with this name already exists")
 
+    _validate_metric_breakdown_selection(
+        metric_breakdown_columns=data.metric_breakdown_columns,
+        event_type_column=data.event_type_column,
+        time_column=data.time_column,
+    )
+
     config = ScanConfig(
         project_id=project_id,
         **data.model_dump(),
@@ -226,6 +247,15 @@ async def update_scan_config(
 ) -> ScanConfig:
     config = await get_scan_config(session, slug, scan_id)
     update_dict = data.model_dump(exclude_unset=True)
+    _validate_metric_breakdown_selection(
+        metric_breakdown_columns=update_dict.get(
+            "metric_breakdown_columns",
+            config.metric_breakdown_columns,
+        )
+        or [],
+        event_type_column=update_dict.get("event_type_column", config.event_type_column),
+        time_column=update_dict.get("time_column", config.time_column),
+    )
     for key, value in update_dict.items():
         setattr(config, key, value)
     await session.commit()
