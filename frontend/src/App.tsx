@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { AuthProvider } from './components/auth-provider'
 import { useAuth } from './components/auth-context'
 import { ErrorState } from './components/error-state'
@@ -91,6 +91,11 @@ function AnonymousOnly({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+function ProjectSettingsRedirect({ tab }: { tab: string }) {
+  const { slug } = useParams<{ slug: string }>()
+  return <Navigate to={`/p/${slug}/settings/${tab}`} replace />
+}
+
 export default function App() {
   return (
     <ThemeProvider defaultTheme="dark" storageKey="tripl-ui-theme">
@@ -104,6 +109,8 @@ export default function App() {
             <Route path="/" element={withSuspense(<MainPage />)} />
             <Route path="/data-sources" element={withSuspense(<DataSourcesPage />)} />
             <Route path="/data-sources/:dsId" element={withSuspense(<DataSourcesPage />)} />
+            <Route path="/p/:slug/monitoring" element={<ProjectSettingsRedirect tab="monitoring" />} />
+            <Route path="/p/:slug/alerting" element={<ProjectSettingsRedirect tab="alerting" />} />
             <Route path="/p/:slug/events/detail/:eventId" element={withSuspense(<MonitoringDetailPage />)} />
             <Route path="/p/:slug/monitoring/:scope/:id" element={withSuspense(<MonitoringDetailPage />)} />
             <Route path="/p/:slug/events/:tab/:eventId" element={withSuspense(<EventsPage />)} />

@@ -38,6 +38,8 @@ function renderSidebar(initialEntry = '/p/demo/events') {
           <Routes>
             <Route path="/p/:slug/events" element={<AppSidebar />} />
             <Route path="/p/:slug/events/:tab" element={<AppSidebar />} />
+            <Route path="/p/:slug/settings" element={<AppSidebar />} />
+            <Route path="/p/:slug/settings/:tab" element={<AppSidebar />} />
           </Routes>
         </MemoryRouter>
       </AuthContext.Provider>
@@ -69,10 +71,10 @@ describe('AppSidebar', () => {
               implemented_event_count: 7,
               review_pending_event_count: 3,
               archived_event_count: 2,
-              variable_count: 0,
-              scan_count: 0,
-              alert_destination_count: 0,
-              monitoring_signal_count: 0,
+              variable_count: 5,
+              scan_count: 4,
+              alert_destination_count: 1,
+              monitoring_signal_count: 2,
               latest_scan_job: null,
               latest_signal: null,
             },
@@ -100,6 +102,13 @@ describe('AppSidebar', () => {
 
     const { container } = renderSidebar('/p/demo/events?implemented=false')
 
+    expect(await screen.findByText('Event Types')).toBeInTheDocument()
+    expect(screen.getByText('Meta Fields')).toBeInTheDocument()
+    expect(screen.getByText('Relations')).toBeInTheDocument()
+    expect(screen.getByText('Variables')).toBeInTheDocument()
+    expect(await screen.findByText('Monitoring')).toBeInTheDocument()
+    expect(screen.getByText('Alerting')).toBeInTheDocument()
+    expect(screen.getByText('Scans')).toBeInTheDocument()
     expect(await screen.findByText('All events')).toBeInTheDocument()
     expect(screen.getByText('Needs review')).toBeInTheDocument()
     expect(screen.getByText('Implemented')).toBeInTheDocument()
@@ -109,6 +118,13 @@ describe('AppSidebar', () => {
     expect(screen.getByText('10')).toBeInTheDocument()
     expect(screen.getByText('7')).toBeInTheDocument()
     expect(screen.getAllByText('3').length).toBeGreaterThan(0)
+    expect(container.querySelector('a[href="/p/demo/settings/event-types"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings/meta-fields"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings/relations"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings/variables"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings/monitoring"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings/alerting"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings/scans"]')).toBeInTheDocument()
     expect(container.querySelector('a[href="/p/demo/events?implemented=false"]')).toBeInTheDocument()
     expect(container.querySelector('a[href="/p/demo/events/page_view"]')).toBeInTheDocument()
   })

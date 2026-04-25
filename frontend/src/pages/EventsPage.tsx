@@ -1193,6 +1193,7 @@ export default function EventsPage() {
   const ROW_H_ESTIMATE = 36
   const tableScrollRef = useRef<HTMLDivElement>(null)
   const virtualize = events.length > VIRTUAL_THRESHOLD
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual intentionally returns mutable helpers; this hook is isolated from memoized child props.
   const rowVirtualizer = useVirtualizer({
     count: virtualize ? events.length : 0,
     getScrollElement: () => tableScrollRef.current,

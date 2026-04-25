@@ -68,6 +68,9 @@ function renderHarness(initialEntry = '/p/demo/events') {
                 </CommandPaletteProvider>
               }
             />
+            <Route path="/p/:slug/settings/:tab" element={<LocationBeacon />} />
+            <Route path="/p/:slug/monitoring" element={<LocationBeacon />} />
+            <Route path="/p/:slug/alerting" element={<LocationBeacon />} />
           </Routes>
         </MemoryRouter>
       </AuthContext.Provider>
@@ -121,11 +124,61 @@ describe('CommandPalette', () => {
 
     expect(await screen.findByPlaceholderText(/Search projects/i)).toBeInTheDocument()
     expect(await screen.findByText('Demo')).toBeInTheDocument()
+    expect(screen.getByText('Event type settings')).toBeInTheDocument()
+    expect(screen.getByText('Meta field settings')).toBeInTheDocument()
+    expect(screen.getByText('Relation settings')).toBeInTheDocument()
+    expect(screen.getByText('Variable settings')).toBeInTheDocument()
+    expect(screen.getByText('Monitoring settings')).toBeInTheDocument()
+    expect(screen.getByText('Alerting settings')).toBeInTheDocument()
+    expect(screen.getByText('Scan settings')).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Project settings'))
 
     await waitFor(() => {
       expect(screen.getByTestId('location').textContent).toBe('/p/demo/settings')
+    })
+  })
+
+  it('navigates to project monitoring from the command palette', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/projects')) {
+        return mockJsonResponse([
+          {
+            id: 'project-1',
+            name: 'Demo',
+            slug: 'demo',
+            description: '',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            summary: {
+              event_type_count: 0,
+              event_count: 0,
+              active_event_count: 0,
+              implemented_event_count: 0,
+              review_pending_event_count: 0,
+              archived_event_count: 0,
+              variable_count: 0,
+              scan_count: 0,
+              alert_destination_count: 0,
+              monitoring_signal_count: 0,
+              latest_scan_job: null,
+              latest_signal: null,
+            },
+          },
+        ])
+      }
+      if (url.endsWith('/api/v1/projects/demo/event-types')) return mockJsonResponse([])
+      throw new Error(`Unhandled fetch: ${url}`)
+    })
+
+    renderHarness('/p/demo/events')
+
+    fireEvent.click(screen.getByTestId('open-palette'))
+    fireEvent.click(await screen.findByText('Monitoring settings'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/p/demo/settings/monitoring')
     })
   })
 

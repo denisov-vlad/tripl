@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
+  Activity,
   Archive,
+  Bell,
   Calendar,
   Check,
   ChevronLeft,
@@ -13,11 +15,15 @@ import {
   Eye,
   Folder,
   Grid3x3,
+  Layers,
   LayoutDashboard,
+  Link2,
+  List,
   LogOut,
   Search,
   Settings,
   Tag,
+  Variable,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -123,6 +129,7 @@ export function AppSidebar() {
 
   const showProjectViews =
     !!activeProject && !!slug && location.pathname.startsWith(`/p/${slug}`)
+  const projectSettingsViews = activeProject ? buildProjectSettingsViews(activeProject) : []
   const eventViews = activeProject ? buildEventViews(activeProject, eventTypes) : []
   const currentSearch = new URLSearchParams(location.search)
 
@@ -195,7 +202,7 @@ export function AppSidebar() {
       </nav>
 
       {/* Projects */}
-      <div className="px-3 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-4">
         <div
           className="px-0.5 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em]"
           style={{ color: 'var(--fg-faint)' }}
@@ -218,8 +225,18 @@ export function AppSidebar() {
             {projects.map((p) => (
               <div key={p.id}>
                 <ProjectRow project={p} active={p.slug === slug} />
+                {showProjectViews && p.slug === slug && projectSettingsViews.length > 0 && (
+                  <ProjectViews
+                    title="Settings"
+                    views={projectSettingsViews}
+                    currentPath={location.pathname}
+                    currentSearch={currentSearch}
+                    loadingEventTypes={false}
+                  />
+                )}
                 {showProjectViews && p.slug === slug && eventViews.length > 0 && (
                   <ProjectViews
+                    title="Views"
                     views={eventViews}
                     currentPath={location.pathname}
                     currentSearch={currentSearch}
@@ -236,8 +253,6 @@ export function AppSidebar() {
           </div>
         )}
       </div>
-
-      <div className="flex-1" />
 
       {/* User footer */}
       <div className="px-3 py-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -285,6 +300,77 @@ export function AppSidebar() {
       </div>
     </aside>
   )
+}
+
+function buildProjectSettingsViews(project: Project): SavedView[] {
+  const base = `/p/${project.slug}`
+  const signalCount = project.summary.monitoring_signal_count
+
+  return [
+    {
+      id: 'event-types',
+      name: 'Event Types',
+      count: project.summary.event_type_count,
+      icon: Layers,
+      to: `${base}/settings/event-types`,
+      match: (path) =>
+        path === `${base}/settings` ||
+        path === `${base}/settings/event-types`,
+    },
+    {
+      id: 'meta-fields',
+      name: 'Meta Fields',
+      icon: List,
+      to: `${base}/settings/meta-fields`,
+      match: (path) => path === `${base}/settings/meta-fields`,
+    },
+    {
+      id: 'relations',
+      name: 'Relations',
+      icon: Link2,
+      to: `${base}/settings/relations`,
+      match: (path) => path === `${base}/settings/relations`,
+    },
+    {
+      id: 'variables',
+      name: 'Variables',
+      count: project.summary.variable_count,
+      icon: Variable,
+      to: `${base}/settings/variables`,
+      match: (path) => path === `${base}/settings/variables`,
+    },
+    {
+      id: 'monitoring',
+      name: 'Monitoring',
+      count: signalCount,
+      icon: Activity,
+      tone: signalCount > 0 ? 'danger' : 'info',
+      to: `${base}/settings/monitoring`,
+      match: (path) =>
+        path === `${base}/monitoring` ||
+        path === `${base}/settings/monitoring` ||
+        path.startsWith(`${base}/monitoring/`),
+    },
+    {
+      id: 'alerting',
+      name: 'Alerting',
+      count: project.summary.alert_destination_count,
+      icon: Bell,
+      tone: 'accent',
+      to: `${base}/settings/alerting`,
+      match: (path) =>
+        path === `${base}/alerting` ||
+        path === `${base}/settings/alerting`,
+    },
+    {
+      id: 'scans',
+      name: 'Scans',
+      count: project.summary.scan_count,
+      icon: Search,
+      to: `${base}/settings/scans`,
+      match: (path) => path === `${base}/settings/scans`,
+    },
+  ]
 }
 
 function buildEventViews(project: Project, eventTypes: EventType[]): SavedView[] {
@@ -353,11 +439,13 @@ function buildEventViews(project: Project, eventTypes: EventType[]): SavedView[]
 }
 
 function ProjectViews({
+  title,
   views,
   currentPath,
   currentSearch,
   loadingEventTypes,
 }: {
+  title: string
   views: SavedView[]
   currentPath: string
   currentSearch: URLSearchParams
@@ -369,7 +457,7 @@ function ProjectViews({
         className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.08em]"
         style={{ color: 'var(--fg-faint)' }}
       >
-        Views
+        {title}
       </div>
       <div className="flex flex-col gap-px">
         {views.map((view) => (

@@ -9,14 +9,19 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import {
+  Activity,
   Bell,
   Database,
   Folder,
+  Layers,
   LayoutDashboard,
+  Link2,
+  List,
   LogOut,
   Search,
   Settings,
   Tag,
+  Variable,
 } from 'lucide-react'
 import { eventTypesApi } from '@/api/eventTypes'
 import { eventsApi } from '@/api/events'
@@ -187,10 +192,46 @@ function CommandPalette() {
                   hint={`/p/${activeProject.slug}/settings`}
                 />
                 <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/event-types`)}
+                  icon={Layers}
+                  label="Event type settings"
+                  hint={`/p/${activeProject.slug}/settings/event-types`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/meta-fields`)}
+                  icon={List}
+                  label="Meta field settings"
+                  hint={`/p/${activeProject.slug}/settings/meta-fields`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/relations`)}
+                  icon={Link2}
+                  label="Relation settings"
+                  hint={`/p/${activeProject.slug}/settings/relations`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/variables`)}
+                  icon={Variable}
+                  label="Variable settings"
+                  hint={`/p/${activeProject.slug}/settings/variables`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/monitoring`)}
+                  icon={Activity}
+                  label="Monitoring settings"
+                  hint={`/p/${activeProject.slug}/settings/monitoring`}
+                />
+                <Item
                   onSelect={() => goTo(`/p/${activeProject.slug}/settings/alerting`)}
                   icon={Bell}
                   label="Alerting settings"
                   hint={`/p/${activeProject.slug}/settings/alerting`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/scans`)}
+                  icon={Search}
+                  label="Scan settings"
+                  hint={`/p/${activeProject.slug}/settings/scans`}
                 />
               </Group>
             )}
