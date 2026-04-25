@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl import cache
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
 from tripl.models.event_tag import EventTag
@@ -682,13 +683,17 @@ async def get_project_total_metrics(
     )
 
 
-async def _get_latest_anomaly_rows(
+async def _get_latest_anomaly_rows_multi(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    scope_type: str,
+    scope_types: list[str],
     event_ids: list[uuid.UUID] | None = None,
 ) -> list[MetricAnomaly]:
+    """Latest MetricAnomaly row per (scan_config_id, scope_type, scope_ref),
+    across all requested scope_types in a single round-trip."""
+    if not scope_types:
+        return []
     latest_subquery = (
         select(
             MetricAnomaly.scan_config_id.label("scan_config_id"),
@@ -699,7 +704,7 @@ async def _get_latest_anomaly_rows(
         .join(ScanConfig, ScanConfig.id == MetricAnomaly.scan_config_id)
         .where(
             ScanConfig.project_id == project_id,
-            MetricAnomaly.scope_type == scope_type,
+            MetricAnomaly.scope_type.in_(scope_types),
         )
         .group_by(
             MetricAnomaly.scan_config_id,
@@ -708,7 +713,6 @@ async def _get_latest_anomaly_rows(
         )
         .subquery()
     )
-
     query = (
         select(MetricAnomaly)
         .join(
@@ -720,23 +724,40 @@ async def _get_latest_anomaly_rows(
         )
         .order_by(MetricAnomaly.bucket.desc())
     )
-    if scope_type == SCOPE_EVENT and event_ids is not None:
-        query = query.where(MetricAnomaly.event_id.in_(event_ids))
-
+    if SCOPE_EVENT in scope_types and event_ids is not None:
+        # Keep other scope_types unfiltered; restrict only the EVENT-scope rows.
+        query = query.where(
+            (MetricAnomaly.scope_type != SCOPE_EVENT) | MetricAnomaly.event_id.in_(event_ids)
+        )
     result = await session.execute(query)
     return list(result.scalars().all())
 
 
-async def _get_latest_metric_bucket_map(
+async def _get_latest_metric_buckets_multi(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    scope_type: str,
+    scope_types: list[str],
     event_ids: list[uuid.UUID] | None = None,
 ) -> dict[tuple[uuid.UUID, str, str], datetime]:
-    if scope_type == SCOPE_PROJECT_TOTAL:
-        query = (
-            select(EventMetric.scan_config_id, func.max(EventMetric.bucket))
+    """Single-round-trip UNION of the scope-specific metric-bucket queries.
+
+    ``scope_ref`` stays as a native UUID in the SQL layer (all three branches
+    project a UUID column), and we stringify once in Python — this matches
+    ``MetricAnomaly.scope_ref`` which is also ``str(uuid)`` (hyphenated). A
+    SQL-level ``CAST(uuid AS VARCHAR)`` would diverge between dialects
+    (SQLite returns 32-char hex, Postgres returns hyphenated) and break
+    key-matching against MetricAnomaly on SQLite tests.
+    """
+    subs = []
+    if SCOPE_PROJECT_TOTAL in scope_types:
+        subs.append(
+            select(
+                EventMetric.scan_config_id.label("scan_config_id"),
+                literal(SCOPE_PROJECT_TOTAL).label("scope_type"),
+                EventMetric.scan_config_id.label("scope_ref_uuid"),
+                func.max(EventMetric.bucket).label("bucket"),
+            )
             .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
             .where(
                 ScanConfig.project_id == project_id,
@@ -745,18 +766,13 @@ async def _get_latest_metric_bucket_map(
             )
             .group_by(EventMetric.scan_config_id)
         )
-        rows = (await session.execute(query)).all()
-        return {
-            (scan_config_id, SCOPE_PROJECT_TOTAL, str(scan_config_id)): bucket
-            for scan_config_id, bucket in rows
-        }
-
-    if scope_type == SCOPE_EVENT_TYPE:
-        event_type_query = (
+    if SCOPE_EVENT_TYPE in scope_types:
+        subs.append(
             select(
-                EventMetric.scan_config_id,
-                EventMetric.event_type_id,
-                func.max(EventMetric.bucket),
+                EventMetric.scan_config_id.label("scan_config_id"),
+                literal(SCOPE_EVENT_TYPE).label("scope_type"),
+                EventMetric.event_type_id.label("scope_ref_uuid"),
+                func.max(EventMetric.bucket).label("bucket"),
             )
             .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
             .where(
@@ -766,29 +782,43 @@ async def _get_latest_metric_bucket_map(
             )
             .group_by(EventMetric.scan_config_id, EventMetric.event_type_id)
         )
-        event_type_rows = (await session.execute(event_type_query)).all()
-        return {
-            (scan_config_id, SCOPE_EVENT_TYPE, str(event_type_id)): bucket
-            for scan_config_id, event_type_id, bucket in event_type_rows
-            if event_type_id is not None
-        }
-
-    event_query = (
-        select(EventMetric.scan_config_id, EventMetric.event_id, func.max(EventMetric.bucket))
-        .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
-        .where(
-            ScanConfig.project_id == project_id,
-            EventMetric.event_id.is_not(None),
+    if SCOPE_EVENT in scope_types:
+        event_sub = (
+            select(
+                EventMetric.scan_config_id.label("scan_config_id"),
+                literal(SCOPE_EVENT).label("scope_type"),
+                EventMetric.event_id.label("scope_ref_uuid"),
+                func.max(EventMetric.bucket).label("bucket"),
+            )
+            .join(ScanConfig, ScanConfig.id == EventMetric.scan_config_id)
+            .where(
+                ScanConfig.project_id == project_id,
+                EventMetric.event_id.is_not(None),
+            )
+            .group_by(EventMetric.scan_config_id, EventMetric.event_id)
         )
-    )
-    if event_ids:
-        event_query = event_query.where(EventMetric.event_id.in_(event_ids))
-    event_query = event_query.group_by(EventMetric.scan_config_id, EventMetric.event_id)
-    event_rows = (await session.execute(event_query)).all()
+        if event_ids:
+            event_sub = event_sub.where(EventMetric.event_id.in_(event_ids))
+        subs.append(event_sub)
+
+    if not subs:
+        return {}
+
+    combined = union_all(*subs).subquery()
+    rows = (
+        await session.execute(
+            select(
+                combined.c.scan_config_id,
+                combined.c.scope_type,
+                combined.c.scope_ref_uuid,
+                combined.c.bucket,
+            )
+        )
+    ).all()
     return {
-        (scan_config_id, SCOPE_EVENT, str(event_id)): bucket
-        for scan_config_id, event_id, bucket in event_rows
-        if event_id is not None
+        (scan_config_id, scope_type, str(scope_ref_uuid)): bucket
+        for scan_config_id, scope_type, scope_ref_uuid, bucket in rows
+        if scope_ref_uuid is not None
     }
 
 
@@ -797,34 +827,44 @@ async def get_active_signals(
     slug: str,
     event_ids: list[uuid.UUID] | None = None,
 ) -> list[MetricSignalResponse]:
+    # Cache only the unfiltered variant (covers the common "all signals for project"
+    # EventsPage fetch). Filtered variants have too many permutations — pass through.
+    cacheable = not event_ids
+    if cacheable:
+        cached = await cache.get_json(cache.key_signals_all(slug))
+        if cached is not None:
+            return [MetricSignalResponse.model_validate(item) for item in cached]
+
     project = await _resolve_project(session, slug)
+    scope_types = [SCOPE_PROJECT_TOTAL, SCOPE_EVENT_TYPE]
+    if event_ids:
+        scope_types.append(SCOPE_EVENT)
+
+    # Two round-trips (anomalies + metrics) for all scope types combined,
+    # instead of 2×per-scope (4–6 RTTs) in the old loop.
+    latest_anomalies = await _get_latest_anomaly_rows_multi(
+        session, project_id=project.id, scope_types=scope_types, event_ids=event_ids
+    )
+    latest_metrics = await _get_latest_metric_buckets_multi(
+        session, project_id=project.id, scope_types=scope_types, event_ids=event_ids
+    )
 
     signals: list[MetricSignalResponse] = []
-    for scope_type in (SCOPE_PROJECT_TOTAL, SCOPE_EVENT_TYPE, SCOPE_EVENT):
-        if scope_type == SCOPE_EVENT and not event_ids:
-            continue
-
-        latest_anomalies = await _get_latest_anomaly_rows(
-            session,
-            project_id=project.id,
-            scope_type=scope_type,
-            event_ids=event_ids,
+    for anomaly in latest_anomalies:
+        key = (anomaly.scan_config_id, anomaly.scope_type, anomaly.scope_ref)
+        latest_metric_bucket = latest_metrics.get(key)
+        state = classify_signal_state(
+            anomaly_bucket=anomaly.bucket,
+            latest_metric_bucket=latest_metric_bucket,
         )
-        latest_metrics = await _get_latest_metric_bucket_map(
-            session,
-            project_id=project.id,
-            scope_type=scope_type,
-            event_ids=event_ids,
-        )
-        for anomaly in latest_anomalies:
-            key = (anomaly.scan_config_id, anomaly.scope_type, anomaly.scope_ref)
-            latest_metric_bucket = latest_metrics.get(key)
-            state = classify_signal_state(
-                anomaly_bucket=anomaly.bucket,
-                latest_metric_bucket=latest_metric_bucket,
-            )
-            if state is not None:
-                signals.append(_signal_from_anomaly(anomaly, state=state))
+        if state is not None:
+            signals.append(_signal_from_anomaly(anomaly, state=state))
 
     signals.sort(key=lambda signal: signal.bucket, reverse=True)
+    if cacheable:
+        await cache.set_json(
+            cache.key_signals_all(slug),
+            [signal.model_dump(mode="json") for signal in signals],
+            ttl_seconds=30,
+        )
     return signals

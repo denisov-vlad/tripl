@@ -1,13 +1,21 @@
+import asyncio
 import uuid
+from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl import cache
 from tripl.config import settings
-from tripl.models.data_source import DataSource
-from tripl.schemas.data_source import DataSourceCreate, DataSourceResponse, DataSourceUpdate
+from tripl.models.data_source import DataSource, TestStatus
+from tripl.schemas.data_source import (
+    DataSourceCreate,
+    DataSourceResponse,
+    DataSourceTestResponse,
+    DataSourceUpdate,
+)
 
 
 def _encrypt_password(password: str) -> str:
@@ -20,12 +28,31 @@ def _encrypt_password(password: str) -> str:
     return f.encrypt(password.encode()).decode()
 
 
+def _decrypt_password(encrypted: str) -> str:
+    if not encrypted:
+        return ""
+    if not settings.encryption_key:
+        return encrypted
+    f = Fernet(settings.encryption_key.encode())
+    return f.decrypt(encrypted.encode()).decode()
+
+
 async def list_data_sources(session: AsyncSession) -> list[DataSourceResponse]:
+    cached = await cache.get_json(cache.key_data_sources_list())
+    if cached is not None:
+        return [DataSourceResponse.model_validate(item) for item in cached]
+
     result = await session.execute(
-        select(DataSource).order_by(DataSource.created_at.desc())
+        select(DataSource).order_by(DataSource.created_at.desc()).limit(1000)
     )
     rows = result.scalars().all()
-    return [_to_response(ds) for ds in rows]
+    responses = [_to_response(ds) for ds in rows]
+    await cache.set_json(
+        cache.key_data_sources_list(),
+        [r.model_dump(mode="json") for r in responses],
+        ttl_seconds=300,
+    )
+    return responses
 
 
 async def get_data_source(session: AsyncSession, ds_id: uuid.UUID) -> DataSourceResponse:
@@ -56,6 +83,7 @@ async def create_data_source(
     session.add(ds)
     await session.commit()
     await session.refresh(ds)
+    await cache.delete_prefix(cache.prefix_data_sources())
     return _to_response(ds)
 
 
@@ -76,6 +104,7 @@ async def update_data_source(
 
     await session.commit()
     await session.refresh(ds)
+    await cache.delete_prefix(cache.prefix_data_sources())
     return _to_response(ds)
 
 
@@ -83,6 +112,7 @@ async def delete_data_source(session: AsyncSession, ds_id: uuid.UUID) -> None:
     ds = await _fetch_data_source(session, ds_id)
     await session.delete(ds)
     await session.commit()
+    await cache.delete_prefix(cache.prefix_data_sources())
 
 
 async def _fetch_data_source(session: AsyncSession, ds_id: uuid.UUID) -> DataSource:
@@ -106,6 +136,64 @@ def _to_response(ds: DataSource) -> DataSourceResponse:
         username=ds.username,
         password_set=bool(ds.password_encrypted),
         extra_params=ds.extra_params,
+        last_test_at=ds.last_test_at,
+        last_test_status=ds.last_test_status,
+        last_test_message=ds.last_test_message,
         created_at=ds.created_at,
         updated_at=ds.updated_at,
+    )
+
+
+def _run_adapter_test(ds: DataSource) -> tuple[bool, str]:
+    """Open a sync adapter, run a probe, return (ok, message). Always closes."""
+    if ds.db_type != "clickhouse":
+        return False, f"Unsupported db_type: {ds.db_type}"
+
+    from tripl.worker.adapters.clickhouse import ClickHouseAdapter
+
+    try:
+        adapter = ClickHouseAdapter(
+            host=ds.host,
+            port=ds.port,
+            database=ds.database_name,
+            username=ds.username,
+            password=_decrypt_password(ds.password_encrypted),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+    try:
+        ok = bool(adapter.test_connection())
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+    finally:
+        try:
+            adapter.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return (ok, "Connection successful" if ok else "Connection probe returned no rows")
+
+
+async def test_data_source_connection(
+    session: AsyncSession, ds_id: uuid.UUID
+) -> DataSourceTestResponse:
+    ds = await _fetch_data_source(session, ds_id)
+    success, message = await asyncio.to_thread(_run_adapter_test, ds)
+    tested_at = datetime.now(UTC)
+
+    ds.last_test_at = tested_at
+    ds.last_test_status = (
+        TestStatus.success.value if success else TestStatus.failed.value
+    )
+    ds.last_test_message = message
+    await session.commit()
+    await session.refresh(ds)
+    await cache.delete_prefix(cache.prefix_data_sources())
+
+    return DataSourceTestResponse(
+        success=success,
+        message=message,
+        tested_at=tested_at,
+        data_source=_to_response(ds),
     )

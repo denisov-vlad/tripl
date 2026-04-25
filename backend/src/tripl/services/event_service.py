@@ -1,9 +1,10 @@
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl import cache
 from tripl.models.event import Event
 from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
@@ -42,7 +43,7 @@ async def list_events(
     reviewed: bool | None = None,
     archived: bool | None = None,
     offset: int = 0,
-    limit: int = 10000,
+    limit: int = 200,
 ) -> tuple[list[Event], int]:
     project_id = await get_project_id_by_slug(session, slug)
     query = select(Event).where(Event.project_id == project_id)
@@ -149,6 +150,7 @@ async def create_event(session: AsyncSession, slug: str, data: EventCreate) -> E
 
     await session.commit()
     await session.refresh(event)
+    await cache.delete_prefix(cache.prefix_projects())
     return event
 
 
@@ -206,6 +208,7 @@ async def update_event(
 
     await session.commit()
     await session.refresh(event)
+    await cache.delete_prefix(cache.prefix_projects())
     return event
 
 
@@ -213,6 +216,7 @@ async def delete_event(session: AsyncSession, slug: str, event_id: uuid.UUID) ->
     event = await get_event(session, slug, event_id)
     await session.delete(event)
     await session.commit()
+    await cache.delete_prefix(cache.prefix_projects())
 
 
 async def bulk_delete_events(
@@ -221,21 +225,25 @@ async def bulk_delete_events(
     data: EventBulkDelete,
 ) -> None:
     project_id = await get_project_id_by_slug(session, slug)
-    result = await session.execute(
-        select(Event).where(
+    # Validate all ids exist + belong to this project in a single count query.
+    present = await session.scalar(
+        select(func.count(Event.id)).where(
             Event.project_id == project_id,
             Event.id.in_(data.event_ids),
         )
     )
-    events = list(result.scalars().all())
-    found_ids = {event.id for event in events}
-    missing_ids = [event_id for event_id in data.event_ids if event_id not in found_ids]
-    if missing_ids:
+    if (present or 0) != len(data.event_ids):
         raise HTTPException(status_code=404, detail="One or more events were not found")
 
-    for event in events:
-        await session.delete(event)
+    # Single DELETE with IN-list; child rows go via FK ondelete=CASCADE in the DB.
+    await session.execute(
+        delete(Event).where(
+            Event.project_id == project_id,
+            Event.id.in_(data.event_ids),
+        )
+    )
     await session.commit()
+    await cache.delete_prefix(cache.prefix_projects())
 
 
 async def move_event(
@@ -273,8 +281,82 @@ async def move_event(
 async def bulk_create_events(
     session: AsyncSession, slug: str, events_data: list[EventCreate]
 ) -> list[Event]:
-    results = []
+    if not events_data:
+        return []
+
+    project_id = await get_project_id_by_slug(session, slug)
+
+    # Batched per-event-type validation: one SELECT per unique event_type_id, then
+    # per-event check using the cached field definitions.
+    unique_event_type_ids = {data.event_type_id for data in events_data}
+    field_defs_by_type: dict[uuid.UUID, dict[uuid.UUID, FieldDefinition]] = {}
+    for event_type_id in unique_event_type_ids:
+        result = await session.execute(
+            select(FieldDefinition).where(FieldDefinition.event_type_id == event_type_id)
+        )
+        field_defs_by_type[event_type_id] = {fd.id: fd for fd in result.scalars().all()}
+
     for data in events_data:
-        event = await create_event(session, slug, data)
-        results.append(event)
-    return results
+        defs = field_defs_by_type[data.event_type_id]
+        provided_ids = {fv.field_definition_id for fv in data.field_values}
+        for fd_id, fd in defs.items():
+            if fd.is_required and fd_id not in provided_ids:
+                raise HTTPException(
+                    status_code=422, detail=f"Required field '{fd.name}' is missing"
+                )
+        for fv in data.field_values:
+            if fv.field_definition_id not in defs:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Field definition {fv.field_definition_id} not found",
+                )
+
+    # One SELECT max(order) instead of N — we assign consecutive orders ourselves.
+    base_order = await _get_next_event_order(session, project_id)
+
+    events: list[Event] = []
+    for i, data in enumerate(events_data):
+        events.append(
+            Event(
+                project_id=project_id,
+                event_type_id=data.event_type_id,
+                name=data.name,
+                description=data.description,
+                order=base_order + i,
+                implemented=data.implemented,
+                reviewed=data.reviewed,
+                archived=data.archived,
+            )
+        )
+    session.add_all(events)
+    await session.flush()
+
+    children: list = []
+    for event, data in zip(events, events_data, strict=True):
+        for fv in data.field_values:
+            children.append(
+                EventFieldValue(
+                    event_id=event.id,
+                    field_definition_id=fv.field_definition_id,
+                    value=fv.value,
+                )
+            )
+        for mv in data.meta_values:
+            children.append(
+                EventMetaValue(
+                    event_id=event.id,
+                    meta_field_definition_id=mv.meta_field_definition_id,
+                    value=mv.value,
+                )
+            )
+        for tag_name in data.tags:
+            children.append(EventTag(event_id=event.id, name=tag_name))
+
+    if children:
+        session.add_all(children)
+
+    await session.commit()
+    for event in events:
+        await session.refresh(event)
+    await cache.delete_prefix(cache.prefix_projects())
+    return events

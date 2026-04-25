@@ -4,19 +4,32 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl import cache
 from tripl.models.event_type import EventType
-from tripl.schemas.event_type import EventTypeCreate, EventTypeUpdate
+from tripl.schemas.event_type import EventTypeCreate, EventTypeResponse, EventTypeUpdate
 from tripl.services.project_service import get_project_id_by_slug
 
 
-async def list_event_types(session: AsyncSession, slug: str) -> list[EventType]:
+async def list_event_types(session: AsyncSession, slug: str) -> list[EventTypeResponse]:
+    cached = await cache.get_json(cache.key_event_types_list(slug))
+    if cached is not None:
+        return [EventTypeResponse.model_validate(item) for item in cached]
+
     project_id = await get_project_id_by_slug(session, slug)
     result = await session.execute(
         select(EventType)
         .where(EventType.project_id == project_id)
         .order_by(EventType.order, EventType.created_at)
+        .limit(1000)  # defensive cap; realistic projects have <100 event types
     )
-    return list(result.scalars().all())
+    rows = list(result.scalars().all())
+    responses = [EventTypeResponse.model_validate(et) for et in rows]
+    await cache.set_json(
+        cache.key_event_types_list(slug),
+        [r.model_dump(mode="json") for r in responses],
+        ttl_seconds=300,
+    )
+    return responses
 
 
 async def get_event_type(session: AsyncSession, slug: str, event_type_id: uuid.UUID) -> EventType:
@@ -43,6 +56,9 @@ async def create_event_type(session: AsyncSession, slug: str, data: EventTypeCre
     session.add(et)
     await session.commit()
     await session.refresh(et)
+    await cache.delete_prefix(cache.prefix_event_types(slug))
+    # Event types are shown on ProjectsPage summary cards via event counts; bust it.
+    await cache.delete_prefix(cache.prefix_projects())
     return et
 
 
@@ -55,6 +71,7 @@ async def update_event_type(
         setattr(et, key, value)
     await session.commit()
     await session.refresh(et)
+    await cache.delete_prefix(cache.prefix_event_types(slug))
     return et
 
 
@@ -62,3 +79,5 @@ async def delete_event_type(session: AsyncSession, slug: str, event_type_id: uui
     et = await get_event_type(session, slug, event_type_id)
     await session.delete(et)
     await session.commit()
+    await cache.delete_prefix(cache.prefix_event_types(slug))
+    await cache.delete_prefix(cache.prefix_projects())

@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl import cache
 from tripl.models.field_definition import FieldDefinition
 from tripl.schemas.field_definition import (
     FieldDefinitionCreate,
@@ -42,6 +43,7 @@ async def create_field(
     session.add(field)
     await session.commit()
     await session.refresh(field)
+    await cache.delete_prefix(cache.prefix_event_types(slug))
     return field
 
 
@@ -66,6 +68,7 @@ async def update_field(
         setattr(field, key, value)
     await session.commit()
     await session.refresh(field)
+    await cache.delete_prefix(cache.prefix_event_types(slug))
     return field
 
 
@@ -83,6 +86,7 @@ async def delete_field(
         raise HTTPException(status_code=404, detail="Field not found")
     await session.delete(field)
     await session.commit()
+    await cache.delete_prefix(cache.prefix_event_types(slug))
 
 
 async def reorder_fields(
@@ -99,4 +103,5 @@ async def reorder_fields(
         if field:
             field.order = idx
     await session.commit()
+    await cache.delete_prefix(cache.prefix_event_types(slug))
     return await list_fields(session, slug, event_type_id)

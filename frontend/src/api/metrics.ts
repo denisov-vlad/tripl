@@ -61,9 +61,14 @@ export const metricsApi = {
   ) => api.post<EventWindowMetrics[]>(`/projects/${slug}/events/window-metrics`, data),
 
   getActiveSignals: (slug: string, eventIds?: string[]) => {
-    const sp = new URLSearchParams()
-    eventIds?.forEach(eventId => sp.append('event_id', eventId))
-    const qs = sp.toString()
-    return api.get<MonitoringSignal[]>(`/projects/${slug}/anomalies/signals${qs ? `?${qs}` : ''}`)
+    // Empty / no ids → cacheable GET. Any filter → POST body, because with
+    // 500+ events we'd otherwise blow past proxy/browser query-string limits.
+    if (!eventIds || eventIds.length === 0) {
+      return api.get<MonitoringSignal[]>(`/projects/${slug}/anomalies/signals`)
+    }
+    return api.post<MonitoringSignal[]>(
+      `/projects/${slug}/anomalies/signals/query`,
+      { event_ids: eventIds },
+    )
   },
 }

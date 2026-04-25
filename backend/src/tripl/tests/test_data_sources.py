@@ -1,6 +1,8 @@
 import pytest
 from httpx import AsyncClient
 
+from tripl.services import datasource_service
+
 
 class TestDataSourcesCRUD:
     async def test_create_data_source(self, client: AsyncClient):
@@ -124,3 +126,71 @@ class TestDataSourcesCRUD:
     async def test_not_found(self, client: AsyncClient):
         resp = await client.get("/api/v1/data-sources/00000000-0000-0000-0000-000000000000")
         assert resp.status_code == 404
+
+
+class TestDataSourceHealth:
+    async def test_test_endpoint_persists_success(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        create_resp = await client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Healthy",
+                "db_type": "clickhouse",
+                "host": "h",
+                "port": 8123,
+                "database_name": "d",
+            },
+        )
+        ds_id = create_resp.json()["id"]
+        # Initially no health.
+        assert create_resp.json()["last_test_status"] is None
+        assert create_resp.json()["last_test_at"] is None
+
+        monkeypatch.setattr(
+            datasource_service,
+            "_run_adapter_test",
+            lambda _ds: (True, "Connection successful"),
+        )
+
+        resp = await client.post(f"/api/v1/data-sources/{ds_id}/test")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["success"] is True
+        assert body["message"] == "Connection successful"
+        assert body["data_source"]["last_test_status"] == "success"
+        assert body["data_source"]["last_test_message"] == "Connection successful"
+        assert body["data_source"]["last_test_at"] is not None
+
+        # Subsequent list / get returns the persisted status.
+        get_resp = await client.get(f"/api/v1/data-sources/{ds_id}")
+        assert get_resp.json()["last_test_status"] == "success"
+
+    async def test_test_endpoint_persists_failure(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        create_resp = await client.post(
+            "/api/v1/data-sources",
+            json={
+                "name": "Sick",
+                "db_type": "clickhouse",
+                "host": "h",
+                "port": 8123,
+                "database_name": "d",
+            },
+        )
+        ds_id = create_resp.json()["id"]
+
+        monkeypatch.setattr(
+            datasource_service,
+            "_run_adapter_test",
+            lambda _ds: (False, "DNS lookup failed"),
+        )
+
+        resp = await client.post(f"/api/v1/data-sources/{ds_id}/test")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert body["message"] == "DNS lookup failed"
+        assert body["data_source"]["last_test_status"] == "failed"
+        assert body["data_source"]["last_test_message"] == "DNS lookup failed"

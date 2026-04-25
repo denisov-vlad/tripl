@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { DataSource, DbType } from '../types'
+import type { DataSource, DataSourceTestResult, DbType } from '../types'
 
 export const dataSourcesApi = {
   list: () =>
@@ -32,5 +32,5 @@ export const dataSourcesApi = {
     api.del(`/data-sources/${id}`),
 
   testConnection: (id: string) =>
-    api.post<{ task_id: string; status: string }>(`/data-sources/${id}/test`, {}),
+    api.post<DataSourceTestResult>(`/data-sources/${id}/test`, {}),
 }

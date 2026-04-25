@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 import sqlalchemy as sa
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
@@ -20,6 +20,7 @@ class ScanJobStatus(enum.StrEnum):
 
 class ScanJob(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "scan_jobs"
+    __table_args__ = (Index("ix_scan_job_config", "scan_config_id"),)
 
     scan_config_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("scan_configs.id", ondelete="CASCADE")

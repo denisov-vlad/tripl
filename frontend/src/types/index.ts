@@ -70,6 +70,22 @@ export interface Project {
   summary: ProjectSummary
 }
 
+export type ActivityItemType = 'anomaly' | 'scan' | 'alert' | 'event'
+export type ActivityItemSeverity = 'high' | 'medium' | 'low'
+
+export interface ActivityItem {
+  id: string
+  project_id: string
+  project_slug: string
+  project_name: string
+  type: ActivityItemType
+  severity: ActivityItemSeverity
+  title: string
+  detail: string
+  occurred_at: string
+  target_path: string | null
+}
+
 export interface EventType {
   id: string
   project_id: string
@@ -179,6 +195,8 @@ export interface Variable {
 
 export type DbType = 'clickhouse'
 
+export type DataSourceTestStatus = 'success' | 'failed'
+
 export interface DataSource {
   id: string
   name: string
@@ -189,8 +207,18 @@ export interface DataSource {
   username: string
   password_set: boolean
   extra_params: Record<string, unknown> | null
+  last_test_at: string | null
+  last_test_status: DataSourceTestStatus | null
+  last_test_message: string | null
   created_at: string
   updated_at: string
+}
+
+export interface DataSourceTestResult {
+  success: boolean
+  message: string
+  tested_at: string
+  data_source: DataSource
 }
 
 export type IntervalCode = '15m' | '1h' | '6h' | '1d' | '1w'

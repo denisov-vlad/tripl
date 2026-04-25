@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import String, and_, case, cast, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tripl import cache
 from tripl.models.alert_destination import AlertDestination
 from tripl.models.event import Event
 from tripl.models.event_metric import EventMetric
@@ -386,10 +387,20 @@ def _serialize_projects(
 
 
 async def list_projects(session: AsyncSession) -> list[ProjectResponse]:
+    cached = await cache.get_json(cache.key_projects_list())
+    if cached is not None:
+        return [ProjectResponse.model_validate(item) for item in cached]
+
     result = await session.execute(select(Project).order_by(Project.created_at.desc()))
     projects = list(result.scalars().all())
     summaries = await _get_project_summaries(session, [project.id for project in projects])
-    return _serialize_projects(projects, summaries)
+    responses = _serialize_projects(projects, summaries)
+    await cache.set_json(
+        cache.key_projects_list(),
+        [response.model_dump(mode="json") for response in responses],
+        ttl_seconds=60,
+    )
+    return responses
 
 
 async def get_project_by_slug(session: AsyncSession, slug: str) -> Project:
@@ -413,6 +424,7 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> ProjectR
     session.add(project)
     await session.commit()
     await session.refresh(project)
+    await cache.delete_prefix(cache.prefix_projects())
     return await _serialize_project(session, project)
 
 
@@ -423,6 +435,7 @@ async def update_project(session: AsyncSession, slug: str, data: ProjectUpdate) 
         setattr(project, key, value)
     await session.commit()
     await session.refresh(project)
+    await cache.delete_prefix(cache.prefix_projects())
     return await _serialize_project(session, project)
 
 
@@ -430,6 +443,7 @@ async def delete_project(session: AsyncSession, slug: str) -> None:
     project = await get_project_by_slug(session, slug)
     await session.delete(project)
     await session.commit()
+    await cache.delete_prefix(cache.prefix_projects())
 
 
 async def get_project_id_by_slug(session: AsyncSession, slug: str) -> uuid.UUID:

@@ -36,7 +36,17 @@ class DataSourceResponse(BaseModel):
     username: str
     password_set: bool
     extra_params: dict | None
+    last_test_at: datetime | None
+    last_test_status: str | None
+    last_test_message: str | None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DataSourceTestResponse(BaseModel):
+    success: bool
+    message: str
+    tested_at: datetime
+    data_source: DataSourceResponse

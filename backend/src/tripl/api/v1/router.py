@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from tripl.api.deps import get_current_user
+from tripl.api.v1.activity import router as activity_router
 from tripl.api.v1.alerting import router as alerting_router
 from tripl.api.v1.auth import router as auth_router
 from tripl.api.v1.data_sources import router as data_sources_router
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/api/v1")
 protected_dependencies = [Depends(get_current_user)]
 
 router.include_router(auth_router)
+router.include_router(activity_router, dependencies=protected_dependencies)
 router.include_router(projects_router, dependencies=protected_dependencies)
 router.include_router(project_anomaly_settings_router, dependencies=protected_dependencies)
 router.include_router(alerting_router, dependencies=protected_dependencies)

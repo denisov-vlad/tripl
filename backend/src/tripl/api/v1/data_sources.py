@@ -3,7 +3,12 @@ import uuid
 from fastapi import APIRouter
 
 from tripl.api.deps import SessionDep
-from tripl.schemas.data_source import DataSourceCreate, DataSourceResponse, DataSourceUpdate
+from tripl.schemas.data_source import (
+    DataSourceCreate,
+    DataSourceResponse,
+    DataSourceTestResponse,
+    DataSourceUpdate,
+)
 from tripl.services import datasource_service
 
 router = APIRouter(
@@ -39,11 +44,6 @@ async def delete_data_source(session: SessionDep, ds_id: uuid.UUID):
     await datasource_service.delete_data_source(session, ds_id)
 
 
-@router.post("/{ds_id}/test")
+@router.post("/{ds_id}/test", response_model=DataSourceTestResponse)
 async def test_data_source_connection(session: SessionDep, ds_id: uuid.UUID):
-    # Verify data source exists
-    await datasource_service.get_data_source(session, ds_id)
-    from tripl.worker.tasks.scan import test_connection
-
-    result = test_connection.delay(str(ds_id))
-    return {"task_id": result.id, "status": "dispatched"}
+    return await datasource_service.test_data_source_connection(session, ds_id)

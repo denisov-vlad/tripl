@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 
 from tripl.api.deps import SessionDep
 from tripl.schemas.event_metric import (
+    ActiveSignalsQuery,
     EventMetricsResponse,
     EventWindowMetricsRequest,
     EventWindowMetricsResponse,
@@ -127,4 +128,21 @@ async def get_active_signals(
     slug: str,
     event_ids: EventIds = None,
 ) -> list[MetricSignalResponse]:
+    """Cacheable no-args variant. For filtering by a large event-id list
+    (>>a few), prefer ``POST /anomalies/signals/query`` — GET's query-string
+    overflow is real once you cross ~50 ids (proxy/browser limits)."""
     return await metrics_service.get_active_signals(session, slug, event_ids=event_ids)
+
+
+@router.post(
+    "/projects/{slug}/anomalies/signals/query",
+    response_model=list[MetricSignalResponse],
+)
+async def query_active_signals(
+    session: SessionDep,
+    slug: str,
+    data: ActiveSignalsQuery,
+) -> list[MetricSignalResponse]:
+    return await metrics_service.get_active_signals(
+        session, slug, event_ids=data.event_ids or None
+    )

@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import {
   Area,
+  Bar,
   ComposedChart,
   CartesianGrid,
   Line,
@@ -11,6 +12,7 @@ import {
 } from 'recharts'
 import { cn } from '@/lib/utils'
 import type { MetricsGranularity } from '@/lib/metrics'
+import { useTheme, type ChartStyle } from '@/components/theme-provider'
 import type { EventMetricPoint } from '@/types'
 
 interface MetricsChartProps {
@@ -125,6 +127,7 @@ export function MetricsChart({
   granularity = 'hour',
   seriesLabel = 'events',
 }: MetricsChartProps) {
+  const { chartStyle } = useTheme()
   const chartColor = color || 'var(--chart-1)'
   const gradientId = useId().replace(/:/g, '')
 
@@ -180,32 +183,103 @@ export function MetricsChart({
             dot={false}
             connectNulls={false}
           />
-          <Area
-            type="monotone"
-            dataKey="count"
-            stroke={chartColor}
-            fill={`url(#${gradientId})`}
-            strokeWidth={2}
-            dot={props => {
-              if (!props.payload?.is_anomaly) return <></>
-              return (
-                <circle
-                  cx={props.cx}
-                  cy={props.cy}
-                  r={4}
-                  fill="var(--destructive)"
-                  stroke="var(--background)"
-                  strokeWidth={2}
-                  data-testid="anomaly-dot"
-                />
-              )
-            }}
-            activeDot={{ r: 4, strokeWidth: 0 }}
-          />
+          {renderCountSeries({
+            chartStyle,
+            chartColor,
+            gradientId,
+            mini: false,
+          })}
         </ComposedChart>
       </ResponsiveContainer>
     </div>
   )
+}
+
+function renderCountSeries({
+  chartStyle,
+  chartColor,
+  gradientId,
+  mini,
+}: {
+  chartStyle: ChartStyle
+  chartColor: string
+  gradientId: string
+  mini: boolean
+}) {
+  const anomalyDot = (props: { cx?: number; cy?: number; payload?: EventMetricPoint }) => {
+    if (!props.payload?.is_anomaly) return <></>
+    const r = mini ? 3 : 4
+    return (
+      <circle
+        cx={props.cx}
+        cy={props.cy}
+        r={r}
+        fill="var(--destructive)"
+        stroke="var(--background)"
+        strokeWidth={mini ? 1.5 : 2}
+        data-testid="anomaly-dot"
+      />
+    )
+  }
+
+  if (chartStyle === 'bar') {
+    return (
+      <Bar
+        dataKey="count"
+        fill={chartColor}
+        radius={[2, 2, 0, 0]}
+        shape={(props: AnomalyBarProps) => <AnomalyBar {...props} chartColor={chartColor} />}
+      />
+    )
+  }
+
+  if (chartStyle === 'line-only') {
+    return (
+      <Line
+        type="monotone"
+        dataKey="count"
+        stroke={chartColor}
+        strokeWidth={2}
+        dot={anomalyDot}
+        activeDot={mini ? false : { r: 4, strokeWidth: 0 }}
+      />
+    )
+  }
+
+  return (
+    <Area
+      type="monotone"
+      dataKey="count"
+      stroke={chartColor}
+      fill={`url(#${gradientId})`}
+      strokeWidth={2}
+      dot={anomalyDot}
+      activeDot={mini ? false : { r: 4, strokeWidth: 0 }}
+    />
+  )
+}
+
+type AnomalyBarProps = {
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  payload?: EventMetricPoint
+}
+
+function AnomalyBar({
+  x,
+  y,
+  width,
+  height,
+  payload,
+  chartColor,
+}: AnomalyBarProps & { chartColor: string }) {
+  if (x === undefined || y === undefined || width === undefined || height === undefined) {
+    return <g />
+  }
+  const fill = payload?.is_anomaly ? 'var(--destructive)' : chartColor
+  return <rect x={x} y={y} width={width} height={height} fill={fill} rx={2} ry={2} />
 }
 
 export function MiniMetricsChart({
@@ -214,6 +288,7 @@ export function MiniMetricsChart({
   color,
   height = 72,
 }: MiniMetricsChartProps) {
+  const { chartStyle } = useTheme()
   const chartColor = color || 'var(--chart-1)'
   const gradientId = useId().replace(/:/g, '')
 
@@ -238,27 +313,12 @@ export function MiniMetricsChart({
               <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
             </linearGradient>
           </defs>
-          <Area
-            type="monotone"
-            dataKey="count"
-            stroke={chartColor}
-            fill={`url(#${gradientId})`}
-            strokeWidth={2}
-            dot={props => {
-              if (!props.payload?.is_anomaly) return <></>
-              return (
-                <circle
-                  cx={props.cx}
-                  cy={props.cy}
-                  r={3}
-                  fill="var(--destructive)"
-                  stroke="var(--background)"
-                  strokeWidth={1.5}
-                />
-              )
-            }}
-            activeDot={false}
-          />
+          {renderCountSeries({
+            chartStyle,
+            chartColor,
+            gradientId,
+            mini: true,
+          })}
         </ComposedChart>
       </ResponsiveContainer>
     </div>

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { eventsApi } from '@/api/events'
@@ -7,6 +7,8 @@ import { eventTypesApi } from '@/api/eventTypes'
 import { metaFieldsApi } from '@/api/metaFields'
 import { variablesApi } from '@/api/variables'
 import { useConfirm } from '@/hooks/useConfirm'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   Event as TEvent,
   EventMetricPoint,
@@ -35,9 +37,16 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
+import { Chip } from '@/components/primitives/chip'
+import { Dot } from '@/components/primitives/dot'
+import { MiniStat, MiniStatDivider } from '@/components/primitives/mini-stat'
+import { Sparkline } from '@/components/primitives/sparkline'
 import { META_FIELD_LINK_PLACEHOLDER, resolveMetaFieldHref } from '@/lib/metaFields'
 import { aggregateMetricPoints, type MetricsGranularity } from '@/lib/metrics'
 import { cn } from '@/lib/utils'
@@ -49,10 +58,12 @@ import {
   ArchiveRestore,
   BarChart3,
   Calendar,
+  Check,
   ChevronDown,
   CircleCheck,
   Eye,
   Filter,
+  LayoutGrid,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -87,6 +98,7 @@ const EMPTY_EVENT_WINDOW_METRICS: {
   total_count: number
   data: EventMetricPoint[]
 }[] = []
+const EMPTY_WINDOW_POINTS: EventMetricPoint[] = []
 const compactCountFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   compactDisplay: 'short',
@@ -201,51 +213,190 @@ function SignalLink({
   )
 }
 
-function EventsTabButton({
-  active,
-  onClick,
-  children,
+function ColumnsMenu({
+  open,
+  onOpenChange,
+  tagsHidden,
+  fieldColumns,
+  metaFields,
+  hiddenColumns,
+  onToggle,
 }: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  tagsHidden: boolean
+  fieldColumns: FieldDefinition[]
+  metaFields: MetaFieldDefinition[]
+  hiddenColumns: Set<string>
+  onToggle: (key: string) => void
+}) {
+  const hasToggleable = fieldColumns.length > 0 || metaFields.length > 0 || true
+  if (!hasToggleable) return null
+  const totalHidden =
+    (tagsHidden ? 1 : 0) +
+    fieldColumns.filter((f) => hiddenColumns.has(`f:${f.id}`)).length +
+    metaFields.filter((mf) => hiddenColumns.has(`m:${mf.id}`)).length
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8 text-xs">
+          <LayoutGrid className="h-3 w-3" />
+          Columns
+          {totalHidden > 0 && (
+            <span
+              className="mono ml-1 tnum text-[10.5px]"
+              style={{ color: 'var(--fg-subtle)' }}
+            >
+              −{totalHidden}
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-60 p-1.5">
+        <div
+          className="px-2 pb-1 pt-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em]"
+          style={{ color: 'var(--fg-subtle)' }}
+        >
+          Toggle columns
+        </div>
+        <ColumnToggle
+          label="Tags"
+          pinned={false}
+          checked={!tagsHidden}
+          onChange={() => onToggle('tags')}
+        />
+        {fieldColumns.length > 0 && (
+          <>
+            <div
+              className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.06em]"
+              style={{ color: 'var(--fg-faint)' }}
+            >
+              Fields
+            </div>
+            {fieldColumns.map((f) => (
+              <ColumnToggle
+                key={f.id}
+                label={f.display_name}
+                pinned={false}
+                checked={!hiddenColumns.has(`f:${f.id}`)}
+                onChange={() => onToggle(`f:${f.id}`)}
+              />
+            ))}
+          </>
+        )}
+        {metaFields.length > 0 && (
+          <>
+            <div
+              className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.06em]"
+              style={{ color: 'var(--fg-faint)' }}
+            >
+              Meta
+            </div>
+            {metaFields.map((mf) => (
+              <ColumnToggle
+                key={mf.id}
+                label={mf.display_name}
+                pinned={false}
+                checked={!hiddenColumns.has(`m:${mf.id}`)}
+                onChange={() => onToggle(`m:${mf.id}`)}
+              />
+            ))}
+          </>
+        )}
+        <div
+          className="border-t px-2 pb-1 pt-2 text-[10px]"
+          style={{ borderColor: 'var(--border-subtle)', color: 'var(--fg-faint)' }}
+        >
+          Event, Type, {ROW_METRICS_LABEL}, Actions are pinned
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function ColumnToggle({
+  label,
+  pinned,
+  checked,
+  onChange,
+}: {
+  label: string
+  pinned: boolean
+  checked: boolean
+  onChange: () => void
 }) {
   return (
     <button
       type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium outline-none transition-all',
-        'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-        active
-          ? 'bg-background text-foreground shadow-sm'
-          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-      )}
+      disabled={pinned}
+      onClick={onChange}
+      className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] hover:bg-[var(--surface-hover)] disabled:cursor-not-allowed"
+      style={{ color: pinned ? 'var(--fg-faint)' : 'var(--fg)' }}
     >
-      {children}
+      <span
+        className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border"
+        style={{
+          background: checked ? 'var(--accent)' : 'transparent',
+          borderColor: checked ? 'var(--accent)' : 'var(--border-strong)',
+        }}
+      >
+        {checked && <Check className="h-2.5 w-2.5" style={{ color: 'var(--accent-fg)' }} />}
+      </span>
+      <span className="flex-1 truncate">{label}</span>
+      {pinned && (
+        <span
+          className="text-[9px] uppercase tracking-[0.05em]"
+          style={{ color: 'var(--fg-faint)' }}
+        >
+          pinned
+        </span>
+      )}
     </button>
   )
 }
 
-function EventWindowMetricsCell({
+const EventWindowMetricsCell = memo(function EventWindowMetricsCell({
   eventName,
   color,
   totalCount,
   data,
+  anomalyIdx,
+  signalTone,
 }: {
   eventName: string
   color: string
   totalCount: number | undefined
   data: EventMetricPoint[]
+  anomalyIdx?: number | null
+  signalTone?: 'danger' | 'warning' | null
 }) {
   const label = totalCount == null ? '—' : formatCompactCount(totalCount)
+  const counts = data.map((p) => p.count)
+  const sparkColor =
+    signalTone === 'danger'
+      ? 'var(--danger)'
+      : signalTone === 'warning'
+        ? 'var(--warning)'
+        : color || 'var(--accent)'
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" className="font-mono text-xs text-muted-foreground hover:text-foreground">
-          {label}
+        <button
+          type="button"
+          className="tnum mono inline-flex items-center gap-2 text-[11.5px] font-medium hover:text-foreground"
+          style={{ color: signalTone ? sparkColor : 'var(--fg-muted)' }}
+        >
+          {counts.length > 1 && (
+            <Sparkline
+              data={counts}
+              color={sparkColor}
+              width={60}
+              height={16}
+              anomalyIdx={anomalyIdx ?? null}
+            />
+          )}
+          <span>{label}</span>
         </button>
       </TooltipTrigger>
       <TooltipContent
@@ -265,9 +416,9 @@ function EventWindowMetricsCell({
       </TooltipContent>
     </Tooltip>
   )
-}
+})
 
-function EventRowActions({
+const EventRowActions = memo(function EventRowActions({
   event,
   slug,
   canMoveUp,
@@ -446,7 +597,191 @@ function EventRowActions({
       </div>
     </div>
   )
+})
+
+type RowAction =
+  | 'edit'
+  | 'navigate-monitoring'
+  | 'move-up'
+  | 'move-down'
+  | 'toggle-reviewed'
+  | 'toggle-implemented'
+  | 'toggle-archived'
+  | 'delete'
+
+type EventRowProps = {
+  ev: TEvent
+  selected: boolean
+  hideType: boolean
+  hideTags: boolean
+  fieldColumns: FieldDefinition[]
+  metaFields: MetaFieldDefinition[]
+  slug: string
+  canMoveUp: boolean
+  canMoveDown: boolean
+  expandedFieldId: string | null
+  rowSignal: MonitoringSignal | undefined
+  windowTotal: number | undefined
+  windowData: EventMetricPoint[]
+  getFieldValue: (ev: TEvent, f: FieldDefinition) => string
+  onToggleSelected: (id: string, checked: boolean) => void
+  onToggleExpanded: (cellKey: string | null) => void
+  onRowAction: (action: RowAction, ev: TEvent) => void
 }
+
+const EventRow = memo(function EventRow({
+  ev,
+  selected,
+  hideType,
+  hideTags,
+  fieldColumns,
+  metaFields,
+  slug,
+  canMoveUp,
+  canMoveDown,
+  expandedFieldId,
+  rowSignal,
+  windowTotal,
+  windowData,
+  getFieldValue,
+  onToggleSelected,
+  onToggleExpanded,
+  onRowAction,
+}: EventRowProps) {
+  const mvMap = useMemo(
+    () => Object.fromEntries(ev.meta_values.map((mv) => [mv.meta_field_definition_id, mv.value])),
+    [ev.meta_values],
+  )
+  const anomalyIdx = windowData.findIndex((p) => p.is_anomaly)
+  const signalTone: 'danger' | 'warning' | null = rowSignal
+    ? rowSignal.state === 'latest_scan'
+      ? 'danger'
+      : 'warning'
+    : null
+  const statusTone: 'success' | 'warning' | 'neutral' = ev.archived
+    ? 'neutral'
+    : ev.implemented
+      ? 'success'
+      : ev.reviewed
+        ? 'warning'
+        : 'neutral'
+
+  return (
+    <TableRow data-state={selected ? 'selected' : undefined}>
+      <TableCell className="tripl-pin-l pl-5">
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(checked) => onToggleSelected(ev.id, checked === true)}
+          aria-label={`Select ${ev.name}`}
+        />
+      </TableCell>
+      <TableCell className="font-medium">
+        <div className="inline-flex max-w-full items-center gap-2 align-middle">
+          <Dot tone={signalTone ?? statusTone} pulse={!!signalTone} size={6} />
+          <button
+            className="mono truncate text-left text-[12.5px] hover:underline underline-offset-4"
+            onClick={() => onRowAction('navigate-monitoring', ev)}
+            title={ev.name}
+          >
+            {ev.name}
+          </button>
+        </div>
+      </TableCell>
+      {!hideType && (
+        <TableCell>
+          <Chip size="xs">
+            <span
+              className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ backgroundColor: ev.event_type.color }}
+            />
+            {ev.event_type.name}
+          </Chip>
+        </TableCell>
+      )}
+      <TableCell className="text-right">
+        <div className="inline-flex items-center justify-end gap-2 align-middle">
+          <SignalLink slug={slug} signal={rowSignal} compact />
+          <EventWindowMetricsCell
+            eventName={ev.name}
+            color={ev.event_type.color}
+            totalCount={windowTotal}
+            data={windowData}
+            anomalyIdx={anomalyIdx >= 0 ? anomalyIdx : null}
+            signalTone={signalTone}
+          />
+        </div>
+      </TableCell>
+      {!hideTags && (
+        <TableCell>
+          <div className="flex flex-wrap gap-1">
+            {ev.tags.map((t) => (
+              <Chip key={t.id} size="xs">{t.name}</Chip>
+            ))}
+            {ev.tags.length === 0 && (
+              <span className="text-[11px]" style={{ color: 'var(--fg-faint)' }}>—</span>
+            )}
+          </div>
+        </TableCell>
+      )}
+      {fieldColumns.map((f) => {
+        let val = getFieldValue(ev, f)
+        if (val && /^-?\d+\.0+$/.test(val)) val = String(parseInt(val, 10))
+        const cellKey = `${ev.id}-${f.id}`
+        const isExpanded = expandedFieldId === f.id
+        const isLong = typeof val === 'string' && val.length > 30
+        return (
+          <TableCell
+            key={f.id}
+            className={`text-xs ${isLong ? 'cursor-pointer' : ''} ${isExpanded ? '' : 'max-w-40'}`}
+            onClick={isLong ? () => onToggleExpanded(cellKey) : undefined}
+          >
+            {isExpanded ? (
+              <pre className="whitespace-pre-wrap break-all font-mono text-[11px] max-w-sm">{(() => {
+                try { return JSON.stringify(JSON.parse(val), null, 2) } catch { return val }
+              })()}</pre>
+            ) : (
+              <span className={isLong ? 'block truncate' : ''}>{val}</span>
+            )}
+          </TableCell>
+        )
+      })}
+      {metaFields.map((mf) => (
+          <TableCell key={mf.id} className="text-muted-foreground max-w-40 truncate text-xs">
+            {resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ? (
+              <a
+                href={resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block truncate text-primary underline-offset-4 hover:underline"
+                title={mvMap[mf.id]}
+              >
+                {mvMap[mf.id]}
+              </a>
+            ) : mf.field_type === 'boolean' && mvMap[mf.id] ? (
+              <Badge variant={mvMap[mf.id] === 'true' ? 'success' : 'secondary'} className="text-[10px]">
+                {mvMap[mf.id] === 'true' ? 'Yes' : 'No'}
+              </Badge>
+            ) : mvMap[mf.id] ?? ''}
+          </TableCell>
+        ))}
+      <TableCell className="sticky right-0 z-10 border-l bg-background/95 pl-3 pr-2 backdrop-blur-sm hover:z-40 focus-within:z-40">
+        <EventRowActions
+          event={ev}
+          slug={slug}
+          canMoveUp={canMoveUp}
+          canMoveDown={canMoveDown}
+          onEdit={() => onRowAction('edit', ev)}
+          onMoveUp={() => onRowAction('move-up', ev)}
+          onMoveDown={() => onRowAction('move-down', ev)}
+          onToggleReviewed={() => onRowAction('toggle-reviewed', ev)}
+          onToggleImplemented={() => onRowAction('toggle-implemented', ev)}
+          onToggleArchived={() => onRowAction('toggle-archived', ev)}
+          onDelete={() => onRowAction('delete', ev)}
+        />
+      </TableCell>
+    </TableRow>
+  )
+})
 
 export default function EventsPage() {
   const { slug, tab: urlTab, eventId: urlEventId } = useParams<{ slug: string; tab?: string; eventId?: string }>()
@@ -456,10 +791,6 @@ export default function EventsPage() {
 
   // Derive active tab from URL (default 'all')
   const activeTab = urlTab || 'all'
-  const setActiveTab = useCallback((tab: string) => {
-    const path = tab === 'all' ? `/p/${slug}/events` : `/p/${slug}/events/${tab}`
-    navigate(path + (searchParams.toString() ? `?${searchParams}` : ''), { replace: true })
-  }, [slug, navigate, searchParams])
 
   // Derive filters from URL search params
   const search = searchParams.get('q') || ''
@@ -547,6 +878,22 @@ export default function EventsPage() {
   const [tabMetricsRangeDays, setTabMetricsRangeDays] = useState(TAB_METRICS_RANGE_DAYS_DEFAULT)
   const [tabMetricsGranularity, setTabMetricsGranularity] = useState<MetricsGranularity>('hour')
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([])
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('tripl.eventsHiddenCols')
+      if (!raw) return new Set()
+      return new Set(JSON.parse(raw) as string[])
+    } catch { return new Set() }
+  })
+  const [colMenuOpen, setColMenuOpen] = useState(false)
+  const toggleColumn = useCallback((key: string) => {
+    setHiddenColumns((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      try { localStorage.setItem('tripl.eventsHiddenCols', JSON.stringify([...next])) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
   const { confirm, dialog } = useConfirm()
 
   // Open event from URL param
@@ -592,25 +939,29 @@ export default function EventsPage() {
     return { time_from: from.toISOString(), time_to: to.toISOString() }
   }, [])
 
+  const debouncedSearch = useDebouncedValue(search, 200)
+
   const eventsQuery = useQuery({
-    queryKey: ['events', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
+    queryKey: ['events', slug, filterEtId, debouncedSearch, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
     queryFn: () => eventsApi.list(slug!, {
       event_type_id: filterEtId,
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       implemented: filterImplemented,
       reviewed: filterReviewedForQuery,
       archived: filterArchivedForQuery,
       tag: filterTag || undefined,
+      limit: 2000,
     }),
     enabled: !!slug,
+    placeholderData: (prev) => prev,
   })
   const eventsData = eventsQuery.data
 
   const { data: tabMetrics, isLoading: tabMetricsLoading } = useQuery({
-    queryKey: ['eventsMetrics', slug, filterEtId, search, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery, tabMetricsRange.from, tabMetricsRange.to],
+    queryKey: ['eventsMetrics', slug, filterEtId, debouncedSearch, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery, tabMetricsRange.from, tabMetricsRange.to],
     queryFn: () => metricsApi.getEventsMetrics(slug!, {
       event_type_id: filterEtId,
-      search: search || undefined,
+      search: debouncedSearch || undefined,
       implemented: filterImplemented,
       reviewed: filterReviewedForQuery,
       archived: filterArchivedForQuery,
@@ -620,6 +971,7 @@ export default function EventsPage() {
     }),
     enabled: !!slug,
     refetchInterval: 60000,
+    placeholderData: (prev) => prev,
   })
 
   const eventIdsForSignals = useMemo(
@@ -649,13 +1001,6 @@ export default function EventsPage() {
     enabled: !!slug,
   })
   const unreviewedCount = unreviewedDataQuery.data?.total ?? 0
-
-  const archivedDataQuery = useQuery({
-    queryKey: ['events', slug, 'archivedCount'],
-    queryFn: () => eventsApi.list(slug!, { archived: true, limit: 1 }),
-    enabled: !!slug,
-  })
-  const archivedCount = archivedDataQuery.data?.total ?? 0
 
   // Load event from URL if eventId is present
   const urlEventQuery = useQuery({
@@ -719,16 +1064,6 @@ export default function EventsPage() {
     }) => eventsApi.move(slug!, id, { direction, visible_event_ids: visibleEventIds }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
   })
-
-  const handleDelete = async (ev: TEvent) => {
-    const ok = await confirm({
-      title: 'Delete event',
-      message: `Are you sure you want to delete "${ev.name}"?`,
-      confirmLabel: 'Delete',
-      variant: 'danger',
-    })
-    if (ok) deleteMut.mutate(ev.id)
-  }
 
   const rawEvents = useMemo(() => eventsData?.items ?? [], [eventsData?.items])
   const total = eventsData?.total ?? 0
@@ -842,13 +1177,55 @@ export default function EventsPage() {
     })
   }, [rawEvents, fieldFilters, metaFilters, fieldColumns, metaFields, getFieldValue])
 
+  const visibleFieldColumns = useMemo(
+    () => fieldColumns.filter(f => !hiddenColumns.has(`f:${f.id}`)),
+    [fieldColumns, hiddenColumns],
+  )
+  const visibleMetaFields = useMemo(
+    () => metaFields.filter(mf => !hiddenColumns.has(`m:${mf.id}`)),
+    [metaFields, hiddenColumns],
+  )
+  const hideTags = hiddenColumns.has('tags')
+
+  // Row virtualization — kicks in past VIRTUAL_THRESHOLD events, leaving small lists
+  // and tests (jsdom can't measure layout) on the plain full-render path.
+  const VIRTUAL_THRESHOLD = 100
+  const ROW_H_ESTIMATE = 36
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+  const virtualize = events.length > VIRTUAL_THRESHOLD
+  const rowVirtualizer = useVirtualizer({
+    count: virtualize ? events.length : 0,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => ROW_H_ESTIMATE,
+    overscan: 12,
+  })
+  const virtualItems = virtualize ? rowVirtualizer.getVirtualItems() : []
+  const totalVirtualSize = virtualize ? rowVirtualizer.getTotalSize() : 0
+  const colCount =
+    1 /* checkbox */ +
+    1 /* event */ +
+    (activeEt ? 0 : 1) /* type */ +
+    1 /* 48h */ +
+    (hideTags ? 0 : 1) /* tags */ +
+    visibleFieldColumns.length +
+    visibleMetaFields.length +
+    1 /* actions */
+
   const visibleEventIds = useMemo(
     () => events.map(event => event.id),
     [events],
   )
+  const visibleIndexById = useMemo(() => {
+    const map = new Map<string, number>()
+    for (let i = 0; i < visibleEventIds.length; i += 1) {
+      map.set(visibleEventIds[i], i)
+    }
+    return map
+  }, [visibleEventIds])
+  const visibleEventIdsSet = useMemo(() => new Set(visibleEventIds), [visibleEventIds])
   const selectedVisibleEventIds = useMemo(
-    () => selectedEventIds.filter(eventId => visibleEventIds.includes(eventId)),
-    [selectedEventIds, visibleEventIds],
+    () => selectedEventIds.filter(eventId => visibleEventIdsSet.has(eventId)),
+    [selectedEventIds, visibleEventIdsSet],
   )
   const allVisibleSelected = events.length > 0 && selectedVisibleEventIds.length === events.length
   const someVisibleSelected = selectedVisibleEventIds.length > 0
@@ -864,13 +1241,86 @@ export default function EventsPage() {
   const toggleAllVisibleSelected = useCallback((checked: boolean) => {
     setSelectedEventIds(current => {
       if (!checked) {
-        return current.filter(id => !visibleEventIds.includes(id))
+        return current.filter(id => !visibleEventIdsSet.has(id))
       }
       const next = new Set(current)
       visibleEventIds.forEach(id => next.add(id))
       return Array.from(next)
     })
-  }, [visibleEventIds])
+  }, [visibleEventIds, visibleEventIdsSet])
+
+  const selectedSet = useMemo(() => new Set(selectedEventIds), [selectedEventIds])
+
+  const onToggleExpandedCell = useCallback((cellKey: string | null) => {
+    setExpandedCell(prev => (prev === cellKey ? null : cellKey))
+  }, [])
+
+  // Stable dispatcher for row-level actions — keeps EventRow memo valid across parent re-renders.
+  const rowCtxRef = useRef({
+    slug,
+    navigate,
+    openEvent,
+    moveEventMut,
+    toggleReviewedMut,
+    toggleImplementedMut,
+    toggleArchivedMut,
+    deleteMut,
+    confirm,
+    visibleEventIds,
+  })
+  useEffect(() => {
+    rowCtxRef.current = {
+      slug,
+      navigate,
+      openEvent,
+      moveEventMut,
+      toggleReviewedMut,
+      toggleImplementedMut,
+      toggleArchivedMut,
+      deleteMut,
+      confirm,
+      visibleEventIds,
+    }
+  })
+
+  const onRowAction = useCallback((action: RowAction, ev: TEvent) => {
+    const ctx = rowCtxRef.current
+    switch (action) {
+      case 'edit':
+        ctx.openEvent(ev)
+        return
+      case 'navigate-monitoring':
+        ctx.navigate(`/p/${ctx.slug}/monitoring/event/${ev.id}`)
+        return
+      case 'move-up':
+        ctx.moveEventMut.mutate({ id: ev.id, direction: 'up', visibleEventIds: ctx.visibleEventIds })
+        return
+      case 'move-down':
+        ctx.moveEventMut.mutate({ id: ev.id, direction: 'down', visibleEventIds: ctx.visibleEventIds })
+        return
+      case 'toggle-reviewed':
+        ctx.toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })
+        return
+      case 'toggle-implemented':
+        ctx.toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })
+        return
+      case 'toggle-archived':
+        ctx.toggleArchivedMut.mutate({ id: ev.id, archived: !ev.archived })
+        return
+      case 'delete': {
+        void (async () => {
+          const ok = await ctx.confirm({
+            title: 'Delete event',
+            message: `Are you sure you want to delete "${ev.name}"?`,
+            confirmLabel: 'Delete',
+            variant: 'danger',
+          })
+          if (ok) ctx.deleteMut.mutate(ev.id)
+        })()
+        return
+      }
+    }
+  }, [])
 
   const handleBulkDelete = useCallback(async () => {
     if (!selectedVisibleEventIds.length) return
@@ -954,28 +1404,45 @@ export default function EventsPage() {
     urlEventQuery.error
 
   return (
-    <div>
+    <div className="flex min-h-[calc(100vh-7rem)] flex-col">
       {dialog}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Events <span className="text-muted-foreground font-normal text-lg">({total})</span>
-          </h1>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-4">
+        <div className="flex items-baseline gap-2.5">
+          <h1 className="m-0 text-[20px] font-semibold tracking-[-0.01em]">Events</h1>
+          <span className="mono text-[13px]" style={{ color: 'var(--fg-subtle)' }}>{total}</span>
         </div>
-        <Button onClick={() => {
-          if (openEventId) {
-            // Navigate away from event URL, then open new form
-            const path = activeTab === 'all' ? `/p/${slug}/events` : `/p/${slug}/events/${activeTab}`
-            navigate(path + (searchParams.toString() ? `?${searchParams}` : ''), { replace: true })
-          }
-          setEditingEvent(null)
-          setShowForm(v => !v)
-        }}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Event
-        </Button>
+        <div className="flex items-center gap-4">
+          <MiniStat label="Total" value={String(total)} />
+          <MiniStatDivider />
+          <MiniStat
+            label="Review"
+            value={String(unreviewedCount)}
+            delta={unreviewedCount > 0 ? 'pending' : undefined}
+            tone={unreviewedCount > 0 ? 'warning' : 'success'}
+          />
+          <MiniStatDivider />
+          <MiniStat
+            label="Signals"
+            value={String(eventTypeSignals.size + (projectTotalSignal ? 1 : 0))}
+            delta={(eventTypeSignals.size > 0 || projectTotalSignal) ? 'live' : 'quiet'}
+            tone={(eventTypeSignals.size > 0 || projectTotalSignal) ? 'danger' : 'success'}
+            pulse={eventTypeSignals.size > 0 || !!projectTotalSignal}
+          />
+          <Button onClick={() => {
+            if (openEventId) {
+              const path = activeTab === 'all' ? `/p/${slug}/events` : `/p/${slug}/events/${activeTab}`
+              navigate(path + (searchParams.toString() ? `?${searchParams}` : ''), { replace: true })
+            }
+            setEditingEvent(null)
+            setShowForm(v => !v)
+          }}
+          size="sm">
+            <Plus className="h-3.5 w-3.5" />
+            New Event
+          </Button>
+        </div>
       </div>
 
       {blockingError && (
@@ -991,7 +1458,6 @@ export default function EventsPage() {
               variablesQuery.refetch(),
               allTagsQuery.refetch(),
               unreviewedDataQuery.refetch(),
-              archivedDataQuery.refetch(),
             ]
             if (openEventId) {
               refetches.push(urlEventQuery.refetch())
@@ -1003,53 +1469,18 @@ export default function EventsPage() {
 
       {!blockingError && (
         <>
-          {/* Tabs + search */}
-          <div className="flex items-end gap-4 mb-4">
-            <div className="min-w-0 flex-1 overflow-x-auto pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-              <div className="inline-flex min-w-max items-center gap-1 rounded-lg bg-muted p-1">
-                <div className="flex shrink-0 items-center gap-1">
-                  <EventsTabButton active={activeTab === 'all'} onClick={() => setActiveTab('all')}>
-                    All
-                  </EventsTabButton>
-                  <SignalLink slug={slug!} signal={projectTotalSignal} />
-                </div>
-                <EventsTabButton active={activeTab === 'review'} onClick={() => setActiveTab('review')}>
-                  Review
-                  {unreviewedCount > 0 && (
-                    <Badge variant="destructive" className="h-4 min-w-4 px-1 text-[10px] leading-none">{unreviewedCount}</Badge>
-                  )}
-                </EventsTabButton>
-                <EventsTabButton active={activeTab === 'archived'} onClick={() => setActiveTab('archived')}>
-                  Archived
-                  {archivedCount > 0 && (
-                    <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] leading-none">{archivedCount}</Badge>
-                  )}
-                </EventsTabButton>
-                {eventTypes.map((et: EventType) => (
-                  <div key={et.id} className="flex shrink-0 items-center gap-1">
-                    <EventsTabButton active={activeTab === et.name} onClick={() => setActiveTab(et.name)}>
-                      <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: et.color }} />
-                      {et.display_name}
-                    </EventsTabButton>
-                    <SignalLink slug={slug!} signal={eventTypeSignals.get(et.id)} />
-                  </div>
-                ))}
-              </div>
-            </div>
+          {/* Filters */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search events..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-9 h-9 w-56"
+                className="h-8 w-56 pl-8 text-xs"
               />
             </div>
-          </div>
-
-          {/* Filters */}
-          <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <Select
               value={filterImplemented === undefined ? '__all__' : String(filterImplemented)}
               onValueChange={v => setFilterImplemented(v === '__all__' ? undefined : v === 'true')}
@@ -1147,6 +1578,17 @@ export default function EventsPage() {
                 Clear
               </Button>
             )}
+            <div className="ml-auto">
+              <ColumnsMenu
+                open={colMenuOpen}
+                onOpenChange={setColMenuOpen}
+                tagsHidden={hiddenColumns.has('tags')}
+                fieldColumns={fieldColumns}
+                metaFields={metaFields}
+                hiddenColumns={hiddenColumns}
+                onToggle={toggleColumn}
+              />
+            </div>
           </div>
 
       {selectedVisibleEventIds.length > 0 && (
@@ -1185,15 +1627,15 @@ export default function EventsPage() {
       )}
 
       <Collapsible open={isTabChartOpen} onOpenChange={setIsTabChartOpen}>
-        <Card className="mb-4">
-          <div className="flex items-center justify-between gap-4 px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold">{activeTabLabel} Dynamics</h2>
-              <p className="text-xs text-muted-foreground">
+        <Card className="mb-3 gap-0 rounded-lg py-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+            <div className="min-w-0">
+              <h2 className="text-[13px] font-semibold leading-tight">{activeTabLabel} Dynamics</h2>
+              <p className="text-[11px] leading-tight text-muted-foreground">
                 Last {tabMetricsRangeDays} days, grouped by {tabMetricsGranularity}.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 rounded-lg border bg-background p-1">
                 {TAB_METRICS_RANGE_OPTIONS.map(option => (
                   <Button
@@ -1201,7 +1643,7 @@ export default function EventsPage() {
                     type="button"
                     variant={tabMetricsRangeDays === option.days ? 'default' : 'ghost'}
                     size="sm"
-                    className="h-7 px-2 text-xs"
+                    className="h-6 px-2 text-[11px]"
                     onClick={() => setTabMetricsRangeDays(option.days)}
                   >
                     {option.label}
@@ -1212,7 +1654,7 @@ export default function EventsPage() {
                 value={tabMetricsGranularity}
                 onValueChange={value => setTabMetricsGranularity(value as MetricsGranularity)}
               >
-                <SelectTrigger className="h-8 w-28 text-xs">
+                <SelectTrigger className="h-7 w-28 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1227,7 +1669,7 @@ export default function EventsPage() {
                 <Button
                   variant={getSignalTone(activeTabSignal).button}
                   size="sm"
-                  className={getSignalTone(activeTabSignal).buttonClassName}
+                  className={cn('h-7 px-2 text-xs', getSignalTone(activeTabSignal).buttonClassName)}
                   asChild
                 >
                   <Link to={getMonitoringPath(slug!, activeTabSignal)}>
@@ -1237,7 +1679,7 @@ export default function EventsPage() {
                 </Button>
               )}
               <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
                   {isTabChartOpen ? 'Hide chart' : 'Show chart'}
                   <ChevronDown className={`h-4 w-4 transition-transform ${isTabChartOpen ? 'rotate-180' : ''}`} />
                 </Button>
@@ -1245,16 +1687,16 @@ export default function EventsPage() {
             </div>
           </div>
           <CollapsibleContent>
-            <CardContent className="border-t px-5 py-5">
+            <CardContent className="border-t px-4 py-3">
               {tabMetricsLoading ? (
-                <div className="flex h-[240px] items-center justify-center text-sm text-muted-foreground">
+                <div className="flex h-[160px] items-center justify-center text-sm text-muted-foreground">
                   Loading metrics…
                 </div>
               ) : (
                 <>
                   <MetricsChart
                     data={tabMetricsData}
-                    height={240}
+                    height={160}
                     color={activeEt?.color || 'var(--chart-3)'}
                     granularity={tabMetricsGranularity}
                   />
@@ -1272,11 +1714,20 @@ export default function EventsPage() {
 
       {/* Events Table */}
       <TooltipProvider delayDuration={0}>
-      <div className="rounded-lg border overflow-x-auto">
-        <Table>
+      <div
+        ref={tableScrollRef}
+        className="tripl-table-wrap"
+        style={{
+          maxHeight: isTabChartOpen
+            ? 'max(320px, calc(100vh - 455px))'
+            : 'max(420px, calc(100vh - 285px))',
+          overflowY: 'auto',
+        }}
+      >
+        <Table className="tripl-table">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-10">
+              <TableHead className="tripl-pin-l w-10 pl-5">
                 <Checkbox
                   checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
                   onCheckedChange={checked => toggleAllVisibleSelected(checked === true)}
@@ -1285,12 +1736,12 @@ export default function EventsPage() {
               </TableHead>
               <TableHead>Event</TableHead>
               {!activeEt && <TableHead>Type</TableHead>}
-              <TableHead className="w-24 text-right">{ROW_METRICS_LABEL}</TableHead>
-              <TableHead>Tags</TableHead>
-              {fieldColumns.map(f => (
+              <TableHead className="w-32 text-right">{ROW_METRICS_LABEL}</TableHead>
+              {!hideTags && <TableHead>Tags</TableHead>}
+              {visibleFieldColumns.map(f => (
                 <TableHead key={f.id}>{f.display_name}</TableHead>
               ))}
-              {metaFields.map((mf: MetaFieldDefinition) => (
+              {visibleMetaFields.map((mf: MetaFieldDefinition) => (
                 <TableHead key={mf.id} className="text-muted-foreground">{mf.display_name}</TableHead>
               ))}
               <TableHead className="sticky right-0 z-20 w-[7.5rem] border-l bg-background text-right">
@@ -1299,120 +1750,46 @@ export default function EventsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {events.map((ev: TEvent) => {
-              const mvMap = Object.fromEntries(ev.meta_values.map(mv => [mv.meta_field_definition_id, mv.value]))
-              const eventIndex = visibleEventIds.indexOf(ev.id)
-
+            {virtualize && virtualItems.length > 0 && virtualItems[0].start > 0 && (
+              <tr aria-hidden style={{ height: virtualItems[0].start }}>
+                <td colSpan={colCount} />
+              </tr>
+            )}
+            {(virtualize ? virtualItems.map(vi => events[vi.index]) : events).map((ev: TEvent) => {
+              const idx = visibleIndexById.get(ev.id) ?? -1
+              const expandedFieldId =
+                expandedCell && expandedCell.startsWith(ev.id + '-')
+                  ? expandedCell.slice(ev.id.length + 1)
+                  : null
+              const windowMetric = eventWindowMetricsByEvent.get(ev.id)
               return (
-                <TableRow key={ev.id}>
-                  <TableCell>
-                    <Checkbox
-                      checked={selectedEventIds.includes(ev.id)}
-                      onCheckedChange={checked => toggleEventSelected(ev.id, checked === true)}
-                      aria-label={`Select ${ev.name}`}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <div className="inline-flex max-w-full items-center gap-1.5 align-middle">
-                      <button
-                        className="truncate text-left hover:underline underline-offset-4"
-                        onClick={() => navigate(`/p/${slug}/monitoring/event/${ev.id}`)}
-                      >
-                        {ev.name}
-                      </button>
-                    </div>
-                  </TableCell>
-                  {!activeEt && (
-                    <TableCell>
-                      <Badge variant="outline" className="gap-1.5 font-mono text-[11px]" style={{
-                        borderColor: ev.event_type.color + '40',
-                        color: ev.event_type.color,
-                        backgroundColor: ev.event_type.color + '0a',
-                      }}>
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: ev.event_type.color }} />
-                        {ev.event_type.name}
-                      </Badge>
-                    </TableCell>
-                  )}
-                  <TableCell className="text-right">
-                    <div className="inline-flex items-center justify-end gap-1.5 align-middle">
-                      <SignalLink slug={slug!} signal={eventRowSignals.get(ev.id)} compact />
-                      <EventWindowMetricsCell
-                        eventName={ev.name}
-                        color={ev.event_type.color}
-                        totalCount={eventWindowMetricsByEvent.get(ev.id)?.total_count}
-                        data={eventWindowMetricsByEvent.get(ev.id)?.data ?? []}
-                      />
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      {ev.tags.map(t => (
-                        <Badge key={t.id} variant="secondary" className="text-[10px]">{t.name}</Badge>
-                      ))}
-                      {ev.tags.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
-                    </div>
-                  </TableCell>
-                  {fieldColumns.map(f => {
-                    let val = getFieldValue(ev, f)
-                    // Format float-like values as integers when no fractional part
-                    if (val && /^-?\d+\.0+$/.test(val)) val = String(parseInt(val, 10))
-                    const cellKey = `${ev.id}-${f.id}`
-                    const isExpanded = expandedCell === cellKey
-                    const isLong = typeof val === 'string' && val.length > 30
-                    return (
-                      <TableCell
-                        key={f.id}
-                        className={`text-xs ${isLong ? 'cursor-pointer' : ''} ${isExpanded ? '' : 'max-w-40'}`}
-                        onClick={isLong ? () => setExpandedCell(isExpanded ? null : cellKey) : undefined}
-                      >
-                        {isExpanded ? (
-                          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] max-w-sm">{(() => {
-                            try { return JSON.stringify(JSON.parse(val), null, 2) } catch { return val }
-                          })()}</pre>
-                        ) : (
-                          <span className={isLong ? 'block truncate' : ''}>{val}</span>
-                        )}
-                      </TableCell>
-                    )
-                  })}
-                  {metaFields.map((mf: MetaFieldDefinition) => (
-                    <TableCell key={mf.id} className="text-muted-foreground max-w-40 truncate text-xs">
-                      {resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ? (
-                        <a
-                          href={resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ?? undefined}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block truncate text-primary underline-offset-4 hover:underline"
-                          title={mvMap[mf.id]}
-                        >
-                          {mvMap[mf.id]}
-                        </a>
-                      ) : mf.field_type === 'boolean' && mvMap[mf.id] ? (
-                        <Badge variant={mvMap[mf.id] === 'true' ? 'success' : 'secondary'} className="text-[10px]">
-                          {mvMap[mf.id] === 'true' ? 'Yes' : 'No'}
-                        </Badge>
-                      ) : mvMap[mf.id] ?? ''}
-                    </TableCell>
-                  ))}
-                  <TableCell className="sticky right-0 z-10 border-l bg-background/95 pl-3 pr-2 backdrop-blur-sm hover:z-40 focus-within:z-40">
-                    <EventRowActions
-                      event={ev}
-                      slug={slug!}
-                      canMoveUp={eventIndex > 0}
-                      canMoveDown={eventIndex >= 0 && eventIndex < visibleEventIds.length - 1}
-                      onEdit={() => openEvent(ev)}
-                      onMoveUp={() => moveEventMut.mutate({ id: ev.id, direction: 'up', visibleEventIds })}
-                      onMoveDown={() => moveEventMut.mutate({ id: ev.id, direction: 'down', visibleEventIds })}
-                      onToggleReviewed={() => toggleReviewedMut.mutate({ id: ev.id, reviewed: !ev.reviewed })}
-                      onToggleImplemented={() => toggleImplementedMut.mutate({ id: ev.id, implemented: !ev.implemented })}
-                      onToggleArchived={() => toggleArchivedMut.mutate({ id: ev.id, archived: !ev.archived })}
-                      onDelete={() => handleDelete(ev)}
-                    />
-                  </TableCell>
-                </TableRow>
+                <EventRow
+                  key={ev.id}
+                  ev={ev}
+                  selected={selectedSet.has(ev.id)}
+                  hideType={!!activeEt}
+                  hideTags={hideTags}
+                  fieldColumns={visibleFieldColumns}
+                  metaFields={visibleMetaFields}
+                  slug={slug!}
+                  canMoveUp={idx > 0}
+                  canMoveDown={idx >= 0 && idx < visibleEventIds.length - 1}
+                  expandedFieldId={expandedFieldId}
+                  rowSignal={eventRowSignals.get(ev.id)}
+                  windowTotal={windowMetric?.total_count}
+                  windowData={windowMetric?.data ?? EMPTY_WINDOW_POINTS}
+                  getFieldValue={getFieldValue}
+                  onToggleSelected={toggleEventSelected}
+                  onToggleExpanded={onToggleExpandedCell}
+                  onRowAction={onRowAction}
+                />
               )
             })}
+            {virtualize && virtualItems.length > 0 && totalVirtualSize > virtualItems[virtualItems.length - 1].end && (
+              <tr aria-hidden style={{ height: totalVirtualSize - virtualItems[virtualItems.length - 1].end }}>
+                <td colSpan={colCount} />
+              </tr>
+            )}
             {events.length === 0 && (
               <TableRow>
                 <TableCell colSpan={99}>

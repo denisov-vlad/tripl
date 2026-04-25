@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
@@ -10,7 +20,10 @@ from tripl.models.base import Base, TimestampMixin, UUIDMixin
 
 class ScanConfig(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "scan_configs"
-    __table_args__ = (UniqueConstraint("data_source_id", "name", name="uq_scan_config_ds_name"),)
+    __table_args__ = (
+        UniqueConstraint("data_source_id", "name", name="uq_scan_config_ds_name"),
+        Index("ix_scan_config_project", "project_id"),
+    )
 
     data_source_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("data_sources.id", ondelete="CASCADE")

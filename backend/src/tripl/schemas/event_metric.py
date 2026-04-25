@@ -44,6 +44,10 @@ class EventWindowMetricsRequest(BaseModel):
     time_to: datetime | None = None
 
 
+class ActiveSignalsQuery(BaseModel):
+    event_ids: list[uuid.UUID] = []
+
+
 class EventWindowMetricsResponse(BaseModel):
     event_id: uuid.UUID
     scan_config_id: uuid.UUID | None = None

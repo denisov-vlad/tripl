@@ -42,7 +42,7 @@ afterEach(() => {
 })
 
 describe('EventsPage', () => {
-  it('renders monitoring signal links for tabs and rows', async () => {
+  it('renders monitoring signal links for active view and rows', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input)
 
@@ -210,9 +210,9 @@ describe('EventsPage', () => {
     const hiddenActionsButton = screen.getByRole('button', { name: 'Toggle implemented status' })
     expect(hiddenActionsButton.parentElement).toHaveClass('opacity-0')
     expect(container.querySelector('a[href="/p/demo/monitoring/project-total/scan-1"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/monitoring/event-type/type-1"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/monitoring/event-type/type-1"]')).not.toBeInTheDocument()
     expect(container.querySelector('a[href="/p/demo/monitoring/event/event-1"]')).toBeInTheDocument()
-    expect(screen.getAllByLabelText('Open recent anomaly')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Open recent anomaly')).toHaveLength(1)
 
     fireEvent.mouseOver(metricsButton)
     fireEvent.focus(metricsButton)
@@ -232,7 +232,7 @@ describe('EventsPage', () => {
     expect(await screen.findByText('View signal')).toBeInTheDocument()
   })
 
-  it('keeps tab anomaly links when switching between archived and all tabs', async () => {
+  it('renders active event-type anomaly link for sidebar-selected view', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = String(input)
 
@@ -257,38 +257,6 @@ describe('EventsPage', () => {
       if (url.endsWith('/api/v1/projects/demo/events/tags')) return mockJsonResponse([])
       if (url.includes('/api/v1/projects/demo/events?reviewed=false')) {
         return mockJsonResponse({ items: [], total: 0 })
-      }
-      if (url.includes('/api/v1/projects/demo/events?archived=true&limit=1')) {
-        return mockJsonResponse({ items: [], total: 1 })
-      }
-      if (url.includes('/api/v1/projects/demo/events?archived=true')) {
-        return mockJsonResponse({
-          items: [
-            {
-              id: 'archived-event-1',
-              project_id: 'project-1',
-              event_type_id: 'type-1',
-              event_type: {
-                id: 'type-1',
-                name: 'page',
-                display_name: 'Page',
-                color: '#ec4899',
-              },
-              name: 'Archived Signup',
-              description: '',
-              order: 0,
-              implemented: true,
-              reviewed: true,
-              archived: true,
-              tags: [],
-              field_values: [],
-              meta_values: [],
-              created_at: '2026-01-01T00:00:00Z',
-              updated_at: '2026-01-01T00:00:00Z',
-            },
-          ],
-          total: 1,
-        })
       }
       if (url.includes('/api/v1/projects/demo/events-metrics')) {
         return mockJsonResponse({
@@ -336,10 +304,10 @@ describe('EventsPage', () => {
           },
         ])
       }
-      if (url.includes('/api/v1/projects/demo/anomalies/signals?event_id=')) {
+      if (url.endsWith('/api/v1/projects/demo/anomalies/signals/query') && init?.method === 'POST') {
         return mockJsonResponse([])
       }
-      if (url.includes('/api/v1/projects/demo/events?archived=false')) {
+      if (url.includes('/api/v1/projects/demo/events?') && url.includes('archived=false')) {
         return mockJsonResponse({
           items: [
             {
@@ -372,21 +340,15 @@ describe('EventsPage', () => {
       throw new Error(`Unhandled fetch: ${url}`)
     })
 
-    const { container } = renderEventsPage(['/p/demo/events/archived'])
-
-    expect(await screen.findByText('Archived Signup')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(container.querySelector('a[href="/p/demo/monitoring/project-total/scan-1"]')).toBeInTheDocument()
-      expect(container.querySelector('a[href="/p/demo/monitoring/event-type/type-1"]')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    const { container } = renderEventsPage(['/p/demo/events/page'])
 
     expect(await screen.findByText('Active Signup')).toBeInTheDocument()
+    expect(screen.getByText('Page Dynamics')).toBeInTheDocument()
     await waitFor(() => {
-      expect(container.querySelector('a[href="/p/demo/monitoring/project-total/scan-1"]')).toBeInTheDocument()
       expect(container.querySelector('a[href="/p/demo/monitoring/event-type/type-1"]')).toBeInTheDocument()
     })
+    expect(container.querySelector('a[href="/p/demo/monitoring/project-total/scan-1"]')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument()
   })
 
   it('supports selecting multiple events and bulk deleting them', async () => {

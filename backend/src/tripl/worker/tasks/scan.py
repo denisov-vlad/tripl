@@ -7,8 +7,8 @@ import uuid
 from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from tripl.config import settings
 from tripl.json_paths import group_json_value_paths
@@ -21,14 +21,13 @@ from tripl.worker.adapters.clickhouse import ClickHouseAdapter
 from tripl.worker.analyzers.cardinality import analyze_cardinality, analyze_cardinality_grouped
 from tripl.worker.analyzers.event_generator import GenerationResult, generate_events
 from tripl.worker.celery_app import celery_app
+from tripl.worker.db import SyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
 
 def _get_sync_session() -> Session:
-    engine = create_engine(settings.sync_database_url, echo=settings.debug)
-    factory = sessionmaker(engine, expire_on_commit=False)
-    return factory()
+    return SyncSessionLocal()
 
 
 def _decrypt_password(encrypted: str) -> str:

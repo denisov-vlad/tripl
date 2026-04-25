@@ -1,0 +1,331 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { Command } from 'cmdk'
+import {
+  Bell,
+  Database,
+  Folder,
+  LayoutDashboard,
+  LogOut,
+  Search,
+  Settings,
+  Tag,
+} from 'lucide-react'
+import { eventTypesApi } from '@/api/eventTypes'
+import { eventsApi } from '@/api/events'
+import { projectsApi } from '@/api/projects'
+import { useAuth } from '@/components/auth-context'
+import {
+  CommandPaletteContext,
+  useCommandPalette,
+} from '@/components/command-palette-context'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Kbd } from '@/components/primitives/kbd'
+
+export function CommandPaletteProvider({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const isToggle =
+        (event.key === 'k' || event.key === 'K') && (event.metaKey || event.ctrlKey)
+      if (!isToggle) return
+      const target = event.target
+      if (
+        !open &&
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, [contenteditable="true"]')
+      ) {
+        return
+      }
+      event.preventDefault()
+      setOpen(prev => !prev)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  const value = useMemo(() => ({ open, setOpen }), [open])
+
+  return (
+    <CommandPaletteContext.Provider value={value}>
+      {children}
+      <CommandPalette />
+    </CommandPaletteContext.Provider>
+  )
+}
+
+function useDebounced<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs)
+    return () => window.clearTimeout(id)
+  }, [value, delayMs])
+  return debounced
+}
+
+function CommandPalette() {
+  const { open, setOpen } = useCommandPalette()
+  const navigate = useNavigate()
+  const auth = useAuth()
+  const { slug: routeSlug } = useParams()
+  const [query, setQuery] = useState('')
+  const debouncedQuery = useDebounced(query.trim(), 200)
+
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) setQuery('')
+      setOpen(next)
+    },
+    [setOpen],
+  )
+
+  const projectsQuery = useQuery({
+    queryKey: ['projects'],
+    queryFn: projectsApi.list,
+    enabled: open,
+  })
+  const projects = projectsQuery.data ?? []
+  const activeProject = projects.find(p => p.slug === routeSlug) ?? null
+
+  const eventTypesQuery = useQuery({
+    queryKey: ['eventTypes', activeProject?.slug],
+    queryFn: () => eventTypesApi.list(activeProject!.slug),
+    enabled: open && !!activeProject,
+    staleTime: 60_000,
+  })
+  const eventTypes = eventTypesQuery.data ?? []
+
+  const eventSearchSlug = activeProject?.slug ?? projects[0]?.slug ?? null
+  const eventsQuery = useQuery({
+    queryKey: ['commandPaletteEventSearch', eventSearchSlug, debouncedQuery],
+    queryFn: () =>
+      eventsApi.list(eventSearchSlug!, { search: debouncedQuery, limit: 8 }),
+    enabled: open && !!eventSearchSlug && debouncedQuery.length >= 2,
+    staleTime: 30_000,
+  })
+  const eventResults = eventsQuery.data?.items ?? []
+  const eventSearchProjectSlug = eventSearchSlug
+
+  const runCommand = useCallback(
+    (action: () => void) => {
+      setQuery('')
+      setOpen(false)
+      action()
+    },
+    [setOpen],
+  )
+
+  const goTo = useCallback(
+    (path: string) => runCommand(() => navigate(path)),
+    [navigate, runCommand],
+  )
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="overflow-hidden p-0 sm:max-w-[640px] gap-0">
+        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <Command
+          label="Command palette"
+          shouldFilter={true}
+          className="flex max-h-[480px] flex-col"
+        >
+          <div
+            className="flex items-center gap-2 border-b px-3.5 py-3"
+            style={{ borderColor: 'var(--border-subtle)' }}
+          >
+            <Search className="h-3.5 w-3.5" style={{ color: 'var(--fg-subtle)' }} />
+            <Command.Input
+              autoFocus
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Search projects, event types, events…"
+              className="flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--fg-subtle)]"
+            />
+            <Kbd>esc</Kbd>
+          </div>
+
+          <Command.List className="flex-1 overflow-y-auto py-1.5">
+            <Command.Empty className="px-3.5 py-8 text-center text-[12px]" style={{ color: 'var(--fg-subtle)' }}>
+              No matches.
+            </Command.Empty>
+
+            <Group heading="Navigate">
+              <Item
+                onSelect={() => goTo('/')}
+                icon={LayoutDashboard}
+                label="Overview"
+                hint="/"
+              />
+              <Item
+                onSelect={() => goTo('/data-sources')}
+                icon={Database}
+                label="Data sources"
+                hint="/data-sources"
+              />
+            </Group>
+
+            {activeProject && (
+              <Group heading={`Current — ${activeProject.name}`}>
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/events`)}
+                  icon={Folder}
+                  label="Events"
+                  hint={`/p/${activeProject.slug}/events`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings`)}
+                  icon={Settings}
+                  label="Project settings"
+                  hint={`/p/${activeProject.slug}/settings`}
+                />
+                <Item
+                  onSelect={() => goTo(`/p/${activeProject.slug}/settings/alerting`)}
+                  icon={Bell}
+                  label="Alerting settings"
+                  hint={`/p/${activeProject.slug}/settings/alerting`}
+                />
+              </Group>
+            )}
+
+            {projects.length > 0 && (
+              <Group heading="Projects">
+                {projects.map(project => (
+                  <Item
+                    key={project.id}
+                    onSelect={() => goTo(`/p/${project.slug}/events`)}
+                    icon={Folder}
+                    label={project.name}
+                    hint={project.slug}
+                    active={project.slug === routeSlug}
+                    keywords={[project.slug, project.name]}
+                  />
+                ))}
+              </Group>
+            )}
+
+            {activeProject && eventTypes.length > 0 && (
+              <Group heading={`Event types — ${activeProject.name}`}>
+                {eventTypes.map(eventType => (
+                  <Item
+                    key={eventType.id}
+                    onSelect={() =>
+                      goTo(`/p/${activeProject.slug}/events/${eventType.name}`)
+                    }
+                    icon={Tag}
+                    iconColor={eventType.color}
+                    label={eventType.display_name}
+                    hint={eventType.name}
+                    keywords={[eventType.name, eventType.display_name]}
+                  />
+                ))}
+              </Group>
+            )}
+
+            {eventSearchProjectSlug && debouncedQuery.length >= 2 && (
+              <Group
+                heading={
+                  eventsQuery.isFetching
+                    ? 'Searching events…'
+                    : `Events matching "${debouncedQuery}"`
+                }
+              >
+                {eventResults.length === 0 && !eventsQuery.isFetching ? (
+                  <div
+                    className="px-3.5 py-2 text-[11.5px]"
+                    style={{ color: 'var(--fg-subtle)' }}
+                  >
+                    No events match.
+                  </div>
+                ) : (
+                  eventResults.map(ev => (
+                    <Item
+                      key={ev.id}
+                      onSelect={() =>
+                        goTo(`/p/${eventSearchProjectSlug}/events/detail/${ev.id}`)
+                      }
+                      icon={Tag}
+                      iconColor={ev.event_type.color}
+                      label={ev.name}
+                      hint={ev.event_type.display_name}
+                      keywords={[ev.name, ev.event_type.display_name, ev.event_type.name]}
+                    />
+                  ))
+                )}
+              </Group>
+            )}
+
+            <Group heading="Account">
+              <Item
+                onSelect={() => runCommand(() => void auth.logout())}
+                icon={LogOut}
+                label="Sign out"
+              />
+            </Group>
+          </Command.List>
+        </Command>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Group({ heading, children }: { heading: string; children: ReactNode }) {
+  return (
+    <Command.Group
+      heading={heading}
+      className="px-1.5 py-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-1.5 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-[var(--fg-faint)]"
+    >
+      {children}
+    </Command.Group>
+  )
+}
+
+function Item({
+  onSelect,
+  icon: Icon,
+  iconColor,
+  label,
+  hint,
+  active,
+  keywords,
+}: {
+  onSelect: () => void
+  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>
+  iconColor?: string
+  label: string
+  hint?: string
+  active?: boolean
+  keywords?: string[]
+}) {
+  return (
+    <Command.Item
+      value={`${label} ${hint ?? ''} ${(keywords ?? []).join(' ')}`.trim()}
+      onSelect={onSelect}
+      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[12.5px] aria-selected:bg-[var(--surface-hover)]"
+      style={{ color: 'var(--fg)' }}
+    >
+      <Icon
+        className="h-3.5 w-3.5 shrink-0"
+        style={{ color: iconColor ?? 'var(--fg-subtle)' }}
+      />
+      <span className="flex-1 truncate">{label}</span>
+      {active && (
+        <span className="text-[10px] uppercase tracking-[0.08em]" style={{ color: 'var(--fg-faint)' }}>
+          current
+        </span>
+      )}
+      {hint && (
+        <span className="mono truncate text-[10.5px]" style={{ color: 'var(--fg-faint)' }}>
+          {hint}
+        </span>
+      )}
+    </Command.Item>
+  )
+}

@@ -12,13 +12,15 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import delete, select
 from sqlalchemy import func as sa_func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
+from tripl import cache
 from tripl.config import settings
+from tripl.worker.db import SyncSessionLocal
 from tripl.json_paths import (
     build_json_value,
     decode_json_path_value,
@@ -75,9 +77,7 @@ RECENT_SIGNAL_WINDOW = timedelta(hours=24)
 
 
 def _get_sync_session() -> Session:
-    engine = create_engine(settings.sync_database_url, echo=settings.debug)
-    factory = sessionmaker(engine, expire_on_commit=False)
-    return factory()
+    return SyncSessionLocal()
 
 
 def _decrypt_password(encrypted: str) -> str:
@@ -1494,6 +1494,11 @@ def collect_metrics(
             job.completed_at = datetime.now(UTC)
             job.result_summary = result_summary
         session.commit()
+        # Fresh anomalies → invalidate project summaries + signals cache so
+        # dashboards reflect the new state immediately (TTL would add up to
+        # 30–60s of staleness on a manual scan trigger).
+        cache.sync_delete_prefix(cache.prefix_signals())
+        cache.sync_delete_prefix(cache.prefix_projects())
         for delivery_id in delivery_ids:
             send_alert_delivery.delay(str(delivery_id))
 

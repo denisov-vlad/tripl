@@ -10,3 +10,7 @@ if (!window.ResizeObserver) {
   window.ResizeObserver = ResizeObserverMock as typeof ResizeObserver
   globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver
 }
+
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () {}
+}

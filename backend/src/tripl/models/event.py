@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
@@ -10,6 +10,10 @@ from tripl.models.base import Base, TimestampMixin, UUIDMixin
 
 class Event(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "events"
+    __table_args__ = (
+        Index("ix_event_project_order", "project_id", "order"),
+        Index("ix_event_event_type", "event_type_id"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
     event_type_id: Mapped[uuid.UUID] = mapped_column(

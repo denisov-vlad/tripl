@@ -1,40 +1,40 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dataSourcesApi } from '@/api/dataSources'
 import { useConfirm } from '@/hooks/useConfirm'
 import type { DataSource, DbType } from '@/types'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
-import { Database, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle } from 'lucide-react'
+import { Chip } from '@/components/primitives/chip'
+import { Dot } from '@/components/primitives/dot'
+import { MiniStat, MiniStatDivider } from '@/components/primitives/mini-stat'
+import {
+  CheckCircle2,
+  Database,
+  Lock,
+  Pencil,
+  Plug,
+  Plus,
+  Trash2,
+  XCircle,
+} from 'lucide-react'
 
 const EMPTY_DATA_SOURCES: DataSource[] = []
 
 export default function DataSourcesPage() {
   const { dsId } = useParams<{ dsId?: string }>()
-  return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Data Sources</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Manage database connections for event scanning
-        </p>
-      </div>
-      <ConnectionsTab openDsId={dsId} />
-    </div>
-  )
+  return <ConnectionsTab openDsId={dsId} />
 }
 
 function ConnectionsTab({ openDsId }: { openDsId?: string }) {
@@ -44,7 +44,6 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
   const [editingDs, setEditingDs] = useState<DataSource | null>(null)
   const { confirm, dialog } = useConfirm()
 
-  // form state
   const [name, setName] = useState('')
   const [dbType] = useState<DbType>('clickhouse')
   const [host, setHost] = useState('')
@@ -53,7 +52,6 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
 
-  // edit state
   const [editName, setEditName] = useState('')
   const [editHost, setEditHost] = useState('')
   const [editPort, setEditPort] = useState(8123)
@@ -62,7 +60,6 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
   const [editPassword, setEditPassword] = useState('')
 
   const [testingId, setTestingId] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null)
 
   const dataSourcesQuery = useQuery({
     queryKey: ['dataSources'],
@@ -112,12 +109,26 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
 
   const handleTest = async (id: string) => {
     setTestingId(id)
-    setTestResult(null)
     try {
-      await dataSourcesApi.testConnection(id)
-      setTestResult({ id, ok: true, msg: 'Connection successful' })
+      const result = await dataSourcesApi.testConnection(id)
+      qc.setQueryData<DataSource[] | undefined>(['dataSources'], (prev) =>
+        prev?.map((ds) => (ds.id === id ? result.data_source : ds)),
+      )
     } catch (err) {
-      setTestResult({ id, ok: false, msg: (err as Error).message })
+      // HTTP failure before the backend persisted anything — reflect it locally
+      // so the card shows the error instead of stale "unverified" state.
+      qc.setQueryData<DataSource[] | undefined>(['dataSources'], (prev) =>
+        prev?.map((ds) =>
+          ds.id === id
+            ? {
+                ...ds,
+                last_test_at: new Date().toISOString(),
+                last_test_status: 'failed',
+                last_test_message: (err as Error).message,
+              }
+            : ds,
+        ),
+      )
     } finally {
       setTestingId(null)
     }
@@ -139,7 +150,6 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
     navigate('/data-sources', { replace: true })
   }
 
-  // Open data source from URL
   useEffect(() => {
     if (openDsId && dataSources.length > 0) {
       const ds = dataSources.find((d: DataSource) => d.id === openDsId)
@@ -149,25 +159,56 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
 
   const resetForm = () => {
     setShowForm(false)
-    setName(''); setHost(''); setPort(8123)
-    setDatabaseName(''); setUsername(''); setPassword('')
+    setName('')
+    setHost('')
+    setPort(8123)
+    setDatabaseName('')
+    setUsername('')
+    setPassword('')
   }
 
+  const healthyCount = dataSources.filter((ds) => ds.last_test_status === 'success').length
+  const warningCount = dataSources.filter((ds) => ds.last_test_status === 'failed').length
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {dialog}
 
-      <div className="flex justify-end">
-        <Button onClick={() => setShowForm(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Connection
-        </Button>
+      {/* Compact page header */}
+      <div className="flex items-end justify-between gap-6">
+        <div className="flex items-baseline gap-2.5">
+          <h1 className="m-0 text-[20px] font-semibold tracking-[-0.01em]">Data sources</h1>
+          <span className="mono text-[13px]" style={{ color: 'var(--fg-subtle)' }}>
+            {dataSources.length}
+          </span>
+        </div>
+        <div className="flex items-center gap-4">
+          <MiniStat label="Connections" value={String(dataSources.length)} />
+          <MiniStatDivider />
+          <MiniStat
+            label="Healthy"
+            value={String(healthyCount)}
+            delta={healthyCount > 0 ? 'up' : undefined}
+            tone="success"
+            pulse={healthyCount > 0}
+          />
+          <MiniStatDivider />
+          <MiniStat
+            label="Warnings"
+            value={String(warningCount)}
+            tone={warningCount > 0 ? 'danger' : 'neutral'}
+          />
+          <Button onClick={() => setShowForm(true)} size="sm">
+            <Plus className="h-3.5 w-3.5" />
+            Add connection
+          </Button>
+        </div>
       </div>
 
       {/* Create dialog */}
-      <Dialog open={showForm} onOpenChange={v => { if (!v) resetForm() }}>
+      <Dialog open={showForm} onOpenChange={(v) => { if (!v) resetForm() }}>
         <DialogContent className="sm:max-w-lg">
-          <form onSubmit={e => { e.preventDefault(); createMut.mutate() }}>
+          <form onSubmit={(e) => { e.preventDefault(); createMut.mutate() }}>
             <DialogHeader>
               <DialogTitle>New data source</DialogTitle>
             </DialogHeader>
@@ -175,7 +216,7 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2 grid gap-2">
                   <Label>Name</Label>
-                  <Input value={name} onChange={e => setName(e.target.value)} required placeholder="Production ClickHouse" />
+                  <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="Production ClickHouse" />
                 </div>
                 <div className="grid gap-2">
                   <Label>Type</Label>
@@ -185,25 +226,25 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
               <div className="grid grid-cols-5 gap-3">
                 <div className="col-span-2 grid gap-2">
                   <Label>Host</Label>
-                  <Input value={host} onChange={e => setHost(e.target.value)} required placeholder="localhost" />
+                  <Input value={host} onChange={(e) => setHost(e.target.value)} required placeholder="localhost" />
                 </div>
                 <div className="grid gap-2">
                   <Label>Port</Label>
-                  <Input type="number" value={port} onChange={e => setPort(Number(e.target.value))} required />
+                  <Input type="number" value={port} onChange={(e) => setPort(Number(e.target.value))} required />
                 </div>
                 <div className="col-span-2 grid gap-2">
                   <Label>Database</Label>
-                  <Input value={databaseName} onChange={e => setDatabaseName(e.target.value)} required placeholder="default" />
+                  <Input value={databaseName} onChange={(e) => setDatabaseName(e.target.value)} required placeholder="default" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2">
                   <Label>Username</Label>
-                  <Input value={username} onChange={e => setUsername(e.target.value)} placeholder="default" />
+                  <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="default" />
                 </div>
                 <div className="grid gap-2">
                   <Label>Password</Label>
-                  <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+                  <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
                 </div>
               </div>
               {createMut.isError && (
@@ -219,39 +260,39 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog open={!!editingDs} onOpenChange={v => { if (!v) closeEdit() }}>
+      <Dialog open={!!editingDs} onOpenChange={(v) => { if (!v) closeEdit() }}>
         <DialogContent className="sm:max-w-lg">
-          <form onSubmit={e => { e.preventDefault(); if (editingDs) updateMut.mutate(editingDs.id) }}>
+          <form onSubmit={(e) => { e.preventDefault(); if (editingDs) updateMut.mutate(editingDs.id) }}>
             <DialogHeader>
               <DialogTitle>Edit data source</DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
                 <Label>Name</Label>
-                <Input value={editName} onChange={e => setEditName(e.target.value)} />
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
               </div>
               <div className="grid grid-cols-5 gap-3">
                 <div className="col-span-2 grid gap-2">
                   <Label>Host</Label>
-                  <Input value={editHost} onChange={e => setEditHost(e.target.value)} />
+                  <Input value={editHost} onChange={(e) => setEditHost(e.target.value)} />
                 </div>
                 <div className="grid gap-2">
                   <Label>Port</Label>
-                  <Input type="number" value={editPort} onChange={e => setEditPort(Number(e.target.value))} />
+                  <Input type="number" value={editPort} onChange={(e) => setEditPort(Number(e.target.value))} />
                 </div>
                 <div className="col-span-2 grid gap-2">
                   <Label>Database</Label>
-                  <Input value={editDatabaseName} onChange={e => setEditDatabaseName(e.target.value)} />
+                  <Input value={editDatabaseName} onChange={(e) => setEditDatabaseName(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-2">
                   <Label>Username</Label>
-                  <Input value={editUsername} onChange={e => setEditUsername(e.target.value)} />
+                  <Input value={editUsername} onChange={(e) => setEditUsername(e.target.value)} />
                 </div>
                 <div className="grid gap-2">
                   <Label>Password</Label>
-                  <Input type="password" value={editPassword} onChange={e => setEditPassword(e.target.value)} placeholder="Leave empty to keep" />
+                  <Input type="password" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} placeholder="Leave empty to keep" />
                 </div>
               </div>
               {updateMut.isError && (
@@ -266,7 +307,6 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
         </DialogContent>
       </Dialog>
 
-      {/* Data source cards */}
       {dataSourcesQuery.isError && (
         <ErrorState
           title="Failed to load data sources"
@@ -283,60 +323,167 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
           description="Add a database connection to start scanning for events."
           action={
             <Button onClick={() => setShowForm(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Connection
+              <Plus className="h-3.5 w-3.5" />
+              Add connection
             </Button>
           }
         />
       )}
 
-      {!dataSourcesQuery.isError && dataSources.map((ds: DataSource) => (
-        <Card key={ds.id}>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary font-bold text-xs uppercase">
-                  {ds.db_type.slice(0, 2)}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-sm">{ds.name}</span>
-                    <Badge variant="outline" className="text-[10px]">
-                      {ds.host}:{ds.port}/{ds.database_name}
-                    </Badge>
-                    {ds.password_set && (
-                      <Badge variant="secondary" className="text-[10px]">🔒</Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline" size="sm"
-                  onClick={() => handleTest(ds.id)}
-                  disabled={testingId === ds.id}
-                >
-                  <Plug className="mr-1.5 h-3.5 w-3.5" />
-                  {testingId === ds.id ? 'Testing…' : 'Test'}
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => startEdit(ds)}>
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={() => handleDelete(ds)}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-
-            {testResult?.id === ds.id && (
-              <div className={`mt-3 flex items-center gap-2 text-sm ${testResult.ok ? 'text-green-600' : 'text-destructive'}`}>
-                {testResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                {testResult.msg}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
+      {!dataSourcesQuery.isError && dataSources.length > 0 && (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {dataSources.map((ds) => (
+            <DataSourceCard
+              key={ds.id}
+              ds={ds}
+              testing={testingId === ds.id}
+              onTest={() => handleTest(ds.id)}
+              onEdit={() => startEdit(ds)}
+              onDelete={() => { void handleDelete(ds) }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
+}
+
+function DataSourceCard({
+  ds,
+  testing,
+  onTest,
+  onEdit,
+  onDelete,
+}: {
+  ds: DataSource
+  testing: boolean
+  onTest: () => void
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const statusTone: 'success' | 'warning' | 'neutral' =
+    ds.last_test_status === 'success'
+      ? 'success'
+      : ds.last_test_status === 'failed'
+        ? 'warning'
+        : 'neutral'
+  const dotTone = statusTone === 'success' ? 'success' : statusTone === 'warning' ? 'warning' : 'neutral'
+
+  return (
+    <div
+      className="flex flex-col overflow-hidden rounded-lg border transition-colors hover:border-[var(--border-strong)]"
+      style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+    >
+      <div className="flex items-start gap-3 p-3.5">
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md font-bold uppercase"
+          style={{
+            background: 'var(--accent-soft)',
+            color: 'var(--accent)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 10,
+            letterSpacing: '0.04em',
+          }}
+        >
+          {ds.db_type.slice(0, 2)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Dot tone={dotTone} size={6} pulse={dotTone === 'success'} />
+            <span className="truncate text-[13px] font-semibold">{ds.name}</span>
+          </div>
+          <div
+            className="mono mt-0.5 truncate text-[11px]"
+            style={{ color: 'var(--fg-subtle)' }}
+            title={`${ds.host}:${ds.port}/${ds.database_name}`}
+          >
+            {ds.host}:{ds.port}/{ds.database_name}
+          </div>
+        </div>
+        {ds.password_set && (
+          <span title="Password set" style={{ color: 'var(--fg-subtle)' }}>
+            <Lock className="h-3.5 w-3.5" />
+          </span>
+        )}
+      </div>
+
+      <div
+        className="flex flex-wrap items-center gap-1.5 border-t px-3.5 py-2.5"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
+        <Chip tone={statusTone === 'success' ? 'success' : statusTone === 'warning' ? 'warning' : 'neutral'} size="xs">
+          {statusTone === 'success' ? 'healthy' : statusTone === 'warning' ? 'attention' : 'unverified'}
+        </Chip>
+        <Chip size="xs">{ds.db_type}</Chip>
+        {ds.username && <Chip size="xs">{ds.username}</Chip>}
+        <div className="flex-1" />
+        <span className="mono text-[10.5px]" style={{ color: 'var(--fg-faint)' }}>
+          {formatRelative(ds.updated_at)}
+        </span>
+      </div>
+
+      {ds.last_test_status && ds.last_test_message && (
+        <div
+          className="flex items-center gap-1.5 border-t px-3.5 py-2 text-[11.5px]"
+          style={{
+            borderColor: 'var(--border-subtle)',
+            color: ds.last_test_status === 'success' ? 'var(--success)' : 'var(--danger)',
+            background:
+              ds.last_test_status === 'success' ? 'var(--success-soft)' : 'var(--danger-soft)',
+          }}
+        >
+          {ds.last_test_status === 'success' ? (
+            <CheckCircle2 className="h-3 w-3" />
+          ) : (
+            <XCircle className="h-3 w-3" />
+          )}
+          <span className="truncate">{ds.last_test_message}</span>
+          {ds.last_test_at && (
+            <span
+              className="mono ml-auto shrink-0 text-[10.5px]"
+              style={{ color: 'var(--fg-faint)' }}
+            >
+              {formatRelative(ds.last_test_at)}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div
+        className="flex items-center gap-1 border-t px-2.5 py-2"
+        style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-sunken)' }}
+      >
+        <Button variant="ghost" size="sm" onClick={onTest} disabled={testing}>
+          <Plug className="h-3 w-3" />
+          {testing ? 'Testing…' : 'Test'}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onEdit}>
+          <Pencil className="h-3 w-3" />
+          Edit
+        </Button>
+        <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-destructive"
+          onClick={onDelete}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function formatRelative(iso: string): string {
+  const date = new Date(iso)
+  const delta = Date.now() - date.getTime()
+  const minutes = Math.floor(delta / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }

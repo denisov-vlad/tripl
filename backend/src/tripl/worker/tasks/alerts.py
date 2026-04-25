@@ -9,8 +9,8 @@ import uuid
 from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import selectinload, sessionmaker
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from tripl.alert_templates import (
     ALERT_MESSAGE_FORMAT_PLAIN,
@@ -37,15 +37,14 @@ from tripl.models.alert_rule_state import AlertRuleState
 from tripl.models.project import Project
 from tripl.models.scan_config import ScanConfig
 from tripl.worker.celery_app import celery_app
+from tripl.worker.db import SyncSessionLocal
 
 logger = logging.getLogger(__name__)
 _TELEGRAM_BOT_URL_TOKEN_RE = re.compile(r"(/bot)([^/]+)(/)")
 
 
 def _get_sync_session():
-    engine = create_engine(settings.sync_database_url, echo=settings.debug)
-    factory = sessionmaker(engine, expire_on_commit=False)
-    return factory()
+    return SyncSessionLocal()
 
 
 def _decrypt_secret(encrypted: str | None) -> str:

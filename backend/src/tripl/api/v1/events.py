@@ -27,7 +27,7 @@ async def list_events(
     reviewed: bool | None = None,
     archived: bool | None = None,
     offset: int = Query(0, ge=0),
-    limit: int = Query(10000, ge=1, le=10000),
+    limit: int = Query(200, ge=1, le=10000),
 ):
     items, total = await event_service.list_events(
         session, slug, event_type_id, search, implemented, tag, reviewed, archived, offset, limit

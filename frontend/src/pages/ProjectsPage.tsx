@@ -5,14 +5,14 @@ import { dataSourcesApi } from '@/api/dataSources'
 import { projectsApi } from '@/api/projects'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
+import { Chip } from '@/components/primitives/chip'
+import { Dot } from '@/components/primitives/dot'
+import { MiniStat, MiniStatDivider } from '@/components/primitives/mini-stat'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from '@/components/ui/card'
 import {
   Dialog,
@@ -38,10 +38,9 @@ import {
   ArrowRight,
   BadgeCheck,
   BellRing,
-  Database,
   FolderKanban,
-  Plus,
   PlayCircle,
+  Plus,
   Settings2,
   Trash2,
 } from 'lucide-react'
@@ -98,22 +97,24 @@ export default function MainPage() {
   const coveragePercent = portfolio.activeEventCount
     ? Math.round((portfolio.implementedEventCount / portfolio.activeEventCount) * 100)
     : 0
-  const projectsWithScans = projects.filter(project => project.summary.scan_count > 0).length
+  const projectsWithScans = projects.filter((project) => project.summary.scan_count > 0).length
   const projectsWithSignals = projects.filter(
-    project => project.summary.monitoring_signal_count > 0,
+    (project) => project.summary.monitoring_signal_count > 0,
   ).length
   const projectsNeedingReview = projects.filter(
-    project => project.summary.review_pending_event_count > 0,
+    (project) => project.summary.review_pending_event_count > 0,
   ).length
-  const projectsReady = projects.filter(project => getProjectStatus(project.summary).label === 'Ready').length
+  const projectsReady = projects.filter(
+    (project) => getProjectStatus(project.summary).label === 'Ready',
+  ).length
   const projectsWithLatestScanJob = projects.filter(
-    project => project.summary.latest_scan_job != null,
+    (project) => project.summary.latest_scan_job != null,
   ).length
   const projectsWithRunningScan = projects.filter(
-    project => project.summary.latest_scan_job?.status === 'running',
+    (project) => project.summary.latest_scan_job?.status === 'running',
   ).length
   const projectsWithFailedScan = projects.filter(
-    project => project.summary.latest_scan_job?.status === 'failed',
+    (project) => project.summary.latest_scan_job?.status === 'failed',
   ).length
 
   const createMut = useMutation({
@@ -153,94 +154,55 @@ export default function MainPage() {
     <div className="space-y-6">
       {dialog}
 
-      <Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/10 via-background to-background">
-        <CardContent className="grid gap-6 px-6 py-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.85fr)]">
-          <div className="space-y-5">
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="info" className="gap-1">
-                <FolderKanban className="h-3 w-3" />
-                {portfolio.projectCount} projects
-              </Badge>
-              <Badge variant="secondary" className="gap-1">
-                <Activity className="h-3 w-3" />
-                {portfolio.eventCount} planned events
-              </Badge>
-              <Badge variant="outline" className="gap-1">
-                <Database className="h-3 w-3" />
-                {dataSourceValue} data sources
-              </Badge>
-            </div>
-
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight">Analytics workspace</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                See which tracking plans are filling out, which projects still need review,
-                and how much scan and alerting coverage exists across the workspace.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <Button onClick={() => setShowForm(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                New Project
-              </Button>
-              <Button asChild variant="outline">
-                <Link to="/data-sources">
-                  Review Data Sources
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-            </div>
+      {/* Compact header */}
+      <div className="flex flex-wrap items-end justify-between gap-6">
+        <div className="min-w-0 space-y-2">
+          <div className="flex items-baseline gap-2.5">
+            <h1 className="m-0 text-[20px] font-semibold tracking-[-0.01em]">
+              Analytics workspace
+            </h1>
+            <span className="mono text-[13px]" style={{ color: 'var(--fg-subtle)' }}>
+              {portfolio.projectCount}
+            </span>
           </div>
-
-          <div className="grid gap-3">
-            <WorkspaceSignal
-              icon={BadgeCheck}
-              title="Catalog coverage"
-              value={`${coveragePercent}%`}
-              description={
-                portfolio.activeEventCount > 0
-                  ? `${portfolio.implementedEventCount} of ${portfolio.activeEventCount} active events implemented`
-                  : 'No active events yet'
-              }
-            />
-            <WorkspaceSignal
-              icon={BellRing}
-              title="Review queue"
-              value={String(portfolio.reviewPendingEventCount)}
-              description={
-                portfolio.reviewPendingEventCount > 0
-                  ? `${projectsNeedingReview} projects still need review attention`
-                  : 'Review queue is clear'
-              }
-            />
-            <WorkspaceSignal
-              icon={Activity}
-              title="Automation"
-              value={String(portfolio.scanCount)}
-              description={
-                portfolio.scanCount > 0
-                  ? `${projectsWithScans} projects already have scan coverage`
-                  : 'No scans configured yet'
-              }
-            />
-            <WorkspaceSignal
-              icon={AlertTriangle}
-              title="Monitoring signals"
-              value={String(portfolio.monitoringSignalCount)}
-              description={
-                portfolio.monitoringSignalCount > 0
-                  ? `${projectsWithSignals} projects currently have active or recent signals`
-                  : 'No recent monitoring signals across projects'
-              }
-            />
-          </div>
-        </CardContent>
-      </Card>
+          <p className="max-w-2xl text-[12.5px]" style={{ color: 'var(--fg-subtle)' }}>
+            See which tracking plans are filling out, which projects still need review, and how much
+            scan and alerting coverage exists across the workspace.
+          </p>
+        </div>
+        <div className="flex items-center gap-4">
+          <MiniStat label="Projects" value={String(portfolio.projectCount)} />
+          <MiniStatDivider />
+          <MiniStat
+            label="Coverage"
+            value={`${coveragePercent}%`}
+            delta={portfolio.activeEventCount > 0 ? `${portfolio.implementedEventCount}/${portfolio.activeEventCount}` : undefined}
+            tone={coveragePercent >= 80 ? 'success' : coveragePercent >= 50 ? 'warning' : 'neutral'}
+          />
+          <MiniStatDivider />
+          <MiniStat
+            label="Signals"
+            value={String(portfolio.monitoringSignalCount)}
+            delta={portfolio.monitoringSignalCount > 0 ? 'live' : 'quiet'}
+            tone={portfolio.monitoringSignalCount > 0 ? 'danger' : 'success'}
+            pulse={portfolio.monitoringSignalCount > 0}
+          />
+          <MiniStatDivider />
+          <MiniStat
+            label="Data sources"
+            value={dataSourceValue}
+            tone={dataSourcesQuery.isError ? 'danger' : 'neutral'}
+          />
+          <Button size="sm" onClick={() => setShowForm(true)}>
+            <Plus className="h-3.5 w-3.5" />
+            New project
+          </Button>
+        </div>
+      </div>
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent>
-          <form onSubmit={event => { event.preventDefault(); createMut.mutate() }}>
+          <form onSubmit={(event) => { event.preventDefault(); createMut.mutate() }}>
             <DialogHeader>
               <DialogTitle>Create project</DialogTitle>
             </DialogHeader>
@@ -250,7 +212,7 @@ export default function MainPage() {
                 <Input
                   id="project-name"
                   value={name}
-                  onChange={event => {
+                  onChange={(event) => {
                     setName(event.target.value)
                     if (!slugTouched) {
                       setSlug(
@@ -270,7 +232,7 @@ export default function MainPage() {
                 <Input
                   id="project-slug"
                   value={slug}
-                  onChange={event => {
+                  onChange={(event) => {
                     setSlugTouched(true)
                     setSlug(event.target.value)
                   }}
@@ -284,7 +246,7 @@ export default function MainPage() {
                 <Textarea
                   id="project-desc"
                   value={description}
-                  onChange={event => setDescription(event.target.value)}
+                  onChange={(event) => setDescription(event.target.value)}
                   rows={2}
                 />
               </div>
@@ -317,206 +279,84 @@ export default function MainPage() {
 
       {!projectsQuery.isLoading && !projectsQuery.isError && (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <PortfolioStatCard
+          {/* Portfolio strip */}
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <PortfolioCard
               icon={FolderKanban}
-              title="Projects"
+              label="Projects"
               value={String(portfolio.projectCount)}
-              description={
+              hint={
                 portfolio.projectCount > 0
-                  ? `${projectsReady} projects are fully implemented`
+                  ? `${projectsReady} fully implemented`
                   : 'Create a project to start your catalog'
               }
             />
-            <PortfolioStatCard
+            <PortfolioCard
               icon={BadgeCheck}
-              title="Coverage"
+              label="Coverage"
               value={`${coveragePercent}%`}
-              description={
+              hint={
                 portfolio.activeEventCount > 0
-                  ? `${portfolio.implementedEventCount} implemented of ${portfolio.activeEventCount} active events`
-                  : 'Coverage starts after your first active event'
+                  ? `${portfolio.implementedEventCount} of ${portfolio.activeEventCount} active events`
+                  : 'Coverage starts with your first active event'
               }
+              tone={coveragePercent >= 80 ? 'success' : coveragePercent >= 50 ? 'warning' : 'neutral'}
             />
-            <PortfolioStatCard
+            <PortfolioCard
               icon={BellRing}
-              title="Review Queue"
+              label="Review queue"
               value={String(portfolio.reviewPendingEventCount)}
-              description={
+              hint={
                 portfolio.reviewPendingEventCount > 0
                   ? `${projectsNeedingReview} projects need review`
                   : 'No pending event reviews'
               }
+              tone={portfolio.reviewPendingEventCount > 0 ? 'warning' : 'success'}
             />
-            <PortfolioStatCard
+            <PortfolioCard
               icon={PlayCircle}
-              title="Latest Jobs"
+              label="Latest jobs"
               value={String(projectsWithLatestScanJob)}
-              description={
+              hint={
                 projectsWithFailedScan > 0
                   ? `${projectsWithFailedScan} projects have a failed latest scan job`
-                    : projectsWithRunningScan > 0
-                      ? `${projectsWithRunningScan} projects are currently running scans`
+                  : projectsWithRunningScan > 0
+                    ? `${projectsWithRunningScan} projects are currently running scans`
                     : projectsWithLatestScanJob > 0
                       ? 'Latest scan jobs are healthy'
                       : 'No project has run a scan yet'
               }
+              tone={projectsWithFailedScan > 0 ? 'danger' : projectsWithRunningScan > 0 ? 'info' : 'success'}
             />
           </div>
 
+          <SignalsBanner
+            scanCount={portfolio.scanCount}
+            projectsWithScans={projectsWithScans}
+            signalCount={portfolio.monitoringSignalCount}
+            projectsWithSignals={projectsWithSignals}
+          />
+
           {projects.length > 0 ? (
-            <section className="space-y-4">
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <section className="space-y-3">
+              <div className="flex items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold tracking-tight">Project portfolio</h2>
-                  <p className="text-sm text-muted-foreground">
+                  <h2 className="text-[14px] font-semibold tracking-tight">Project portfolio</h2>
+                  <p className="text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>
                     Recently updated projects with planning, review, scan, and alerting coverage.
                   </p>
                 </div>
-                <Badge variant="secondary">{projects.length} tracked</Badge>
+                <Chip size="sm">{projects.length} tracked</Chip>
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-2">
-                {projects.map(project => {
-                  const status = getProjectStatus(project.summary)
-                  const coverage = project.summary.active_event_count
-                    ? Math.round(
-                        (project.summary.implemented_event_count / project.summary.active_event_count) * 100,
-                      )
-                    : 0
-
-                  return (
-                    <Card key={project.id} className="overflow-hidden border-border/70">
-                      <CardHeader className="gap-4 border-b border-border/60 bg-muted/20">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <CardTitle className="truncate text-base">{project.name}</CardTitle>
-                              <Badge variant={status.variant}>{status.label}</Badge>
-                            </div>
-                            <CardDescription className="line-clamp-2">
-                              {project.description || 'No project description yet. Add one to capture the scope of this tracking plan.'}
-                            </CardDescription>
-                            <p className="text-xs text-muted-foreground">
-                              <span className="font-mono">{project.slug}</span>
-                              {' · '}
-                              Updated {formatDate(project.updated_at)}
-                            </p>
-                          </div>
-
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => { void handleDelete(project) }}
-                            aria-label={`Delete ${project.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <Badge variant={coverage === 100 && project.summary.active_event_count > 0 ? 'success' : 'info'}>
-                            {project.summary.active_event_count > 0
-                              ? `${coverage}% implemented`
-                              : 'No active events'}
-                          </Badge>
-                          <Badge
-                            variant={project.summary.review_pending_event_count > 0 ? 'warning' : 'secondary'}
-                          >
-                            {project.summary.review_pending_event_count > 0
-                              ? `${project.summary.review_pending_event_count} pending review`
-                              : 'Review queue clear'}
-                          </Badge>
-                          <Badge variant={project.summary.scan_count > 0 ? 'outline' : 'secondary'}>
-                            {project.summary.scan_count > 0
-                              ? `${project.summary.scan_count} scans configured`
-                              : 'No scan coverage'}
-                          </Badge>
-                          <Badge
-                            variant={project.summary.monitoring_signal_count > 0 ? 'destructive' : 'secondary'}
-                          >
-                            {project.summary.monitoring_signal_count > 0
-                              ? `${project.summary.monitoring_signal_count} recent signals`
-                              : 'No recent signals'}
-                          </Badge>
-                        </div>
-                      </CardHeader>
-
-                      <CardContent className="space-y-5 px-6 py-5">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>Implementation progress</span>
-                            <span>
-                              {project.summary.implemented_event_count}/{project.summary.active_event_count || 0}
-                            </span>
-                          </div>
-                          <div className="h-2 overflow-hidden rounded-full bg-muted">
-                            <div
-                              className="h-full rounded-full bg-primary transition-[width]"
-                              style={{ width: `${coverage}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                          <ProjectMetric
-                            label="Event types"
-                            value={String(project.summary.event_type_count)}
-                          />
-                          <ProjectMetric
-                            label="Active events"
-                            value={String(project.summary.active_event_count)}
-                          />
-                          <ProjectMetric
-                            label="Variables"
-                            value={String(project.summary.variable_count)}
-                          />
-                          <ProjectMetric
-                            label="Alerts"
-                            value={String(project.summary.alert_destination_count)}
-                          />
-                        </div>
-
-                        <div className="grid gap-3 xl:grid-cols-2">
-                          <OperationsPanel
-                            icon={PlayCircle}
-                            title="Latest scan"
-                            content={
-                              <LatestScanJobSummary job={project.summary.latest_scan_job} />
-                            }
-                          />
-                          <OperationsPanel
-                            icon={AlertTriangle}
-                            title="Monitoring"
-                            content={
-                              <LatestSignalSummary
-                                slug={project.slug}
-                                signal={project.summary.latest_signal}
-                                signalCount={project.summary.monitoring_signal_count}
-                              />
-                            }
-                          />
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <Button asChild size="sm">
-                            <Link to={`/p/${project.slug}/events`}>
-                              Open Project
-                              <ArrowRight className="ml-2 h-4 w-4" />
-                            </Link>
-                          </Button>
-                          <Button asChild variant="outline" size="sm">
-                            <Link to={`/p/${project.slug}/settings`}>
-                              <Settings2 className="mr-2 h-4 w-4" />
-                              Settings
-                            </Link>
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )
-                })}
+              <div className="grid gap-3 xl:grid-cols-2">
+                {projects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    project={project}
+                    onDelete={() => { void handleDelete(project) }}
+                  />
+                ))}
               </div>
             </section>
           ) : (
@@ -526,8 +366,8 @@ export default function MainPage() {
               description="Create your first project to start building a richer tracking-plan workspace with event coverage, scans, and monitoring."
               action={
                 <Button onClick={() => setShowForm(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  New Project
+                  <Plus className="h-3.5 w-3.5" />
+                  New project
                 </Button>
               }
             />
@@ -540,112 +380,328 @@ export default function MainPage() {
 
 function ProjectsPageSkeleton() {
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map(index => (
-          <Skeleton key={index} className="h-28 rounded-xl" />
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((index) => (
+          <Skeleton key={index} className="h-24 rounded-lg" />
         ))}
       </div>
-      <div className="grid gap-4 xl:grid-cols-2">
-        {[0, 1, 2, 3].map(index => (
-          <Skeleton key={index} className="h-96 rounded-xl" />
+      <div className="grid gap-3 xl:grid-cols-2">
+        {[0, 1, 2, 3].map((index) => (
+          <Skeleton key={index} className="h-64 rounded-lg" />
         ))}
       </div>
     </div>
   )
 }
 
-function PortfolioStatCard({
+type PortfolioTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
+
+function PortfolioCard({
   icon: Icon,
-  title,
+  label,
   value,
-  description,
+  hint,
+  tone = 'neutral',
 }: {
   icon: ElementType
-  title: string
+  label: string
   value: string
-  description: string
+  hint: string
+  tone?: PortfolioTone
+}) {
+  const toneColor =
+    tone === 'success'
+      ? 'var(--success)'
+      : tone === 'warning'
+        ? 'var(--warning)'
+        : tone === 'danger'
+          ? 'var(--danger)'
+          : tone === 'info'
+            ? 'var(--info)'
+            : 'var(--accent)'
+  const toneSoft =
+    tone === 'success'
+      ? 'var(--success-soft)'
+      : tone === 'warning'
+        ? 'var(--warning-soft)'
+        : tone === 'danger'
+          ? 'var(--danger-soft)'
+          : tone === 'info'
+            ? 'var(--info-soft)'
+            : 'var(--accent-soft)'
+  return (
+    <div
+      className="rounded-lg border p-4"
+      style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 space-y-0.5">
+          <p
+            className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+            style={{ color: 'var(--fg-faint)' }}
+          >
+            {label}
+          </p>
+          <p className="mono tnum text-[24px] font-medium leading-[1.1] tracking-[-0.01em]">
+            {value}
+          </p>
+        </div>
+        <div
+          className="flex h-7 w-7 items-center justify-center rounded-md"
+          style={{ background: toneSoft, color: toneColor }}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+      </div>
+      <p className="mt-2 text-[11.5px] leading-[1.4]" style={{ color: 'var(--fg-subtle)' }}>
+        {hint}
+      </p>
+    </div>
+  )
+}
+
+function SignalsBanner({
+  scanCount,
+  projectsWithScans,
+  signalCount,
+  projectsWithSignals,
+}: {
+  scanCount: number
+  projectsWithScans: number
+  signalCount: number
+  projectsWithSignals: number
 }) {
   return (
-    <Card className="border-border/70">
-      <CardContent className="px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-sm text-muted-foreground">{title}</p>
-            <p className="text-3xl font-semibold tracking-tight">{value}</p>
-          </div>
-          <div className="rounded-xl bg-primary/10 p-2 text-primary">
-            <Icon className="h-4 w-4" />
+    <div
+      className="flex flex-wrap items-center gap-5 rounded-lg border px-4 py-3"
+      style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+    >
+      <div className="flex items-center gap-2">
+        <div
+          className="flex h-8 w-8 items-center justify-center rounded-md"
+          style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+        >
+          <Activity className="h-4 w-4" />
+        </div>
+        <div>
+          <div className="text-[12.5px] font-semibold">Automation</div>
+          <div className="text-[11px]" style={{ color: 'var(--fg-subtle)' }}>
+            {scanCount > 0
+              ? `${scanCount} scans · ${projectsWithScans} projects covered`
+              : 'No scans configured yet'}
           </div>
         </div>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">{description}</p>
+      </div>
+      <div className="h-8 w-px" style={{ background: 'var(--border-subtle)' }} />
+      <div className="flex items-center gap-2">
+        <Dot tone={signalCount > 0 ? 'danger' : 'success'} pulse={signalCount > 0} size={8} />
+        <div>
+          <div className="text-[12.5px] font-semibold">
+            {signalCount > 0 ? `${signalCount} monitoring signals` : 'No recent signals'}
+          </div>
+          <div className="text-[11px]" style={{ color: 'var(--fg-subtle)' }}>
+            {signalCount > 0
+              ? `${projectsWithSignals} projects currently have active or recent signals`
+              : 'Monitoring is quiet across the workspace'}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProjectCard({
+  project,
+  onDelete,
+}: {
+  project: Project
+  onDelete: () => void
+}) {
+  const status = getProjectStatus(project.summary)
+  const coverage = project.summary.active_event_count
+    ? Math.round(
+        (project.summary.implemented_event_count / project.summary.active_event_count) * 100,
+      )
+    : 0
+  const hasSignals = project.summary.monitoring_signal_count > 0
+  const needsReview = project.summary.review_pending_event_count > 0
+
+  return (
+    <Card
+      className="overflow-hidden p-0"
+      style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}
+    >
+      <div
+        className="flex items-start justify-between gap-3 border-b px-4 py-3"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-[14px] font-semibold">{project.name}</span>
+            <Chip
+              tone={
+                status.label === 'Ready'
+                  ? 'success'
+                  : status.label === 'Needs Review'
+                    ? 'warning'
+                    : status.label === 'In Progress'
+                      ? 'info'
+                      : 'neutral'
+              }
+              size="xs"
+            >
+              {status.label}
+            </Chip>
+            {hasSignals && (
+              <Chip tone="danger" size="xs">
+                <Dot tone="danger" pulse size={5} />
+                live
+              </Chip>
+            )}
+          </div>
+          <p className="mt-1 line-clamp-2 text-[12px]" style={{ color: 'var(--fg-subtle)' }}>
+            {project.description ||
+              'No project description yet. Add one to capture the scope of this tracking plan.'}
+          </p>
+          <p className="mt-1 text-[11px]" style={{ color: 'var(--fg-faint)' }}>
+            <span className="mono">{project.slug}</span> · Updated {formatDate(project.updated_at)}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          onClick={onDelete}
+          aria-label={`Delete ${project.name}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      <CardContent className="space-y-4 px-4 py-4">
+        <div className="flex flex-wrap gap-1.5">
+          <Chip
+            tone={coverage === 100 && project.summary.active_event_count > 0 ? 'success' : 'info'}
+            size="xs"
+          >
+            {project.summary.active_event_count > 0 ? `${coverage}% implemented` : 'No active events'}
+          </Chip>
+          <Chip tone={needsReview ? 'warning' : 'neutral'} size="xs">
+            {needsReview
+              ? `${project.summary.review_pending_event_count} pending review`
+              : 'Review queue clear'}
+          </Chip>
+          <Chip tone={project.summary.scan_count > 0 ? 'accent' : 'neutral'} size="xs">
+            {project.summary.scan_count > 0
+              ? `${project.summary.scan_count} scans configured`
+              : 'No scan coverage'}
+          </Chip>
+          <Chip tone={hasSignals ? 'danger' : 'neutral'} size="xs">
+            {hasSignals
+              ? `${project.summary.monitoring_signal_count} recent signals`
+              : 'No recent signals'}
+          </Chip>
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--fg-subtle)' }}>
+            <span>Implementation progress</span>
+            <span className="mono tnum">
+              {project.summary.implemented_event_count}/{project.summary.active_event_count || 0}
+            </span>
+          </div>
+          <div
+            className="h-1.5 overflow-hidden rounded-full"
+            style={{ background: 'var(--bg-sunken)' }}
+          >
+            <div
+              className="h-full rounded-full transition-[width]"
+              style={{ width: `${coverage}%`, background: 'var(--accent)' }}
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-4">
+          <Metric label="Event types" value={String(project.summary.event_type_count)} />
+          <Metric label="Active events" value={String(project.summary.active_event_count)} />
+          <Metric label="Variables" value={String(project.summary.variable_count)} />
+          <Metric label="Alerts" value={String(project.summary.alert_destination_count)} />
+        </div>
+
+        <div className="grid gap-3 xl:grid-cols-2">
+          <Panel icon={PlayCircle} title="Latest scan">
+            <LatestScanJobSummary job={project.summary.latest_scan_job} />
+          </Panel>
+          <Panel icon={AlertTriangle} title="Monitoring">
+            <LatestSignalSummary
+              slug={project.slug}
+              signal={project.summary.latest_signal}
+              signalCount={project.summary.monitoring_signal_count}
+            />
+          </Panel>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button asChild size="sm">
+            <Link to={`/p/${project.slug}/events`}>
+              Open Project
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link to={`/p/${project.slug}/settings`}>
+              <Settings2 className="h-3.5 w-3.5" />
+              Settings
+            </Link>
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
 }
 
-function WorkspaceSignal({
-  icon: Icon,
-  title,
-  value,
-  description,
-}: {
-  icon: ElementType
-  title: string
-  value: string
-  description: string
-}) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-background/80 px-4 py-4 backdrop-blur">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">{title}</p>
-          <p className="text-2xl font-semibold tracking-tight">{value}</p>
-        </div>
-        <div className="rounded-xl bg-primary/10 p-2 text-primary">
-          <Icon className="h-4 w-4" />
-        </div>
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+    <div
+      className="rounded-md border px-2.5 py-2"
+      style={{ background: 'var(--bg-sunken)', borderColor: 'var(--border-subtle)' }}
+    >
+      <p
+        className="text-[10px] font-semibold uppercase tracking-[0.06em]"
+        style={{ color: 'var(--fg-faint)' }}
+      >
+        {label}
+      </p>
+      <p className="mono tnum mt-0.5 text-[18px] font-medium tracking-[-0.01em]">{value}</p>
     </div>
   )
 }
 
-function ProjectMetric({
-  label,
-  value,
-}: {
-  label: string
-  value: string
-}) {
-  return (
-    <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-3">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
-    </div>
-  )
-}
-
-function OperationsPanel({
+function Panel({
   icon: Icon,
   title,
-  content,
+  children,
 }: {
   icon: ElementType
   title: string
-  content: ReactNode
+  children: ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-background/70 p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <div className="rounded-lg bg-primary/10 p-2 text-primary">
-          <Icon className="h-4 w-4" />
+    <div
+      className="rounded-md border p-3"
+      style={{ background: 'var(--bg-sunken)', borderColor: 'var(--border-subtle)' }}
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <div
+          className="flex h-6 w-6 items-center justify-center rounded"
+          style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+        >
+          <Icon className="h-3 w-3" />
         </div>
-        <div>
-          <p className="text-sm font-medium text-foreground">{title}</p>
-        </div>
+        <p className="text-[12px] font-medium">{title}</p>
       </div>
-      {content}
+      {children}
     </div>
   )
 }
@@ -653,41 +709,43 @@ function OperationsPanel({
 function LatestScanJobSummary({ job }: { job: ProjectLatestScanJob | null }) {
   if (!job) {
     return (
-      <div className="space-y-2 text-sm text-muted-foreground">
-        <p>No scan jobs have run yet.</p>
-        <p>Configure a scan and run it once to start surfacing execution history here.</p>
+      <div className="text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>
+        No scan jobs have run yet. Configure a scan and run it once to start surfacing execution
+        history here.
       </div>
     )
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="font-medium text-foreground">{job.scan_name}</p>
+        <p className="text-[12px] font-medium">{job.scan_name}</p>
         <Badge variant={getScanJobStatusVariant(job.status)}>{job.status}</Badge>
       </div>
-      <div className="space-y-1 text-sm text-muted-foreground">
+      <div className="space-y-0.5 text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>
         <p>{describeScanJobTiming(job)}</p>
         {job.error_message && (
-          <p className="line-clamp-2 text-destructive">{job.error_message}</p>
+          <p className="line-clamp-2" style={{ color: 'var(--danger)' }}>
+            {job.error_message}
+          </p>
         )}
       </div>
       {job.result_summary && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {job.result_summary.events_created != null && (
-            <Badge variant="outline" className="text-[10px] text-emerald-600">
+            <Chip size="xs" tone="success">
               +{job.result_summary.events_created} events
-            </Badge>
+            </Chip>
           )}
           {job.result_summary.signals_added != null && job.result_summary.signals_added > 0 && (
-            <Badge variant="outline" className="text-[10px] text-destructive">
+            <Chip size="xs" tone="danger">
               +{job.result_summary.signals_added} signals
-            </Badge>
+            </Chip>
           )}
           {job.result_summary.alerts_queued != null && job.result_summary.alerts_queued > 0 && (
-            <Badge variant="outline" className="text-[10px] text-amber-600">
+            <Chip size="xs" tone="warning">
               +{job.result_summary.alerts_queued} alerts
-            </Badge>
+            </Chip>
           )}
         </div>
       )}
@@ -706,37 +764,38 @@ function LatestSignalSummary({
 }) {
   if (!signal) {
     return (
-      <div className="space-y-2 text-sm text-muted-foreground">
-        <p>No active or recent monitoring signals.</p>
-        <p>Once metrics collection finds anomalies, the latest signal will appear here.</p>
+      <div className="text-[11.5px]" style={{ color: 'var(--fg-subtle)' }}>
+        No active or recent monitoring signals. Once metrics collection finds anomalies, the latest
+        signal will appear here.
       </div>
     )
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={signal.state === 'recent' ? 'warning' : 'destructive'}>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip tone={signal.state === 'recent' ? 'warning' : 'danger'} size="xs">
           {signal.state === 'recent' ? 'Recent signal' : 'Latest scan signal'}
-        </Badge>
-        <Badge variant={signal.direction === 'drop' ? 'warning' : 'destructive'}>
+        </Chip>
+        <Chip tone={signal.direction === 'drop' ? 'warning' : 'danger'} size="xs">
           {signal.direction}
-        </Badge>
-        <Badge variant="secondary">{signalCount} active</Badge>
+        </Chip>
+        <Chip size="xs">{signalCount} active</Chip>
       </div>
-      <div className="space-y-1">
-        <p className="font-medium text-foreground">{signal.scope_name}</p>
-        <p className="text-sm text-muted-foreground">
-          {signal.actual_count.toLocaleString()} actual vs {Math.round(signal.expected_count).toLocaleString()} expected
+      <div className="space-y-0.5">
+        <p className="text-[12px] font-medium">{signal.scope_name}</p>
+        <p className="mono text-[11px]" style={{ color: 'var(--fg-subtle)' }}>
+          {signal.actual_count.toLocaleString()} actual vs{' '}
+          {Math.round(signal.expected_count).toLocaleString()} expected
         </p>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[11px]" style={{ color: 'var(--fg-faint)' }}>
           {formatDateTime(signal.bucket)} via {signal.scan_name}
         </p>
       </div>
       <Button asChild variant="outline" size="sm">
         <Link to={getMonitoringPath(slug, signal)}>
           Open Signal
-          <ArrowRight className="ml-2 h-4 w-4" />
+          <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </Button>
     </div>
@@ -762,15 +821,9 @@ function getProjectStatus(summary: ProjectSummary): {
 function getScanJobStatusVariant(
   status: ProjectLatestScanJob['status'],
 ): 'outline' | 'secondary' | 'success' | 'destructive' {
-  if (status === 'completed') {
-    return 'success'
-  }
-  if (status === 'failed') {
-    return 'destructive'
-  }
-  if (status === 'running') {
-    return 'secondary'
-  }
+  if (status === 'completed') return 'success'
+  if (status === 'failed') return 'destructive'
+  if (status === 'running') return 'secondary'
   return 'outline'
 }
 
@@ -796,11 +849,7 @@ function describeScanJobTiming(job: ProjectLatestScanJob) {
 
 function formatDate(value: string) {
   const date = new Date(value)
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function formatDateTime(value: string) {

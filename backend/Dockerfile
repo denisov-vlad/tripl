@@ -32,7 +32,9 @@ COPY --from=base /app/alembic.ini /app/alembic.ini
 COPY --from=base /app/alembic /app/alembic
 
 ENV PATH="/app/.venv/bin:$PATH"
+ENV UVICORN_WORKERS=4
 
 EXPOSE 8000
 
-CMD ["uvicorn", "tripl.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Production: multi-worker, proxy-aware. Override UVICORN_WORKERS at deploy time.
+CMD ["sh", "-c", "exec uvicorn tripl.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4} --proxy-headers --forwarded-allow-ips='*'"]
