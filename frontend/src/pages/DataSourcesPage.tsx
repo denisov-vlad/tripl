@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dataSourcesApi } from '@/api/dataSources'
@@ -42,6 +42,7 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editingDs, setEditingDs] = useState<DataSource | null>(null)
+  const editingDsIdRef = useRef<string | null>(null)
   const { confirm, dialog } = useConfirm()
 
   const [name, setName] = useState('')
@@ -134,7 +135,9 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
     }
   }
 
-  const startEdit = useCallback((ds: DataSource) => {
+  const populateEditForm = useCallback((ds: DataSource) => {
+    if (editingDsIdRef.current === ds.id) return
+    editingDsIdRef.current = ds.id
     setEditingDs(ds)
     setEditName(ds.name)
     setEditHost(ds.host)
@@ -142,20 +145,33 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
     setEditDatabaseName(ds.database_name)
     setEditUsername(ds.username)
     setEditPassword('')
+  }, [])
+
+  const startEdit = useCallback((ds: DataSource) => {
+    populateEditForm(ds)
     navigate(`/data-sources/${ds.id}`, { replace: true })
-  }, [navigate])
+  }, [navigate, populateEditForm])
 
   const closeEdit = () => {
+    editingDsIdRef.current = null
     setEditingDs(null)
     navigate('/data-sources', { replace: true })
   }
 
   useEffect(() => {
+    if (!openDsId) {
+      if (editingDsIdRef.current) {
+        editingDsIdRef.current = null
+        setEditingDs(null)
+      }
+      return
+    }
+
     if (openDsId && dataSources.length > 0) {
       const ds = dataSources.find((d: DataSource) => d.id === openDsId)
-      if (ds && editingDs?.id !== ds.id) startEdit(ds)
+      if (ds) populateEditForm(ds)
     }
-  }, [openDsId, dataSources, editingDs?.id, startEdit])
+  }, [openDsId, dataSources, populateEditForm])
 
   const resetForm = () => {
     setShowForm(false)
