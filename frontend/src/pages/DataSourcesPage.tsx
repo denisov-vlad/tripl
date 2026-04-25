@@ -347,7 +347,7 @@ function ConnectionsTab({ openDsId }: { openDsId?: string }) {
       )}
 
       {!dataSourcesQuery.isError && dataSources.length > 0 && (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3">
           {dataSources.map((ds) => (
             <DataSourceCard
               key={ds.id}

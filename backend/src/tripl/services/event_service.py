@@ -10,7 +10,7 @@ from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
 from tripl.models.event_tag import EventTag
 from tripl.models.field_definition import FieldDefinition
-from tripl.schemas.event import EventBulkDelete, EventCreate, EventMove, EventUpdate
+from tripl.schemas.event import EventBulkDelete, EventCreate, EventMove, EventReorder, EventUpdate
 from tripl.services.project_service import get_project_id_by_slug
 
 
@@ -276,6 +276,35 @@ async def move_event(
     await session.commit()
     await session.refresh(event)
     return event
+
+
+async def reorder_events(
+    session: AsyncSession,
+    slug: str,
+    data: EventReorder,
+) -> list[Event]:
+    project_id = await get_project_id_by_slug(session, slug)
+
+    result = await session.execute(
+        select(Event).where(
+            Event.project_id == project_id,
+            Event.id.in_(data.event_ids),
+        )
+    )
+    events = list(result.scalars().all())
+    if len(events) != len(set(data.event_ids)):
+        raise HTTPException(status_code=400, detail="Some events do not belong to this project")
+
+    events_by_id = {event.id: event for event in events}
+    sorted_orders = sorted(event.order for event in events)
+    for new_index, event_id in enumerate(data.event_ids):
+        events_by_id[event_id].order = sorted_orders[new_index]
+
+    await session.commit()
+    ordered = [events_by_id[event_id] for event_id in data.event_ids]
+    for event in ordered:
+        await session.refresh(event)
+    return ordered
 
 
 async def bulk_create_events(

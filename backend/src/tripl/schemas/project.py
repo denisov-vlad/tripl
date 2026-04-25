@@ -12,6 +12,9 @@ class ProjectCreate(BaseModel):
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
+    slug: str | None = Field(
+        None, min_length=1, max_length=255, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    )
     description: str | None = None
 
 

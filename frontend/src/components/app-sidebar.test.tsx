@@ -52,7 +52,7 @@ afterEach(() => {
 })
 
 describe('AppSidebar', () => {
-  it('renders event views from project summary instead of mock counts', async () => {
+  it('renders event views and a settings shortcut for the active project', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       const url = String(input)
       if (url.endsWith('/api/v1/projects')) {
@@ -102,13 +102,6 @@ describe('AppSidebar', () => {
 
     const { container } = renderSidebar('/p/demo/events?implemented=false')
 
-    expect(await screen.findByText('Event Types')).toBeInTheDocument()
-    expect(screen.getByText('Meta Fields')).toBeInTheDocument()
-    expect(screen.getByText('Relations')).toBeInTheDocument()
-    expect(screen.getByText('Variables')).toBeInTheDocument()
-    expect(await screen.findByText('Monitoring')).toBeInTheDocument()
-    expect(screen.getByText('Alerting')).toBeInTheDocument()
-    expect(screen.getByText('Scans')).toBeInTheDocument()
     expect(await screen.findByText('All events')).toBeInTheDocument()
     expect(screen.getByText('Needs review')).toBeInTheDocument()
     expect(screen.getByText('Implemented')).toBeInTheDocument()
@@ -118,14 +111,11 @@ describe('AppSidebar', () => {
     expect(screen.getByText('10')).toBeInTheDocument()
     expect(screen.getByText('7')).toBeInTheDocument()
     expect(screen.getAllByText('3').length).toBeGreaterThan(0)
-    expect(container.querySelector('a[href="/p/demo/settings/event-types"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/settings/meta-fields"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/settings/relations"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/settings/variables"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/settings/monitoring"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/settings/alerting"]')).toBeInTheDocument()
-    expect(container.querySelector('a[href="/p/demo/settings/scans"]')).toBeInTheDocument()
+    expect(container.querySelector('a[href="/p/demo/settings"]')).toBeInTheDocument()
     expect(container.querySelector('a[href="/p/demo/events?implemented=false"]')).toBeInTheDocument()
     expect(container.querySelector('a[href="/p/demo/events/page_view"]')).toBeInTheDocument()
+    expect(screen.queryByText('Event Types')).not.toBeInTheDocument()
+    expect(screen.queryByText('Alerting')).not.toBeInTheDocument()
+    expect(screen.queryByText('Monitoring')).not.toBeInTheDocument()
   })
 })

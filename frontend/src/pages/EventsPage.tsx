@@ -1,6 +1,23 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { eventsApi } from '@/api/events'
 import { metricsApi } from '@/api/metrics'
 import { eventTypesApi } from '@/api/eventTypes'
@@ -11,6 +28,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   Event as TEvent,
+  EventListResponse,
   EventMetricPoint,
   EventType,
   FieldDefinition,
@@ -63,6 +81,7 @@ import {
   CircleCheck,
   Eye,
   Filter,
+  GripVertical,
   LayoutGrid,
   MoreHorizontal,
   Pencil,
@@ -648,6 +667,22 @@ const EventRow = memo(function EventRow({
   onToggleExpanded,
   onRowAction,
 }: EventRowProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: ev.id })
+  const dragStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : undefined,
+    position: 'relative',
+    zIndex: isDragging ? 1 : undefined,
+  }
+
   const mvMap = useMemo(
     () => Object.fromEntries(ev.meta_values.map((mv) => [mv.meta_field_definition_id, mv.value])),
     [ev.meta_values],
@@ -667,7 +702,18 @@ const EventRow = memo(function EventRow({
         : 'neutral'
 
   return (
-    <TableRow data-state={selected ? 'selected' : undefined}>
+    <TableRow ref={setNodeRef} style={dragStyle} data-state={selected ? 'selected' : undefined}>
+      <TableCell className="w-8 px-1">
+        <button
+          type="button"
+          className="flex h-6 w-6 cursor-grab touch-none items-center justify-center rounded text-muted-foreground hover:bg-muted active:cursor-grabbing"
+          aria-label={`Drag to reorder ${ev.name}`}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+      </TableCell>
       <TableCell className="tripl-pin-l pl-5">
         <Checkbox
           checked={selected}
@@ -1065,6 +1111,40 @@ export default function EventsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
   })
 
+  const reorderEventsMut = useMutation({
+    mutationFn: (eventIds: string[]) => eventsApi.reorder(slug!, eventIds),
+    onMutate: async (eventIds) => {
+      await qc.cancelQueries({ queryKey: ['events', slug] })
+      const snapshots = qc.getQueriesData<EventListResponse>({ queryKey: ['events', slug] })
+      qc.setQueriesData<EventListResponse>({ queryKey: ['events', slug] }, (data) => {
+        if (!data) return data
+        const indexById = new Map(eventIds.map((id, i) => [id, i]))
+        const idSet = new Set(eventIds)
+        const reorderedIns = data.items
+          .filter((event) => idSet.has(event.id))
+          .sort((left, right) => indexById.get(left.id)! - indexById.get(right.id)!)
+        let pointer = 0
+        const items = data.items.map((event) =>
+          idSet.has(event.id) ? reorderedIns[pointer++] : event,
+        )
+        return { ...data, items }
+      })
+      return { snapshots }
+    },
+    onError: (_error, _vars, ctx) => {
+      if (!ctx?.snapshots) return
+      for (const [key, data] of ctx.snapshots) {
+        qc.setQueryData(key as QueryKey, data)
+      }
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['events', slug] }),
+  })
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
   const rawEvents = useMemo(() => eventsData?.items ?? [], [eventsData?.items])
   const total = eventsData?.total ?? 0
 
@@ -1203,6 +1283,7 @@ export default function EventsPage() {
   const virtualItems = virtualize ? rowVirtualizer.getVirtualItems() : []
   const totalVirtualSize = virtualize ? rowVirtualizer.getTotalSize() : 0
   const colCount =
+    1 /* drag handle */ +
     1 /* checkbox */ +
     1 /* event */ +
     (activeEt ? 0 : 1) /* type */ +
@@ -1283,6 +1364,19 @@ export default function EventsPage() {
       visibleEventIds,
     }
   })
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+      if (!over || active.id === over.id) return
+      const oldIndex = visibleEventIds.indexOf(String(active.id))
+      const newIndex = visibleEventIds.indexOf(String(over.id))
+      if (oldIndex < 0 || newIndex < 0) return
+      const next = arrayMove(visibleEventIds, oldIndex, newIndex)
+      reorderEventsMut.mutate(next)
+    },
+    [visibleEventIds, reorderEventsMut],
+  )
 
   const onRowAction = useCallback((action: RowAction, ev: TEvent) => {
     const ctx = rowCtxRef.current
@@ -1715,6 +1809,8 @@ export default function EventsPage() {
 
       {/* Events Table */}
       <TooltipProvider delayDuration={0}>
+      <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={visibleEventIds} strategy={verticalListSortingStrategy}>
       <div
         ref={tableScrollRef}
         className="tripl-table-wrap"
@@ -1728,6 +1824,7 @@ export default function EventsPage() {
         <Table className="tripl-table">
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8 px-1" aria-label="Reorder" />
               <TableHead className="tripl-pin-l w-10 pl-5">
                 <Checkbox
                   checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
@@ -1801,6 +1898,8 @@ export default function EventsPage() {
           </TableBody>
         </Table>
       </div>
+      </SortableContext>
+      </DndContext>
       </TooltipProvider>
         </>
       )}

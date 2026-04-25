@@ -8,6 +8,7 @@ from tripl.schemas.event import (
     EventCreate,
     EventListResponse,
     EventMove,
+    EventReorder,
     EventResponse,
     EventUpdate,
 )
@@ -53,6 +54,11 @@ async def bulk_create_events(session: SessionDep, slug: str, data: list[EventCre
 @router.post("/bulk-delete", status_code=204)
 async def bulk_delete_events(session: SessionDep, slug: str, data: EventBulkDelete):
     await event_service.bulk_delete_events(session, slug, data)
+
+
+@router.patch("/reorder", response_model=list[EventResponse])
+async def reorder_events(session: SessionDep, slug: str, data: EventReorder):
+    return await event_service.reorder_events(session, slug, data)
 
 
 @router.get("/{event_id}", response_model=EventResponse)

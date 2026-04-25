@@ -39,4 +39,6 @@ export const eventsApi = {
     api.post<void>(`/projects/${slug}/events/bulk-delete`, { event_ids: eventIds }),
   move: (slug: string, id: string, data: { direction: 'up' | 'down'; visible_event_ids?: string[] }) =>
     api.patch<Event>(`/projects/${slug}/events/${id}/move`, data),
+  reorder: (slug: string, eventIds: string[]) =>
+    api.patch<Event[]>(`/projects/${slug}/events/reorder`, { event_ids: eventIds }),
 }

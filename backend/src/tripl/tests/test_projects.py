@@ -127,6 +127,27 @@ async def test_update_project(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_update_project_slug(client: AsyncClient):
+    await client.post("/api/v1/projects", json={"name": "Slug me", "slug": "slug-old"})
+    resp = await client.patch("/api/v1/projects/slug-old", json={"slug": "slug-new"})
+    assert resp.status_code == 200
+    assert resp.json()["slug"] == "slug-new"
+
+    old = await client.get("/api/v1/projects/slug-old")
+    assert old.status_code == 404
+    new = await client.get("/api/v1/projects/slug-new")
+    assert new.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_update_project_slug_conflict(client: AsyncClient):
+    await client.post("/api/v1/projects", json={"name": "First", "slug": "taken-slug"})
+    await client.post("/api/v1/projects", json={"name": "Second", "slug": "free-slug"})
+    resp = await client.patch("/api/v1/projects/free-slug", json={"slug": "taken-slug"})
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_delete_project(client: AsyncClient):
     await client.post("/api/v1/projects", json={"name": "Del", "slug": "del-me"})
     resp = await client.delete("/api/v1/projects/del-me")

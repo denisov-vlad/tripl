@@ -49,6 +49,10 @@ class EventMove(BaseModel):
     visible_event_ids: list[uuid.UUID] | None = None
 
 
+class EventReorder(BaseModel):
+    event_ids: list[uuid.UUID] = Field(min_length=1)
+
+
 class EventFieldValueResponse(BaseModel):
     id: uuid.UUID
     field_definition_id: uuid.UUID

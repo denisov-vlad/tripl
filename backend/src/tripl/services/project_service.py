@@ -431,6 +431,13 @@ async def create_project(session: AsyncSession, data: ProjectCreate) -> ProjectR
 async def update_project(session: AsyncSession, slug: str, data: ProjectUpdate) -> ProjectResponse:
     project = await get_project_by_slug(session, slug)
     update_data = data.model_dump(exclude_unset=True)
+    new_slug = update_data.get("slug")
+    if new_slug is not None and new_slug != project.slug:
+        existing = await session.execute(
+            select(Project).where(Project.slug == new_slug, Project.id != project.id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Project with this slug already exists")
     for key, value in update_data.items():
         setattr(project, key, value)
     await session.commit()

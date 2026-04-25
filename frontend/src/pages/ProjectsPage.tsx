@@ -349,7 +349,7 @@ export default function MainPage() {
                 <Chip size="sm">{projects.length} tracked</Chip>
               </div>
 
-              <div className="grid gap-3 xl:grid-cols-2">
+              <div className="grid gap-3">
                 {projects.map((project) => (
                   <ProjectCard
                     key={project.id}
@@ -386,7 +386,7 @@ function ProjectsPageSkeleton() {
           <Skeleton key={index} className="h-24 rounded-lg" />
         ))}
       </div>
-      <div className="grid gap-3 xl:grid-cols-2">
+      <div className="grid gap-3">
         {[0, 1, 2, 3].map((index) => (
           <Skeleton key={index} className="h-64 rounded-lg" />
         ))}
@@ -622,14 +622,13 @@ function ProjectCard({
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-4">
-          <Metric label="Event types" value={String(project.summary.event_type_count)} />
-          <Metric label="Active events" value={String(project.summary.active_event_count)} />
-          <Metric label="Variables" value={String(project.summary.variable_count)} />
-          <Metric label="Alerts" value={String(project.summary.alert_destination_count)} />
-        </div>
-
-        <div className="grid gap-3 xl:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,auto)_minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="grid grid-cols-2 gap-2">
+            <Metric label="Event types" value={String(project.summary.event_type_count)} />
+            <Metric label="Active events" value={String(project.summary.active_event_count)} />
+            <Metric label="Variables" value={String(project.summary.variable_count)} />
+            <Metric label="Alerts" value={String(project.summary.alert_destination_count)} />
+          </div>
           <Panel icon={PlayCircle} title="Latest scan">
             <LatestScanJobSummary job={project.summary.latest_scan_job} />
           </Panel>

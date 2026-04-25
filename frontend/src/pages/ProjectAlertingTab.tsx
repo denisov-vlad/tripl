@@ -1156,7 +1156,7 @@ export default function ProjectAlertingTab({ slug }: { slug: string }) {
         </p>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+      <div className="grid gap-6">
         <div className="min-w-0 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Destinations</h3>

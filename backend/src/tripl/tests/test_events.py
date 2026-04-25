@@ -335,6 +335,37 @@ async def test_move_event_reorders_visible_list(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_reorder_events_assigns_new_sequence(client: AsyncClient):
+    et_id, field_id, _ = await _setup_events(client, "ev-reorder")
+    created_ids: list[str] = []
+    for name in ("Event A", "Event B", "Event C"):
+        create = await client.post(
+            "/api/v1/projects/ev-reorder/events",
+            json={
+                "event_type_id": et_id,
+                "name": name,
+                "field_values": [{"field_definition_id": field_id, "value": name}],
+            },
+        )
+        created_ids.append(create.json()["id"])
+
+    new_sequence = [created_ids[2], created_ids[0], created_ids[1]]
+    reorder_resp = await client.patch(
+        "/api/v1/projects/ev-reorder/events/reorder",
+        json={"event_ids": new_sequence},
+    )
+    assert reorder_resp.status_code == 200
+
+    list_resp = await client.get("/api/v1/projects/ev-reorder/events")
+    assert list_resp.status_code == 200
+    assert [item["name"] for item in list_resp.json()["items"]] == [
+        "Event C",
+        "Event A",
+        "Event B",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bulk_create_events(client: AsyncClient):
     et_id, field_id, _ = await _setup_events(client, "ev-bulk")
     resp = await client.post(

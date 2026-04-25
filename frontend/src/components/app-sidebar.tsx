@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Activity,
   Archive,
-  Bell,
   Calendar,
   Check,
   ChevronLeft,
@@ -15,15 +13,11 @@ import {
   Eye,
   Folder,
   Grid3x3,
-  Layers,
   LayoutDashboard,
-  Link2,
-  List,
   LogOut,
   Search,
   Settings,
   Tag,
-  Variable,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -33,7 +27,6 @@ import { useAuth } from '@/components/auth-context'
 import { useCommandPalette } from '@/components/command-palette-context'
 import { useTweaksPanel } from '@/components/tweaks-panel-context'
 import { ErrorState } from '@/components/error-state'
-import { Dot } from '@/components/primitives/dot'
 import { Kbd } from '@/components/primitives/kbd'
 import { Button } from '@/components/ui/button'
 import {
@@ -129,7 +122,6 @@ export function AppSidebar() {
 
   const showProjectViews =
     !!activeProject && !!slug && location.pathname.startsWith(`/p/${slug}`)
-  const projectSettingsViews = activeProject ? buildProjectSettingsViews(activeProject) : []
   const eventViews = activeProject ? buildEventViews(activeProject, eventTypes) : []
   const currentSearch = new URLSearchParams(location.search)
 
@@ -225,15 +217,6 @@ export function AppSidebar() {
             {projects.map((p) => (
               <div key={p.id}>
                 <ProjectRow project={p} active={p.slug === slug} />
-                {showProjectViews && p.slug === slug && projectSettingsViews.length > 0 && (
-                  <ProjectViews
-                    title="Settings"
-                    views={projectSettingsViews}
-                    currentPath={location.pathname}
-                    currentSearch={currentSearch}
-                    loadingEventTypes={false}
-                  />
-                )}
                 {showProjectViews && p.slug === slug && eventViews.length > 0 && (
                   <ProjectViews
                     title="Views"
@@ -300,77 +283,6 @@ export function AppSidebar() {
       </div>
     </aside>
   )
-}
-
-function buildProjectSettingsViews(project: Project): SavedView[] {
-  const base = `/p/${project.slug}`
-  const signalCount = project.summary.monitoring_signal_count
-
-  return [
-    {
-      id: 'event-types',
-      name: 'Event Types',
-      count: project.summary.event_type_count,
-      icon: Layers,
-      to: `${base}/settings/event-types`,
-      match: (path) =>
-        path === `${base}/settings` ||
-        path === `${base}/settings/event-types`,
-    },
-    {
-      id: 'meta-fields',
-      name: 'Meta Fields',
-      icon: List,
-      to: `${base}/settings/meta-fields`,
-      match: (path) => path === `${base}/settings/meta-fields`,
-    },
-    {
-      id: 'relations',
-      name: 'Relations',
-      icon: Link2,
-      to: `${base}/settings/relations`,
-      match: (path) => path === `${base}/settings/relations`,
-    },
-    {
-      id: 'variables',
-      name: 'Variables',
-      count: project.summary.variable_count,
-      icon: Variable,
-      to: `${base}/settings/variables`,
-      match: (path) => path === `${base}/settings/variables`,
-    },
-    {
-      id: 'monitoring',
-      name: 'Monitoring',
-      count: signalCount,
-      icon: Activity,
-      tone: signalCount > 0 ? 'danger' : 'info',
-      to: `${base}/settings/monitoring`,
-      match: (path) =>
-        path === `${base}/monitoring` ||
-        path === `${base}/settings/monitoring` ||
-        path.startsWith(`${base}/monitoring/`),
-    },
-    {
-      id: 'alerting',
-      name: 'Alerting',
-      count: project.summary.alert_destination_count,
-      icon: Bell,
-      tone: 'accent',
-      to: `${base}/settings/alerting`,
-      match: (path) =>
-        path === `${base}/alerting` ||
-        path === `${base}/settings/alerting`,
-    },
-    {
-      id: 'scans',
-      name: 'Scans',
-      count: project.summary.scan_count,
-      icon: Search,
-      to: `${base}/settings/scans`,
-      match: (path) => path === `${base}/settings/scans`,
-    },
-  ]
 }
 
 function buildEventViews(project: Project, eventTypes: EventType[]): SavedView[] {
@@ -716,18 +628,30 @@ function ProjectSwitcher({
 
 function ProjectRow({ project, active }: { project: Project; active: boolean }) {
   return (
-    <Link
-      to={`/p/${project.slug}/events`}
-      className="flex items-center gap-2 rounded-[5px] px-2 py-1 text-[12px] no-underline transition-colors"
-      style={{
-        background: active ? 'var(--surface-hover)' : 'transparent',
-        color: active ? 'var(--fg)' : 'var(--fg-muted)',
-      }}
+    <div
+      className="group flex items-center gap-1 rounded-[5px] pr-1 transition-colors"
+      style={{ background: active ? 'var(--surface-hover)' : 'transparent' }}
     >
-      <Folder className="h-3 w-3 shrink-0" style={{ color: 'var(--fg-subtle)' }} />
-      <span className="flex-1 truncate text-left">{project.name}</span>
-      {active && <Dot tone="accent" size={6} />}
-    </Link>
+      <Link
+        to={`/p/${project.slug}/events`}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-[5px] px-2 py-1 text-[12px] no-underline"
+        style={{ color: active ? 'var(--fg)' : 'var(--fg-muted)' }}
+      >
+        <Folder className="h-3 w-3 shrink-0" style={{ color: 'var(--fg-subtle)' }} />
+        <span className="flex-1 truncate text-left">{project.name}</span>
+      </Link>
+      {active && (
+        <Link
+          to={`/p/${project.slug}/settings`}
+          title="Project settings"
+          aria-label={`${project.name} settings`}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-[var(--surface-hover-strong,var(--surface-hover))]"
+          style={{ color: 'var(--fg-subtle)' }}
+        >
+          <Settings className="h-3 w-3" />
+        </Link>
+      )}
+    </div>
   )
 }
 
