@@ -68,7 +68,7 @@
   --secondary-foreground: var(--fg);
   --muted: var(--surface-hover);
   --muted-foreground: var(--fg-subtle);
-  --accent-foreground: var(--accent);
+  --accent-foreground: var(--accent-fg);
   --destructive: var(--danger);
   --destructive-foreground: oklch(0.985 0 0);
   --input: var(--border);

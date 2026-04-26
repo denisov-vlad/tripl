@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -10,6 +11,42 @@ from tripl.alerting_validation import (
     validate_telegram_bot_token,
     validate_telegram_chat_id,
 )
+
+AlertRuleFilterField = Literal["event_type", "event", "direction"]
+AlertRuleFilterOperator = Literal["eq", "ne", "in", "not_in"]
+
+
+class AlertRuleFilterPayload(BaseModel):
+    field: AlertRuleFilterField
+    operator: AlertRuleFilterOperator
+    values: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_filter(self) -> "AlertRuleFilterPayload":
+        if not self.values:
+            raise ValueError("Filter must have at least one value")
+        if self.operator in ("eq", "ne") and len(self.values) != 1:
+            raise ValueError("Operators '=' and '!=' require exactly one value")
+        if self.field == "direction":
+            allowed = {"up", "down"}
+            invalid = [value for value in self.values if value not in allowed]
+            if invalid:
+                raise ValueError(
+                    "Direction filter values must be 'up' or 'down'",
+                )
+        else:
+            for value in self.values:
+                try:
+                    uuid.UUID(value)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Filter value for {self.field} must be a UUID",
+                    ) from exc
+        return self
+
+
+class AlertRuleFilterResponse(AlertRuleFilterPayload):
+    id: uuid.UUID
 
 
 class AlertRuleBase(BaseModel):
@@ -27,8 +64,7 @@ class AlertRuleBase(BaseModel):
     message_template: str | None = None
     items_template: str | None = None
     message_format: str | None = None
-    excluded_event_type_ids: list[uuid.UUID] | None = None
-    excluded_event_ids: list[uuid.UUID] | None = None
+    filters: list[AlertRuleFilterPayload] | None = None
 
     @model_validator(mode="after")
     def validate_direction(self) -> "AlertRuleBase":
@@ -54,8 +90,7 @@ class AlertRuleCreate(AlertRuleBase):
     message_template: str | None = None
     items_template: str | None = None
     message_format: str = "plain"
-    excluded_event_type_ids: list[uuid.UUID] = Field(default_factory=list)
-    excluded_event_ids: list[uuid.UUID] = Field(default_factory=list)
+    filters: list[AlertRuleFilterPayload] = Field(default_factory=list)
 
 
 class AlertRuleUpdate(AlertRuleBase):
@@ -79,8 +114,7 @@ class AlertRuleResponse(BaseModel):
     message_template: str | None
     items_template: str | None
     message_format: str
-    excluded_event_type_ids: list[uuid.UUID]
-    excluded_event_ids: list[uuid.UUID]
+    filters: list[AlertRuleFilterResponse]
     created_at: datetime
     updated_at: datetime
 

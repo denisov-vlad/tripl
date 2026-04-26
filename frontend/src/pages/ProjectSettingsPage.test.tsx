@@ -463,8 +463,10 @@ describe('ProjectSettingsPage', () => {
             cooldown_minutes: 1440,
             message_template: '*${scope_name}* ${actual_count}/${expected_count}',
             message_format: 'slack_mrkdwn',
-            excluded_event_type_ids: ['type-1'],
-            excluded_event_ids: ['event-1'],
+            filters: [
+              { id: 'filter-1', field: 'event_type', operator: 'not_in', values: ['type-1'] },
+              { id: 'filter-2', field: 'event', operator: 'not_in', values: ['event-1'] },
+            ],
             created_at: '2026-04-11T00:00:00Z',
             updated_at: '2026-04-11T00:00:00Z',
           }],

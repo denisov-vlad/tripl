@@ -89,8 +89,10 @@ async def test_alerting_destination_rule_crud_and_secret_masking(client: AsyncCl
             "message_format": "slack_mrkdwn",
             "message_template": "*Matched:* ${matched_count}\n${items_text}",
             "items_template": "*${scope_name}* ${actual_count}/${expected_count}",
-            "excluded_event_type_ids": [event_type_id],
-            "excluded_event_ids": [event_id],
+            "filters": [
+                {"field": "event_type", "operator": "not_in", "values": [event_type_id]},
+                {"field": "event", "operator": "not_in", "values": [event_id]},
+            ],
         },
     )
     assert rule_resp.status_code == 201
@@ -99,8 +101,10 @@ async def test_alerting_destination_rule_crud_and_secret_masking(client: AsyncCl
     assert rule["message_format"] == "slack_mrkdwn"
     assert rule["message_template"] == "*Matched:* ${matched_count}\n${items_text}"
     assert rule["items_template"] == "*${scope_name}* ${actual_count}/${expected_count}"
-    assert rule["excluded_event_type_ids"] == [event_type_id]
-    assert rule["excluded_event_ids"] == [event_id]
+    assert rule["filters"] == [
+        {"field": "event_type", "operator": "not_in", "values": [event_type_id], "id": rule["filters"][0]["id"]},
+        {"field": "event", "operator": "not_in", "values": [event_id], "id": rule["filters"][1]["id"]},
+    ]
 
     list_resp = await client.get("/api/v1/projects/alerting-project/alert-destinations")
     assert list_resp.status_code == 200

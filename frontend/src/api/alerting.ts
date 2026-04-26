@@ -4,6 +4,7 @@ import type {
   AlertDeliveryListResponse,
   AlertDestination,
   AlertRule,
+  AlertRuleFilterPayload,
 } from '../types'
 
 export const alertingApi = {
@@ -55,8 +56,7 @@ export const alertingApi = {
       message_template?: string | null
       items_template?: string | null
       message_format?: 'plain' | 'slack_mrkdwn' | 'telegram_html' | 'telegram_markdownv2'
-      excluded_event_type_ids?: string[]
-      excluded_event_ids?: string[]
+      filters?: AlertRuleFilterPayload[]
     },
   ) => api.post<AlertRule>(`/projects/${slug}/alert-destinations/${destinationId}/rules`, data),
 
@@ -79,8 +79,7 @@ export const alertingApi = {
       message_template?: string | null
       items_template?: string | null
       message_format?: 'plain' | 'slack_mrkdwn' | 'telegram_html' | 'telegram_markdownv2'
-      excluded_event_type_ids?: string[]
-      excluded_event_ids?: string[]
+      filters?: AlertRuleFilterPayload[]
     },
   ) => api.patch<AlertRule>(`/projects/${slug}/alert-destinations/${destinationId}/rules/${ruleId}`, data),
 

@@ -384,10 +384,25 @@ export interface AlertRule {
   message_template: string | null
   items_template: string | null
   message_format: AlertMessageFormat
-  excluded_event_type_ids: string[]
-  excluded_event_ids: string[]
+  filters: AlertRuleFilter[]
   created_at: string
   updated_at: string
+}
+
+export type AlertRuleFilterField = 'event_type' | 'event' | 'direction'
+export type AlertRuleFilterOperator = 'eq' | 'ne' | 'in' | 'not_in'
+
+export interface AlertRuleFilter {
+  id: string
+  field: AlertRuleFilterField
+  operator: AlertRuleFilterOperator
+  values: string[]
+}
+
+export interface AlertRuleFilterPayload {
+  field: AlertRuleFilterField
+  operator: AlertRuleFilterOperator
+  values: string[]
 }
 
 export interface AlertDestination {

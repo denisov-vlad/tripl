@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, Pencil, Plus, Send, Trash2, Webhook } from 'lucide-react'
+import { ChevronDown, Pencil, Plus, Send, Trash2, Webhook, X } from 'lucide-react'
 
 import { alertingApi } from '@/api/alerting'
 import { eventTypesApi } from '@/api/eventTypes'
@@ -49,6 +49,9 @@ import type {
   AlertDestination,
   AlertMessageFormat,
   AlertRule,
+  AlertRuleFilterField,
+  AlertRuleFilterOperator,
+  AlertRuleFilterPayload,
   Event,
   EventType,
 } from '@/types'
@@ -60,6 +63,13 @@ type DestinationFormState = {
   webhook_url: string
   bot_token: string
   chat_id: string
+}
+
+type RuleFilterDraft = {
+  uid: string
+  field: AlertRuleFilterField
+  operator: AlertRuleFilterOperator
+  values: string[]
 }
 
 type RuleFormState = {
@@ -77,8 +87,33 @@ type RuleFormState = {
   message_template: string
   items_template: string
   message_format: AlertMessageFormat
-  excluded_event_type_ids: string[]
-  excluded_event_ids: string[]
+  filters: RuleFilterDraft[]
+}
+
+const FILTER_FIELD_OPTIONS: { value: AlertRuleFilterField; label: string }[] = [
+  { value: 'event_type', label: 'Event type' },
+  { value: 'event', label: 'Event' },
+  { value: 'direction', label: 'Direction' },
+]
+
+const FILTER_OPERATOR_OPTIONS: { value: AlertRuleFilterOperator; label: string }[] = [
+  { value: 'eq', label: '=' },
+  { value: 'ne', label: '!=' },
+  { value: 'in', label: 'IN' },
+  { value: 'not_in', label: 'NOT IN' },
+]
+
+const DIRECTION_VALUE_OPTIONS = [
+  { value: 'up', label: 'up' },
+  { value: 'down', label: 'down' },
+]
+
+function isSingleValueOperator(operator: AlertRuleFilterOperator) {
+  return operator === 'eq' || operator === 'ne'
+}
+
+function makeFilterUid() {
+  return `f-${Math.random().toString(36).slice(2, 10)}`
 }
 
 const TEMPLATE_VARIABLE_OPTIONS = [
@@ -244,8 +279,7 @@ function defaultRuleForm(): RuleFormState {
     message_template: getDefaultMessageTemplate('plain'),
     items_template: getDefaultItemsTemplate('plain'),
     message_format: 'plain',
-    excluded_event_type_ids: [],
-    excluded_event_ids: [],
+    filters: [],
   }
 }
 
@@ -265,16 +299,31 @@ function ruleToForm(rule: AlertRule): RuleFormState {
     message_template: rule.message_template ?? getDefaultMessageTemplate(rule.message_format),
     items_template: rule.items_template ?? getDefaultItemsTemplate(rule.message_format),
     message_format: rule.message_format,
-    excluded_event_type_ids: rule.excluded_event_type_ids,
-    excluded_event_ids: rule.excluded_event_ids,
+    filters: rule.filters.map(filter => ({
+      uid: filter.id,
+      field: filter.field,
+      operator: filter.operator,
+      values: [...filter.values],
+    })),
   }
 }
 
 function ruleFormToPayload(ruleForm: RuleFormState) {
   const normalizedTemplate = normalizeRuleTemplate(ruleForm.message_template)
   const normalizedItemsTemplate = normalizeRuleTemplate(ruleForm.items_template)
+  const filters: AlertRuleFilterPayload[] = ruleForm.filters
+    .filter(filter => filter.values.length > 0)
+    .map(filter => ({
+      field: filter.field,
+      operator: filter.operator,
+      values: isSingleValueOperator(filter.operator)
+        ? filter.values.slice(0, 1)
+        : filter.values,
+    }))
+  const { filters: _filters, ...rest } = ruleForm
   return {
-    ...ruleForm,
+    ...rest,
+    filters,
     message_template:
       !normalizedTemplate || isDefaultMessageTemplate(normalizedTemplate, ruleForm.message_format)
         ? null
@@ -628,11 +677,8 @@ function DestinationCard({
                             ? `default (${rule.message_format})`
                             : `custom (${rule.message_format})`}
                         </span>
-                        {!!rule.excluded_event_type_ids.length && (
-                          <span>{rule.excluded_event_type_ids.length} group exclusions</span>
-                        )}
-                        {!!rule.excluded_event_ids.length && (
-                          <span>{rule.excluded_event_ids.length} event exclusions</span>
+                        {!!rule.filters.length && (
+                          <span>{rule.filters.length} filter{rule.filters.length === 1 ? '' : 's'}</span>
                         )}
                       </div>
                     </div>
@@ -815,26 +861,12 @@ function DestinationCard({
                 onChange={items_template => setRuleForm(current => ({ ...current, items_template }))}
               />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <ExclusionSelector
-                  label="Excluded event types"
-                  items={eventTypes.map(eventType => ({
-                    id: eventType.id,
-                    label: eventType.display_name,
-                  }))}
-                  selectedIds={ruleForm.excluded_event_type_ids}
-                  onChange={selectedIds => setRuleForm(current => ({ ...current, excluded_event_type_ids: selectedIds }))}
-                />
-                <ExclusionSelector
-                  label="Excluded events"
-                  items={events.map(event => ({
-                    id: event.id,
-                    label: event.name,
-                  }))}
-                  selectedIds={ruleForm.excluded_event_ids}
-                  onChange={selectedIds => setRuleForm(current => ({ ...current, excluded_event_ids: selectedIds }))}
-                />
-              </div>
+              <FilterEditor
+                filters={ruleForm.filters}
+                eventTypes={eventTypes}
+                events={events}
+                onChange={filters => setRuleForm(current => ({ ...current, filters }))}
+              />
 
               {ruleMutation.isError && (
                 <p className="text-sm text-destructive">{(ruleMutation.error as Error).message}</p>
@@ -853,59 +885,246 @@ function DestinationCard({
   )
 }
 
-function ExclusionSelector({
-  label,
-  items,
-  selectedIds,
+function FilterEditor({
+  filters,
+  eventTypes,
+  events,
   onChange,
 }: {
-  label: string
-  items: { id: string; label: string }[]
-  selectedIds: string[]
-  onChange: (selectedIds: string[]) => void
+  filters: RuleFilterDraft[]
+  eventTypes: EventType[]
+  events: Event[]
+  onChange: (filters: RuleFilterDraft[]) => void
 }) {
-  const [search, setSearch] = useState('')
-  const filtered = useMemo(() => {
-    if (!search) return items
-    const needle = search.toLowerCase()
-    return items.filter(item => item.label.toLowerCase().includes(needle))
-  }, [items, search])
+  const addFilter = () => {
+    onChange([
+      ...filters,
+      { uid: makeFilterUid(), field: 'event_type', operator: 'in', values: [] },
+    ])
+  }
+
+  const updateFilter = (uid: string, patch: Partial<RuleFilterDraft>) => {
+    onChange(
+      filters.map(filter => (filter.uid === uid ? { ...filter, ...patch } : filter)),
+    )
+  }
+
+  const removeFilter = (uid: string) => {
+    onChange(filters.filter(filter => filter.uid !== uid))
+  }
 
   return (
     <div className="grid gap-2">
-      <Label>{label}</Label>
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button type="button" variant="outline" className="justify-between">
-            <span>{selectedIds.length ? `${selectedIds.length} selected` : 'Select exclusions'}</span>
-            <ChevronDown className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-96 space-y-3" align="start">
-          <Input placeholder="Search…" value={search} onChange={event => setSearch(event.target.value)} />
-          <div className="max-h-64 overflow-y-auto space-y-2">
-            {filtered.map(item => {
-              const checked = selectedIds.includes(item.id)
-              return (
-                <label key={item.id} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={nextChecked => {
-                      if (nextChecked) onChange([...selectedIds, item.id])
-                      else onChange(selectedIds.filter(id => id !== item.id))
-                    }}
-                  />
-                  <span className="truncate">{item.label}</span>
-                </label>
-              )
-            })}
-            {filtered.length === 0 && (
-              <p className="text-sm text-muted-foreground">No matches.</p>
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
+      <div className="flex items-center justify-between">
+        <Label>Filters</Label>
+        <Button type="button" size="sm" variant="outline" onClick={addFilter}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add filter
+        </Button>
+      </div>
+      {filters.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No filters. Alerts match all anomalies that pass the basic thresholds above.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {filters.map(filter => (
+            <FilterRow
+              key={filter.uid}
+              filter={filter}
+              eventTypes={eventTypes}
+              events={events}
+              onChange={patch => updateFilter(filter.uid, patch)}
+              onRemove={() => removeFilter(filter.uid)}
+            />
+          ))}
+        </div>
+      )}
     </div>
+  )
+}
+
+function FilterRow({
+  filter,
+  eventTypes,
+  events,
+  onChange,
+  onRemove,
+}: {
+  filter: RuleFilterDraft
+  eventTypes: EventType[]
+  events: Event[]
+  onChange: (patch: Partial<RuleFilterDraft>) => void
+  onRemove: () => void
+}) {
+  const valueOptions = useMemo(() => {
+    if (filter.field === 'event_type') {
+      return eventTypes.map(eventType => ({ value: eventType.id, label: eventType.display_name }))
+    }
+    if (filter.field === 'event') {
+      return events.map(event => ({ value: event.id, label: event.name }))
+    }
+    return DIRECTION_VALUE_OPTIONS
+  }, [filter.field, eventTypes, events])
+
+  const single = isSingleValueOperator(filter.operator)
+  const selectedValues = single ? filter.values.slice(0, 1) : filter.values
+  const labelByValue = useMemo(
+    () => new Map(valueOptions.map(option => [option.value, option.label])),
+    [valueOptions],
+  )
+
+  const onFieldChange = (nextField: AlertRuleFilterField) => {
+    onChange({ field: nextField, values: [] })
+  }
+
+  const onOperatorChange = (nextOperator: AlertRuleFilterOperator) => {
+    const nextSingle = isSingleValueOperator(nextOperator)
+    onChange({
+      operator: nextOperator,
+      values: nextSingle ? filter.values.slice(0, 1) : filter.values,
+    })
+  }
+
+  const toggleValue = (value: string) => {
+    if (single) {
+      onChange({ values: [value] })
+      return
+    }
+    const next = filter.values.includes(value)
+      ? filter.values.filter(item => item !== value)
+      : [...filter.values, value]
+    onChange({ values: next })
+  }
+
+  return (
+    <div className="rounded-md border p-2 space-y-2">
+      <div className="flex items-center gap-2">
+        <Select value={filter.field} onValueChange={value => onFieldChange(value as AlertRuleFilterField)}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {FILTER_FIELD_OPTIONS.map(option => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={filter.operator} onValueChange={value => onOperatorChange(value as AlertRuleFilterOperator)}>
+          <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {FILTER_OPERATOR_OPTIONS.map(option => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <FilterValuePicker
+          single={single}
+          options={valueOptions}
+          selectedValues={selectedValues}
+          onToggle={toggleValue}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive ml-auto"
+          onClick={onRemove}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+      {selectedValues.length > 0 && !single && (
+        <div className="flex flex-wrap gap-1">
+          {selectedValues.map(value => (
+            <Badge key={value} variant="secondary" className="text-[10px] gap-1">
+              <span className="truncate max-w-40">{labelByValue.get(value) ?? value}</span>
+              <button
+                type="button"
+                aria-label="Remove value"
+                className="hover:text-destructive"
+                onClick={() => toggleValue(value)}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FilterValuePicker({
+  single,
+  options,
+  selectedValues,
+  onToggle,
+}: {
+  single: boolean
+  options: { value: string; label: string }[]
+  selectedValues: string[]
+  onToggle: (value: string) => void
+}) {
+  const [search, setSearch] = useState('')
+  const filtered = useMemo(() => {
+    if (!search) return options
+    const needle = search.toLowerCase()
+    return options.filter(option => option.label.toLowerCase().includes(needle))
+  }, [options, search])
+
+  const triggerLabel = (() => {
+    if (selectedValues.length === 0) return 'Select value'
+    if (single) {
+      const found = options.find(option => option.value === selectedValues[0])
+      return found?.label ?? selectedValues[0]
+    }
+    return `${selectedValues.length} selected`
+  })()
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" className="flex-1 justify-between min-w-0">
+          <span className="truncate">{triggerLabel}</span>
+          <ChevronDown className="h-4 w-4 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 space-y-2" align="start">
+        <Input
+          placeholder="Search…"
+          value={search}
+          onChange={event => setSearch(event.target.value)}
+        />
+        <div className="max-h-64 overflow-y-auto space-y-1">
+          {filtered.map(option => {
+            const checked = selectedValues.includes(option.value)
+            if (single) {
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted ${checked ? 'bg-muted' : ''}`}
+                  onClick={() => onToggle(option.value)}
+                >
+                  <span className="truncate">{option.label}</span>
+                </button>
+              )
+            }
+            return (
+              <label key={option.value} className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-md hover:bg-muted">
+                <Checkbox
+                  checked={checked}
+                  onCheckedChange={() => onToggle(option.value)}
+                />
+                <span className="truncate">{option.label}</span>
+              </label>
+            )
+          })}
+          {filtered.length === 0 && (
+            <p className="text-sm text-muted-foreground px-2 py-1">No matches.</p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

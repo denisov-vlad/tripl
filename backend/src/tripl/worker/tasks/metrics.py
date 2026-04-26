@@ -31,6 +31,7 @@ from tripl.models.alert_delivery import AlertDelivery, AlertDeliveryStatus
 from tripl.models.alert_delivery_item import AlertDeliveryItem
 from tripl.models.alert_destination import AlertDestination
 from tripl.models.alert_rule import AlertRule
+from tripl.models.alert_rule_filter import AlertRuleFilter
 from tripl.models.alert_rule_state import AlertRuleState
 from tripl.models.data_source import DataSource
 from tripl.models.event import Event
@@ -955,14 +956,33 @@ def _rule_matches_anomaly(
     if percent_delta < rule.min_percent_delta:
         return False
 
-    if anomaly.scope_type == SCOPE_EVENT_TYPE:
-        excluded_event_type_ids = {item.event_type_id for item in rule.excluded_event_types}
-        if anomaly.event_type_id in excluded_event_type_ids:
+    for filter_row in rule.filters:
+        if not _filter_matches_anomaly(filter_row, anomaly):
             return False
-    if anomaly.scope_type == SCOPE_EVENT:
-        excluded_event_ids = {item.event_id for item in rule.excluded_events}
-        if anomaly.event_id in excluded_event_ids:
-            return False
+    return True
+
+
+def _filter_matches_anomaly(
+    filter_row: AlertRuleFilter,
+    anomaly: MetricAnomaly,
+) -> bool:
+    if filter_row.field == "event_type":
+        actual = str(anomaly.event_type_id) if anomaly.event_type_id is not None else None
+    elif filter_row.field == "event":
+        actual = str(anomaly.event_id) if anomaly.event_id is not None else None
+    elif filter_row.field == "direction":
+        actual = "up" if anomaly.direction == "spike" else "down"
+    else:
+        return True
+
+    if actual is None:
+        return True
+
+    values = set(filter_row.values or [])
+    if filter_row.operator in ("eq", "in"):
+        return actual in values
+    if filter_row.operator in ("ne", "not_in"):
+        return actual not in values
     return True
 
 

@@ -10,8 +10,7 @@ from tripl.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from tripl.models.alert_destination import AlertDestination
-    from tripl.models.alert_rule_excluded_event import AlertRuleExcludedEvent
-    from tripl.models.alert_rule_excluded_event_type import AlertRuleExcludedEventType
+    from tripl.models.alert_rule_filter import AlertRuleFilter
 
 
 class AlertRule(UUIDMixin, TimestampMixin, Base):
@@ -49,13 +48,9 @@ class AlertRule(UUIDMixin, TimestampMixin, Base):
     )
 
     destination: Mapped[AlertDestination] = relationship(back_populates="rules")
-    excluded_event_types: Mapped[list[AlertRuleExcludedEventType]] = relationship(
+    filters: Mapped[list[AlertRuleFilter]] = relationship(
         back_populates="rule",
         cascade="all, delete-orphan",
         lazy="selectin",
-    )
-    excluded_events: Mapped[list[AlertRuleExcludedEvent]] = relationship(
-        back_populates="rule",
-        cascade="all, delete-orphan",
-        lazy="selectin",
+        order_by="AlertRuleFilter.position",
     )

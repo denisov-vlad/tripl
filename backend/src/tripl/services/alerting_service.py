@@ -19,8 +19,7 @@ from tripl.models.alert_delivery import AlertDelivery
 from tripl.models.alert_delivery_item import AlertDeliveryItem
 from tripl.models.alert_destination import AlertDestination, AlertDestinationType
 from tripl.models.alert_rule import AlertRule
-from tripl.models.alert_rule_excluded_event import AlertRuleExcludedEvent
-from tripl.models.alert_rule_excluded_event_type import AlertRuleExcludedEventType
+from tripl.models.alert_rule_filter import AlertRuleFilter
 from tripl.models.alert_rule_state import AlertRuleState
 from tripl.models.event import Event
 from tripl.models.event_type import EventType
@@ -34,6 +33,8 @@ from tripl.schemas.alerting import (
     AlertDestinationResponse,
     AlertDestinationUpdate,
     AlertRuleCreate,
+    AlertRuleFilterPayload,
+    AlertRuleFilterResponse,
     AlertRuleResponse,
     AlertRuleUpdate,
 )
@@ -62,8 +63,7 @@ def _destination_query(project_id: uuid.UUID) -> Select[tuple[AlertDestination]]
         select(AlertDestination)
         .where(AlertDestination.project_id == project_id)
         .options(
-            selectinload(AlertDestination.rules).selectinload(AlertRule.excluded_event_types),
-            selectinload(AlertDestination.rules).selectinload(AlertRule.excluded_events),
+            selectinload(AlertDestination.rules).selectinload(AlertRule.filters),
         )
         .order_by(AlertDestination.created_at.desc())
     )
@@ -101,23 +101,27 @@ async def _get_rule(
             AlertRule.id == rule_id,
             AlertRule.destination_id == destination_id,
         )
-        .options(
-            selectinload(AlertRule.excluded_event_types),
-            selectinload(AlertRule.excluded_events),
-        )
+        .options(selectinload(AlertRule.filters))
     )
     if rule is None:
         raise HTTPException(status_code=404, detail="Alert rule not found")
     return destination, rule
 
 
-async def _validate_exclusions(
+async def _validate_filters(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    event_type_ids: list[uuid.UUID],
-    event_ids: list[uuid.UUID],
+    filters: list[AlertRuleFilterPayload],
 ) -> None:
+    event_type_ids: set[uuid.UUID] = set()
+    event_ids: set[uuid.UUID] = set()
+    for filter_payload in filters:
+        if filter_payload.field == "event_type":
+            event_type_ids.update(uuid.UUID(value) for value in filter_payload.values)
+        elif filter_payload.field == "event":
+            event_ids.update(uuid.UUID(value) for value in filter_payload.values)
+
     if event_type_ids:
         found_ids = set(
             (
@@ -129,9 +133,9 @@ async def _validate_exclusions(
                 )
             ).scalars()
         )
-        missing = set(event_type_ids) - found_ids
+        missing = event_type_ids - found_ids
         if missing:
-            raise HTTPException(status_code=404, detail="Excluded event type not found")
+            raise HTTPException(status_code=404, detail="Filter event type not found")
 
     if event_ids:
         found_ids = set(
@@ -144,12 +148,13 @@ async def _validate_exclusions(
                 )
             ).scalars()
         )
-        missing = set(event_ids) - found_ids
+        missing = event_ids - found_ids
         if missing:
-            raise HTTPException(status_code=404, detail="Excluded event not found")
+            raise HTTPException(status_code=404, detail="Filter event not found")
 
 
 def _rule_to_response(rule: AlertRule) -> AlertRuleResponse:
+    sorted_filters = sorted(rule.filters, key=lambda item: item.position)
     return AlertRuleResponse(
         id=rule.id,
         destination_id=rule.destination_id,
@@ -167,8 +172,15 @@ def _rule_to_response(rule: AlertRule) -> AlertRuleResponse:
         message_template=rule.message_template,
         items_template=rule.items_template,
         message_format=rule.message_format,
-        excluded_event_type_ids=[item.event_type_id for item in rule.excluded_event_types],
-        excluded_event_ids=[item.event_id for item in rule.excluded_events],
+        filters=[
+            AlertRuleFilterResponse(
+                id=filter_row.id,
+                field=filter_row.field,
+                operator=filter_row.operator,
+                values=list(filter_row.values or []),
+            )
+            for filter_row in sorted_filters
+        ],
         created_at=rule.created_at,
         updated_at=rule.updated_at,
     )
@@ -191,25 +203,27 @@ def _destination_to_response(destination: AlertDestination) -> AlertDestinationR
     )
 
 
-async def _replace_rule_exclusions(
+async def _replace_rule_filters(
     session: AsyncSession,
     *,
     rule: AlertRule,
-    event_type_ids: list[uuid.UUID],
-    event_ids: list[uuid.UUID],
+    filters: list[AlertRuleFilterPayload],
 ) -> None:
     await session.execute(
-        delete(AlertRuleExcludedEventType).where(AlertRuleExcludedEventType.rule_id == rule.id)
-    )
-    await session.execute(
-        delete(AlertRuleExcludedEvent).where(AlertRuleExcludedEvent.rule_id == rule.id)
+        delete(AlertRuleFilter).where(AlertRuleFilter.rule_id == rule.id)
     )
     await session.flush()
 
-    for event_type_id in event_type_ids:
-        session.add(AlertRuleExcludedEventType(rule_id=rule.id, event_type_id=event_type_id))
-    for event_id in event_ids:
-        session.add(AlertRuleExcludedEvent(rule_id=rule.id, event_id=event_id))
+    for position, filter_payload in enumerate(filters):
+        session.add(
+            AlertRuleFilter(
+                rule_id=rule.id,
+                field=filter_payload.field,
+                operator=filter_payload.operator,
+                values=list(filter_payload.values),
+                position=position,
+            )
+        )
 
 
 async def _clear_rule_states(session: AsyncSession, rule_ids: list[uuid.UUID]) -> None:
@@ -335,11 +349,10 @@ async def create_rule(
         project_id=project.id,
         destination_id=destination_id,
     )
-    await _validate_exclusions(
+    await _validate_filters(
         session,
         project_id=project.id,
-        event_type_ids=data.excluded_event_type_ids,
-        event_ids=data.excluded_event_ids,
+        filters=data.filters,
     )
     try:
         message_format, message_template, items_template = validate_template_configuration(
@@ -370,11 +383,10 @@ async def create_rule(
     )
     session.add(rule)
     await session.flush()
-    await _replace_rule_exclusions(
+    await _replace_rule_filters(
         session,
         rule=rule,
-        event_type_ids=data.excluded_event_type_ids,
-        event_ids=data.excluded_event_ids,
+        filters=data.filters,
     )
     await session.commit()
     _destination, refreshed_rule = await _get_rule(
@@ -402,14 +414,13 @@ async def update_rule(
     )
     update_dict = data.model_dump(exclude_unset=True)
 
-    excluded_event_type_ids = update_dict.pop("excluded_event_type_ids", None)
-    excluded_event_ids = update_dict.pop("excluded_event_ids", None)
-    if excluded_event_type_ids is not None or excluded_event_ids is not None:
-        await _validate_exclusions(
+    filters_payload = data.filters if "filters" in update_dict else None
+    update_dict.pop("filters", None)
+    if filters_payload is not None:
+        await _validate_filters(
             session,
             project_id=project.id,
-            event_type_ids=excluded_event_type_ids or [],
-            event_ids=excluded_event_ids or [],
+            filters=filters_payload,
         )
     if (
         "message_format" in update_dict
@@ -435,18 +446,11 @@ async def update_rule(
     for key, value in update_dict.items():
         setattr(rule, key, value)
 
-    if excluded_event_type_ids is not None or excluded_event_ids is not None:
-        current_event_type_ids = [item.event_type_id for item in rule.excluded_event_types]
-        current_event_ids = [item.event_id for item in rule.excluded_events]
-        await _replace_rule_exclusions(
+    if filters_payload is not None:
+        await _replace_rule_filters(
             session,
             rule=rule,
-            event_type_ids=(
-                excluded_event_type_ids
-                if excluded_event_type_ids is not None
-                else current_event_type_ids
-            ),
-            event_ids=(excluded_event_ids if excluded_event_ids is not None else current_event_ids),
+            filters=filters_payload,
         )
 
     await session.commit()
