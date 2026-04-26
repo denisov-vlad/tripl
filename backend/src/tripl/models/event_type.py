@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.field_definition import FieldDefinition
+    from tripl.models.project import Project
 
 
 class EventType(UUIDMixin, TimestampMixin, Base):
@@ -19,7 +24,7 @@ class EventType(UUIDMixin, TimestampMixin, Base):
     color: Mapped[str] = mapped_column(String(7), default="#6366f1")
     order: Mapped[int] = mapped_column(Integer, default=0)
 
-    project: Mapped[Project] = relationship(back_populates="event_types")  # noqa: F821
-    field_definitions: Mapped[list[FieldDefinition]] = relationship(  # noqa: F821
+    project: Mapped[Project] = relationship(back_populates="event_types")
+    field_definitions: Mapped[list[FieldDefinition]] = relationship(
         back_populates="event_type", cascade="all, delete-orphan", lazy="selectin"
     )

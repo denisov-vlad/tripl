@@ -12,7 +12,7 @@ class DataSourceCreate(BaseModel):
     database_name: str = Field(min_length=1, max_length=255)
     username: str = ""
     password: str = ""
-    extra_params: dict | None = None
+    extra_params: dict[str, object] | None = None
 
 
 class DataSourceUpdate(BaseModel):
@@ -23,7 +23,7 @@ class DataSourceUpdate(BaseModel):
     database_name: str | None = Field(None, min_length=1, max_length=255)
     username: str | None = None
     password: str | None = None
-    extra_params: dict | None = None
+    extra_params: dict[str, object] | None = None
 
 
 class DataSourceResponse(BaseModel):
@@ -35,7 +35,7 @@ class DataSourceResponse(BaseModel):
     database_name: str
     username: str
     password_set: bool
-    extra_params: dict | None
+    extra_params: dict[str, object] | None
     last_test_at: datetime | None
     last_test_status: str | None
     last_test_message: str | None

@@ -50,4 +50,10 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
+files = ["src/tripl"]
+exclude = ["src/tripl/tests/"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "statsmodels.*"]
+ignore_missing_imports = true

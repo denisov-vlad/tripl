@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import func, literal, select, union_all
@@ -888,7 +889,7 @@ async def _get_latest_metric_buckets_multi(
     (SQLite returns 32-char hex, Postgres returns hyphenated) and break
     key-matching against MetricAnomaly on SQLite tests.
     """
-    subs = []
+    subs: list[Any] = []
     if SCOPE_PROJECT_TOTAL in scope_types:
         subs.append(
             select(

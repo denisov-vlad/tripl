@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
 
+if TYPE_CHECKING:
+    from tripl.models.alert_destination import AlertDestination
+    from tripl.models.alert_rule_excluded_event import AlertRuleExcludedEvent
+    from tripl.models.alert_rule_excluded_event_type import AlertRuleExcludedEventType
+
 
 class AlertRule(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "alert_rules"
-    __table_args__ = (
-        Index("ix_alert_rule_destination", "destination_id"),
-    )
+    __table_args__ = (Index("ix_alert_rule_destination", "destination_id"),)
 
     destination_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("alert_destinations.id", ondelete="CASCADE"),
@@ -44,13 +48,13 @@ class AlertRule(UUIDMixin, TimestampMixin, Base):
         server_default="plain",
     )
 
-    destination: Mapped[AlertDestination] = relationship(back_populates="rules")  # noqa: F821
-    excluded_event_types: Mapped[list[AlertRuleExcludedEventType]] = relationship(  # noqa: F821
+    destination: Mapped[AlertDestination] = relationship(back_populates="rules")
+    excluded_event_types: Mapped[list[AlertRuleExcludedEventType]] = relationship(
         back_populates="rule",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    excluded_events: Mapped[list[AlertRuleExcludedEvent]] = relationship(  # noqa: F821
+    excluded_events: Mapped[list[AlertRuleExcludedEvent]] = relationship(
         back_populates="rule",
         cascade="all, delete-orphan",
         lazy="selectin",

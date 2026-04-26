@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.alert_rule import AlertRule
 
 
 class AlertRuleExcludedEventType(UUIDMixin, Base):
@@ -26,4 +30,4 @@ class AlertRuleExcludedEventType(UUIDMixin, Base):
         ForeignKey("event_types.id", ondelete="CASCADE"),
     )
 
-    rule: Mapped[AlertRule] = relationship(back_populates="excluded_event_types")  # noqa: F821
+    rule: Mapped[AlertRule] = relationship(back_populates="excluded_event_types")

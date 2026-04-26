@@ -3,12 +3,16 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.scan_config import ScanConfig
 
 
 class ScanJobStatus(enum.StrEnum):
@@ -28,7 +32,7 @@ class ScanJob(UUIDMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default=ScanJobStatus.pending.value)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    result_summary: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+    result_summary: Mapped[dict[str, object] | None] = mapped_column(sa.JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    scan_config: Mapped[ScanConfig] = relationship(back_populates="scan_jobs")  # noqa: F821
+    scan_config: Mapped[ScanConfig] = relationship(back_populates="scan_jobs")

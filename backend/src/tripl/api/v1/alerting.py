@@ -20,7 +20,7 @@ router = APIRouter(prefix="/projects/{slug}", tags=["alerting"])
 
 
 @router.get("/alert-destinations", response_model=list[AlertDestinationResponse])
-async def list_alert_destinations(session: SessionDep, slug: str):
+async def list_alert_destinations(session: SessionDep, slug: str) -> list[AlertDestinationResponse]:
     return await alerting_service.list_destinations(session, slug)
 
 
@@ -29,12 +29,14 @@ async def create_alert_destination(
     session: SessionDep,
     slug: str,
     data: AlertDestinationCreate,
-):
+) -> AlertDestinationResponse:
     return await alerting_service.create_destination(session, slug, data)
 
 
 @router.get("/alert-destinations/{destination_id}", response_model=AlertDestinationResponse)
-async def get_alert_destination(session: SessionDep, slug: str, destination_id: uuid.UUID):
+async def get_alert_destination(
+    session: SessionDep, slug: str, destination_id: uuid.UUID
+) -> AlertDestinationResponse:
     return await alerting_service.get_destination(session, slug, destination_id)
 
 
@@ -44,12 +46,14 @@ async def update_alert_destination(
     slug: str,
     destination_id: uuid.UUID,
     data: AlertDestinationUpdate,
-):
+) -> AlertDestinationResponse:
     return await alerting_service.update_destination(session, slug, destination_id, data)
 
 
 @router.delete("/alert-destinations/{destination_id}", status_code=204)
-async def delete_alert_destination(session: SessionDep, slug: str, destination_id: uuid.UUID):
+async def delete_alert_destination(
+    session: SessionDep, slug: str, destination_id: uuid.UUID
+) -> None:
     await alerting_service.delete_destination(session, slug, destination_id)
 
 
@@ -63,7 +67,7 @@ async def create_alert_rule(
     slug: str,
     destination_id: uuid.UUID,
     data: AlertRuleCreate,
-):
+) -> AlertRuleResponse:
     return await alerting_service.create_rule(session, slug, destination_id, data)
 
 
@@ -77,7 +81,7 @@ async def update_alert_rule(
     destination_id: uuid.UUID,
     rule_id: uuid.UUID,
     data: AlertRuleUpdate,
-):
+) -> AlertRuleResponse:
     return await alerting_service.update_rule(session, slug, destination_id, rule_id, data)
 
 
@@ -87,7 +91,7 @@ async def delete_alert_rule(
     slug: str,
     destination_id: uuid.UUID,
     rule_id: uuid.UUID,
-):
+) -> None:
     await alerting_service.delete_rule(session, slug, destination_id, rule_id)
 
 
@@ -104,7 +108,7 @@ async def list_alert_deliveries(
     date_to: datetime | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-):
+) -> AlertDeliveryListResponse:
     return await alerting_service.list_deliveries(
         session,
         slug,
@@ -121,5 +125,7 @@ async def list_alert_deliveries(
 
 
 @router.get("/alert-deliveries/{delivery_id}", response_model=AlertDeliveryDetailResponse)
-async def get_alert_delivery(session: SessionDep, slug: str, delivery_id: uuid.UUID):
+async def get_alert_delivery(
+    session: SessionDep, slug: str, delivery_id: uuid.UUID
+) -> AlertDeliveryDetailResponse:
     return await alerting_service.get_delivery(session, slug, delivery_id)

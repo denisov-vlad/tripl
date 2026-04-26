@@ -16,7 +16,7 @@ from tripl.models.data_source import DataSource
 from tripl.models.event_type import EventType
 from tripl.models.scan_config import ScanConfig
 from tripl.models.scan_job import ScanJob, ScanJobStatus
-from tripl.worker.adapters.base import BaseAdapter
+from tripl.worker.adapters.base import BaseAdapter, ColumnInfo
 from tripl.worker.adapters.clickhouse import ClickHouseAdapter
 from tripl.worker.analyzers.cardinality import analyze_cardinality, analyze_cardinality_grouped
 from tripl.worker.analyzers.event_generator import GenerationResult, generate_events
@@ -56,8 +56,12 @@ def _build_adapter(ds: DataSource) -> BaseAdapter:
     raise ValueError(msg)
 
 
-@celery_app.task(name="tripl.worker.tasks.scan.run_scan", bind=True, max_retries=0)
-def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="tripl.worker.tasks.scan.run_scan",
+    bind=True,
+    max_retries=0,
+)
+def run_scan(self: object, scan_config_id: str, job_id: str) -> dict[str, object]:
     """Execute a data source scan: connect, analyze columns, detect variables, generate events."""
     session = _get_sync_session()
     adapter: BaseAdapter | None = None
@@ -156,7 +160,7 @@ def run_scan(self: object, scan_config_id: str, job_id: str) -> dict:
             f"Scan completed: {result.events_created} events created, "
             f"{result.events_skipped} skipped, {result.variables_created} variables created"
         )
-        return job.result_summary  # type: ignore[return-value]
+        return job.result_summary
 
     except Exception as e:
         logger.exception(f"Scan failed: {e}")
@@ -182,7 +186,7 @@ def _scan_with_grouping(
     project_id: uuid.UUID,
     config: ScanConfig,
     adapter: BaseAdapter,
-    columns: list,
+    columns: list[ColumnInfo],
 ) -> GenerationResult:
     """Handle scans where event_type_column groups rows into different event types.
 
@@ -243,8 +247,12 @@ def _scan_with_grouping(
     return combined
 
 
-@celery_app.task(name="tripl.worker.tasks.scan.test_connection", bind=True, max_retries=0)
-def test_connection(self: object, data_source_id: str) -> dict:
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="tripl.worker.tasks.scan.test_connection",
+    bind=True,
+    max_retries=0,
+)
+def test_connection(self: object, data_source_id: str) -> dict[str, object]:
     """Test connectivity to a data source."""
     session = _get_sync_session()
     adapter: BaseAdapter | None = None

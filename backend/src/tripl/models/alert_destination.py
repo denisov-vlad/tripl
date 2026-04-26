@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import enum
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.alert_delivery import AlertDelivery
+    from tripl.models.alert_rule import AlertRule
 
 
 class AlertDestinationType(enum.StrEnum):
@@ -16,9 +21,7 @@ class AlertDestinationType(enum.StrEnum):
 
 class AlertDestination(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "alert_destinations"
-    __table_args__ = (
-        Index("ix_alert_destination_project", "project_id"),
-    )
+    __table_args__ = (Index("ix_alert_destination_project", "project_id"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
@@ -30,12 +33,12 @@ class AlertDestination(UUIDMixin, TimestampMixin, Base):
     bot_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     chat_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    rules: Mapped[list[AlertRule]] = relationship(  # noqa: F821
+    rules: Mapped[list[AlertRule]] = relationship(
         back_populates="destination",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    deliveries: Mapped[list[AlertDelivery]] = relationship(  # noqa: F821
+    deliveries: Mapped[list[AlertDelivery]] = relationship(
         back_populates="destination",
         cascade="all, delete-orphan",
     )

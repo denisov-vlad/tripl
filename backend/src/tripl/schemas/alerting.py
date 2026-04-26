@@ -212,7 +212,7 @@ class AlertDeliveryResponse(BaseModel):
     status: str
     channel: str
     matched_count: int
-    payload_snapshot: dict | None
+    payload_snapshot: dict[str, object] | None
     error_message: str | None
     created_at: datetime
     updated_at: datetime

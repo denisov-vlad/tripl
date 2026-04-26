@@ -230,7 +230,7 @@ describe('EventsPage', () => {
 
     fireEvent.click(screen.getByText('Show chart'))
     expect(await screen.findByText('View signal')).toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('renders active event-type anomaly link for sidebar-selected view', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

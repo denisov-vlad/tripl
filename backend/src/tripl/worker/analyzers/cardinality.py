@@ -23,7 +23,7 @@ class BreakdownAnalysis:
     """Per-column cardinality results together with raw GROUP BY ALL rows."""
 
     results: dict[str, CardinalityResult]
-    rows: list[tuple]
+    rows: list[tuple[object, ...]]
     reg_names: list[str]
     json_names: list[str]
     json_value_names: list[str] = field(default_factory=list)
@@ -37,7 +37,7 @@ def _is_json_type(type_name: str) -> bool:
 
 
 def _process_breakdown(
-    rows: list[tuple],
+    rows: list[tuple[object, ...]],
     reg_names: list[str],
     json_names: list[str],
     col_map: dict[str, ColumnInfo],
@@ -100,7 +100,10 @@ def _process_breakdown(
         )
 
     return BreakdownAnalysis(
-        results=results, rows=rows, reg_names=reg_names, json_names=json_names,
+        results=results,
+        rows=rows,
+        reg_names=reg_names,
+        json_names=json_names,
     )
 
 
@@ -162,7 +165,7 @@ def analyze_cardinality_grouped(
     group_idx = reg_names.index(group_column)
 
     # Partition rows by group value, preserving order of first appearance (most popular first)
-    grouped_rows: dict[str, list[tuple]] = defaultdict(list)
+    grouped_rows: dict[str, list[tuple[object, ...]]] = defaultdict(list)
     group_values_ordered: list[str] = []
     for row in rows:
         gval = str(row[group_idx]) if row[group_idx] is not None else ""
@@ -177,11 +180,15 @@ def analyze_cardinality_grouped(
 
     for gi, gval in enumerate(group_values_ordered):
         logger.info(
-            f"  Group [{gi+1}/{len(group_values_ordered)}] {gval!r} "
+            f"  Group [{gi + 1}/{len(group_values_ordered)}] {gval!r} "
             f"({len(grouped_rows[gval])} combos):"
         )
         results[gval] = _process_breakdown(
-            grouped_rows[gval], reg_names, json_names, col_map, threshold,
+            grouped_rows[gval],
+            reg_names,
+            json_names,
+            col_map,
+            threshold,
             skip_column=group_column,
         )
         results[gval].json_value_names = json_value_names

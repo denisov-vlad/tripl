@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.event import Event
+    from tripl.models.meta_field_definition import MetaFieldDefinition
 
 
 class EventMetaValue(UUIDMixin, Base):
@@ -22,5 +27,5 @@ class EventMetaValue(UUIDMixin, Base):
     )
     value: Mapped[str] = mapped_column(Text, default="")
 
-    event: Mapped[Event] = relationship(back_populates="meta_values")  # noqa: F821
-    meta_field_definition: Mapped[MetaFieldDefinition] = relationship(lazy="selectin")  # noqa: F821
+    event: Mapped[Event] = relationship(back_populates="meta_values")
+    meta_field_definition: Mapped[MetaFieldDefinition] = relationship(lazy="selectin")

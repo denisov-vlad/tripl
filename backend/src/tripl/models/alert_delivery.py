@@ -3,12 +3,17 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.alert_delivery_item import AlertDeliveryItem
+    from tripl.models.alert_destination import AlertDestination
 
 
 class AlertDeliveryStatus(enum.StrEnum):
@@ -49,12 +54,12 @@ class AlertDelivery(UUIDMixin, TimestampMixin, Base):
     )
     channel: Mapped[str] = mapped_column(String(32))
     matched_count: Mapped[int] = mapped_column(default=0, server_default="0")
-    payload_snapshot: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+    payload_snapshot: Mapped[dict[str, object] | None] = mapped_column(sa.JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    destination: Mapped[AlertDestination] = relationship(back_populates="deliveries")  # noqa: F821
-    items: Mapped[list[AlertDeliveryItem]] = relationship(  # noqa: F821
+    destination: Mapped[AlertDestination] = relationship(back_populates="deliveries")
+    items: Mapped[list[AlertDeliveryItem]] = relationship(
         back_populates="delivery",
         cascade="all, delete-orphan",
         lazy="selectin",

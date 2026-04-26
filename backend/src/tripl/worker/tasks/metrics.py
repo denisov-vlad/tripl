@@ -1669,7 +1669,7 @@ def _collect_metric_breakdown_rows(
         data_row = row[4:]
         cnt = int(cast(int | str | float, row[-1]))
         col_meta: dict[str, dict[str, object]]
-        events_by_name: dict[str, object]
+        events_by_name: dict[str, Event]
         event_type_id: uuid.UUID | None
 
         if config.event_type_column and et_col_idx is not None:
@@ -2061,7 +2061,7 @@ def collect_metrics(
             data_row = row[1:]  # strip _bucket; _cnt is at the end but not indexed by col_meta
             cnt = int(cast(int | str | float, row[-1]))
             col_meta: dict[str, dict[str, object]]
-            events_by_name: dict[str, object]
+            events_by_name: dict[str, Event]
             event_type_id: uuid.UUID | None
 
             # Determine event type and get the matching gen result

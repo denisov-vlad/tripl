@@ -116,7 +116,7 @@ def _detect_json_pattern(
     For each key across all samples, collect values and compute cardinality.
     High-cardinality keys get ${key_name} placeholder, low-cardinality keys keep values.
     """
-    parsed: list[dict] = []
+    parsed: list[dict[str, object]] = []
     for v in values:
         if not _looks_like_json(v):
             return None
@@ -294,7 +294,7 @@ def expand_json_low_cardinality(
         return [(template, [])]
 
     # Collect actual values for low-cardinality keys
-    parsed_values: list[dict] = []
+    parsed_values: list[dict[str, object]] = []
     for v in values:
         try:
             obj = json.loads(v)

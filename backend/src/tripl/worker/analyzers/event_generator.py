@@ -11,6 +11,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -49,8 +50,8 @@ class GenerationResult:
     variables_created: int = 0
     columns_analyzed: int = 0
     details: list[str] = field(default_factory=list)
-    col_meta: dict[str, dict] = field(default_factory=dict)
-    events_by_name: dict[str, object] = field(default_factory=dict)
+    col_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
+    events_by_name: dict[str, Event] = field(default_factory=dict)
 
 
 def generate_events(
@@ -83,7 +84,7 @@ def generate_events(
     }
 
     # Pre-compute per-column metadata
-    col_meta: dict[str, dict] = {}
+    col_meta: dict[str, dict[str, Any]] = {}
 
     for col_name, card_result in cardinality_results.items():
         if col_name == event_type_column:
@@ -97,7 +98,7 @@ def generate_events(
             continue
 
         result.columns_analyzed += 1
-        meta: dict = {"fd_id": fd.id, "col_name": col_name}
+        meta: dict[str, Any] = {"fd_id": fd.id, "col_name": col_name}
 
         if card_result.json_path_combos is not None:
             meta["is_json"] = True
@@ -247,12 +248,14 @@ def generate_events(
                 if fd_id in fv_by_fd:
                     fv_by_fd[fd_id].value = value
                 else:
-                    session.add(EventFieldValue(
-                        id=uuid.uuid4(),
-                        event_id=existing.id,
-                        field_definition_id=fd_id,
-                        value=value,
-                    ))
+                    session.add(
+                        EventFieldValue(
+                            id=uuid.uuid4(),
+                            event_id=existing.id,
+                            field_definition_id=fd_id,
+                            value=value,
+                        )
+                    )
             result.events_skipped += 1
             continue
 

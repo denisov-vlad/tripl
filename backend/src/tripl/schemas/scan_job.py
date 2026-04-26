@@ -10,7 +10,7 @@ class ScanJobResponse(BaseModel):
     status: str
     started_at: datetime | None
     completed_at: datetime | None
-    result_summary: dict | None
+    result_summary: dict[str, object] | None
     error_message: str | None
     created_at: datetime
     updated_at: datetime

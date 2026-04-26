@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from tripl.api.deps import SessionDep
+from tripl.models.project_anomaly_settings import ProjectAnomalySettings
 from tripl.schemas.project_anomaly_settings import (
     ProjectAnomalySettingsResponse,
     ProjectAnomalySettingsUpdate,
@@ -14,7 +15,7 @@ router = APIRouter(
 
 
 @router.get("", response_model=ProjectAnomalySettingsResponse)
-async def get_project_anomaly_settings(session: SessionDep, slug: str):
+async def get_project_anomaly_settings(session: SessionDep, slug: str) -> ProjectAnomalySettings:
     return await project_anomaly_settings_service.get_project_anomaly_settings(session, slug)
 
 
@@ -23,7 +24,7 @@ async def update_project_anomaly_settings(
     session: SessionDep,
     slug: str,
     data: ProjectAnomalySettingsUpdate,
-):
+) -> ProjectAnomalySettings:
     return await project_anomaly_settings_service.update_project_anomaly_settings(
         session,
         slug,

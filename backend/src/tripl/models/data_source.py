@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.scan_config import ScanConfig
 
 
 class DBType(enum.StrEnum):
@@ -30,18 +34,14 @@ class DataSource(UUIDMixin, TimestampMixin, Base):
     database_name: Mapped[str] = mapped_column(String(255))
     username: Mapped[str] = mapped_column(String(255), default="")
     password_encrypted: Mapped[str] = mapped_column(Text, default="")
-    extra_params: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
+    extra_params: Mapped[dict[str, object] | None] = mapped_column(sa.JSON, nullable=True)
 
     last_test_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
-    last_test_status: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, default=None
-    )
-    last_test_message: Mapped[str | None] = mapped_column(
-        Text, nullable=True, default=None
-    )
+    last_test_status: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    last_test_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
-    scan_configs: Mapped[list[ScanConfig]] = relationship(  # noqa: F821
+    scan_configs: Mapped[list[ScanConfig]] = relationship(
         back_populates="data_source", cascade="all, delete-orphan", lazy="selectin"
     )

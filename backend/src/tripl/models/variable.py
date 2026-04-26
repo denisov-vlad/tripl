@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import enum
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, UUIDMixin
 
+if TYPE_CHECKING:
+    from tripl.models.project import Project
 
-class VariableType(str, enum.Enum):
+
+class VariableType(enum.StrEnum):
     string = "string"
     number = "number"
     boolean = "boolean"
@@ -33,4 +37,4 @@ class Variable(UUIDMixin, Base):
     variable_type: Mapped[str] = mapped_column(String(20), default=VariableType.string.value)
     description: Mapped[str] = mapped_column(Text, default="")
 
-    project: Mapped[Project] = relationship(back_populates="variables")  # noqa: F821
+    project: Mapped[Project] = relationship(back_populates="variables")

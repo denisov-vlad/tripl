@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql import Select
 
 from tripl.alert_templates import validate_template_configuration
 from tripl.alerting_validation import (
@@ -56,7 +57,7 @@ async def _get_project(session: AsyncSession, slug: str) -> Project:
     return project
 
 
-def _destination_query(project_id: uuid.UUID):
+def _destination_query(project_id: uuid.UUID) -> Select[tuple[AlertDestination]]:
     return (
         select(AlertDestination)
         .where(AlertDestination.project_id == project_id)
@@ -206,9 +207,7 @@ async def _replace_rule_exclusions(
     await session.flush()
 
     for event_type_id in event_type_ids:
-        session.add(
-            AlertRuleExcludedEventType(rule_id=rule.id, event_type_id=event_type_id)
-        )
+        session.add(AlertRuleExcludedEventType(rule_id=rule.id, event_type_id=event_type_id))
     for event_id in event_ids:
         session.add(AlertRuleExcludedEvent(rule_id=rule.id, event_id=event_id))
 
@@ -221,9 +220,7 @@ async def _clear_rule_states(session: AsyncSession, rule_ids: list[uuid.UUID]) -
 
 async def list_destinations(session: AsyncSession, slug: str) -> list[AlertDestinationResponse]:
     project = await _get_project(session, slug)
-    destinations = (
-        await session.execute(_destination_query(project.id))
-    ).scalars().unique().all()
+    destinations = (await session.execute(_destination_query(project.id))).scalars().unique().all()
     return [_destination_to_response(destination) for destination in destinations]
 
 
@@ -449,11 +446,7 @@ async def update_rule(
                 if excluded_event_type_ids is not None
                 else current_event_type_ids
             ),
-            event_ids=(
-                excluded_event_ids
-                if excluded_event_ids is not None
-                else current_event_ids
-            ),
+            event_ids=(excluded_event_ids if excluded_event_ids is not None else current_event_ids),
         )
 
     await session.commit()
@@ -597,15 +590,19 @@ async def get_delivery(
 
     delivery, destination_name, rule_name, scan_name = row
     items = (
-        await session.execute(
-            select(AlertDeliveryItem)
-            .where(AlertDeliveryItem.delivery_id == delivery.id)
-            .order_by(
-                AlertDeliveryItem.scope_type,
-                AlertDeliveryItem.bucket.desc(),
+        (
+            await session.execute(
+                select(AlertDeliveryItem)
+                .where(AlertDeliveryItem.delivery_id == delivery.id)
+                .order_by(
+                    AlertDeliveryItem.scope_type,
+                    AlertDeliveryItem.bucket.desc(),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return AlertDeliveryDetailResponse(
         **_delivery_to_response(

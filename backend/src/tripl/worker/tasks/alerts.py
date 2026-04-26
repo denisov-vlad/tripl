@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from tripl.alert_templates import (
     ALERT_MESSAGE_FORMAT_PLAIN,
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 _TELEGRAM_BOT_URL_TOKEN_RE = re.compile(r"(/bot)([^/]+)(/)")
 
 
-def _get_sync_session():
+def _get_sync_session() -> Session:
     return SyncSessionLocal()
 
 
@@ -229,11 +229,11 @@ def _is_telegram_markdown_parse_error(error: Exception) -> bool:
     return "can't parse entities" in message or "can't find end of" in message
 
 
-@celery_app.task(
+@celery_app.task(  # type: ignore[untyped-decorator]
     name="tripl.worker.tasks.alerts.send_alert_delivery",
     bind=True,
 )
-def send_alert_delivery(self, delivery_id: str) -> dict[str, object]:
+def send_alert_delivery(self: object, delivery_id: str) -> dict[str, object]:
     session = _get_sync_session()
     message_format: str | None = None
     rendered_message: str | None = None
@@ -262,9 +262,7 @@ def send_alert_delivery(self, delivery_id: str) -> dict[str, object]:
         )
         rendered_message = text
         payload_snapshot = (
-            dict(delivery.payload_snapshot)
-            if isinstance(delivery.payload_snapshot, dict)
-            else {}
+            dict(delivery.payload_snapshot) if isinstance(delivery.payload_snapshot, dict) else {}
         )
         payload_snapshot["message_format"] = message_format
         payload_snapshot["rendered_message"] = text

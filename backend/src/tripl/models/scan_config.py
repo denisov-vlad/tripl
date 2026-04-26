@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
@@ -16,6 +17,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.data_source import DataSource
+    from tripl.models.event_type import EventType
+    from tripl.models.scan_job import ScanJob
 
 
 class ScanConfig(UUIDMixin, TimestampMixin, Base):
@@ -55,8 +61,8 @@ class ScanConfig(UUIDMixin, TimestampMixin, Base):
     sigma_threshold: Mapped[float] = mapped_column(Float, default=3.0)
     min_expected_count: Mapped[int] = mapped_column(Integer, default=10)
 
-    data_source: Mapped[DataSource] = relationship(back_populates="scan_configs")  # noqa: F821
-    event_type: Mapped[EventType | None] = relationship()  # noqa: F821
-    scan_jobs: Mapped[list[ScanJob]] = relationship(  # noqa: F821
+    data_source: Mapped[DataSource] = relationship(back_populates="scan_configs")
+    event_type: Mapped[EventType | None] = relationship()
+    scan_jobs: Mapped[list[ScanJob]] = relationship(
         back_populates="scan_config", cascade="all, delete-orphan", lazy="selectin"
     )

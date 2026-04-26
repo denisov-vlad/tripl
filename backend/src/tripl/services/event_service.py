@@ -10,12 +10,19 @@ from tripl.models.event_field_value import EventFieldValue
 from tripl.models.event_meta_value import EventMetaValue
 from tripl.models.event_tag import EventTag
 from tripl.models.field_definition import FieldDefinition
-from tripl.schemas.event import EventBulkDelete, EventCreate, EventMove, EventReorder, EventUpdate
+from tripl.schemas.event import (
+    EventBulkDelete,
+    EventCreate,
+    EventFieldValueIn,
+    EventMove,
+    EventReorder,
+    EventUpdate,
+)
 from tripl.services.project_service import get_project_id_by_slug
 
 
 async def _validate_field_values(
-    session: AsyncSession, event_type_id: uuid.UUID, field_values: list
+    session: AsyncSession, event_type_id: uuid.UUID, field_values: list[EventFieldValueIn]
 ) -> None:
     result = await session.execute(
         select(FieldDefinition).where(FieldDefinition.event_type_id == event_type_id)
@@ -181,28 +188,28 @@ async def update_event(
     if data.field_values is not None:
         await _validate_field_values(session, event.event_type_id, data.field_values)
         # Remove existing field values
-        for fv in list(event.field_values):
-            await session.delete(fv)
+        for existing_field_value in list(event.field_values):
+            await session.delete(existing_field_value)
         await session.flush()
-        for fv in data.field_values:
+        for field_value in data.field_values:
             session.add(
                 EventFieldValue(
                     event_id=event.id,
-                    field_definition_id=fv.field_definition_id,
-                    value=fv.value,
+                    field_definition_id=field_value.field_definition_id,
+                    value=field_value.value,
                 )
             )
 
     if data.meta_values is not None:
-        for mv in list(event.meta_values):
-            await session.delete(mv)
+        for existing_meta_value in list(event.meta_values):
+            await session.delete(existing_meta_value)
         await session.flush()
-        for mv in data.meta_values:
+        for meta_value in data.meta_values:
             session.add(
                 EventMetaValue(
                     event_id=event.id,
-                    meta_field_definition_id=mv.meta_field_definition_id,
-                    value=mv.value,
+                    meta_field_definition_id=meta_value.meta_field_definition_id,
+                    value=meta_value.value,
                 )
             )
 
@@ -360,7 +367,7 @@ async def bulk_create_events(
     session.add_all(events)
     await session.flush()
 
-    children: list = []
+    children: list[EventFieldValue | EventMetaValue | EventTag] = []
     for event, data in zip(events, events_data, strict=True):
         for fv in data.field_values:
             children.append(

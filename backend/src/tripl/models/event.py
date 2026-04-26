@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from tripl.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from tripl.models.event_field_value import EventFieldValue
+    from tripl.models.event_meta_value import EventMetaValue
+    from tripl.models.event_tag import EventTag
+    from tripl.models.event_type import EventType
 
 
 class Event(UUIDMixin, TimestampMixin, Base):
@@ -26,13 +33,13 @@ class Event(UUIDMixin, TimestampMixin, Base):
     reviewed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
-    event_type: Mapped[EventType] = relationship(lazy="selectin")  # noqa: F821
-    field_values: Mapped[list[EventFieldValue]] = relationship(  # noqa: F821
+    event_type: Mapped[EventType] = relationship(lazy="selectin")
+    field_values: Mapped[list[EventFieldValue]] = relationship(
         back_populates="event", cascade="all, delete-orphan", lazy="selectin"
     )
-    meta_values: Mapped[list[EventMetaValue]] = relationship(  # noqa: F821
+    meta_values: Mapped[list[EventMetaValue]] = relationship(
         back_populates="event", cascade="all, delete-orphan", lazy="selectin"
     )
-    tags: Mapped[list[EventTag]] = relationship(  # noqa: F821
+    tags: Mapped[list[EventTag]] = relationship(
         back_populates="event", cascade="all, delete-orphan", lazy="selectin"
     )

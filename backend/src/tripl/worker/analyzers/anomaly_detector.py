@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import sqrt
@@ -68,13 +69,11 @@ def _select_seasonal_periods(interval: timedelta, series_length: int) -> tuple[i
     interval_seconds = int(interval.total_seconds())
     candidates = _SEASONAL_PERIODS_BY_INTERVAL_SECONDS.get(interval_seconds, ())
     return tuple(
-        period
-        for period in candidates
-        if series_length >= period * _MIN_CYCLES_PER_PERIOD
+        period for period in candidates if series_length >= period * _MIN_CYCLES_PER_PERIOD
     )
 
 
-def _rolling_stats(values: list[float]) -> tuple[float, float]:
+def _rolling_stats(values: Sequence[float]) -> tuple[float, float]:
     mean_value = fmean(values)
     variance = fmean((value - mean_value) ** 2 for value in values)
     return mean_value, sqrt(variance)
@@ -193,7 +192,7 @@ def _detect_sustained_shift(
         if expected_count < settings.min_expected_count:
             continue
 
-        recent_counts = counts[recent_start:idx + 1]
+        recent_counts = counts[recent_start : idx + 1]
         baseline_mean, stddev = _rolling_stats(baseline)
         recent_mean = fmean(recent_counts)
         effective_stddev = stddev if stddev > 0 else 1.0
