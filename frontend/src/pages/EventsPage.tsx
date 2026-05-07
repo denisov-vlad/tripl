@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   useInfiniteQuery,
@@ -238,6 +238,189 @@ function SignalLink({
     >
       {compact ? <CompactIcon className="h-3.5 w-3.5 stroke-[2.25]" /> : <AlertTriangle className="h-3 w-3" />}
     </Link>
+  )
+}
+
+type ColumnFilterType = 'text' | 'enum' | 'boolean'
+
+function ColumnFilter({
+  label,
+  type,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  type: ColumnFilterType
+  value: string
+  options?: readonly string[]
+  onChange: (v: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const active = value !== ''
+
+  const clear = useCallback(() => {
+    onChange('')
+    setOpen(false)
+  }, [onChange])
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Filter ${label}`}
+          title={active ? `Filter: ${value}` : `Filter ${label}`}
+          className={cn(
+            'tripl-col-filter inline-flex h-4 w-4 shrink-0 items-center justify-center rounded transition-opacity',
+            active
+              ? 'opacity-100 text-[color:var(--accent)]'
+              : 'opacity-0 text-muted-foreground hover:text-foreground',
+            open && 'opacity-100',
+          )}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Filter
+            className="h-3 w-3"
+            fill={active ? 'currentColor' : 'none'}
+          />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="bottom"
+        sideOffset={6}
+        className="w-56 p-2"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--fg-subtle)' }}>
+          {label}
+        </div>
+        {type === 'text' && (
+          <Input
+            autoFocus
+            value={value}
+            placeholder="Contains…"
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === 'Escape') setOpen(false)
+            }}
+            className="h-7 text-xs"
+          />
+        )}
+        {type === 'enum' && options && (
+          <div className="max-h-64 overflow-y-auto">
+            <FilterOptionRow
+              label="All"
+              checked={value === ''}
+              onSelect={() => { onChange(''); setOpen(false) }}
+              muted
+            />
+            {options.map((opt) => (
+              <FilterOptionRow
+                key={opt}
+                label={opt}
+                checked={value === opt}
+                onSelect={() => { onChange(opt); setOpen(false) }}
+              />
+            ))}
+          </div>
+        )}
+        {type === 'boolean' && (
+          <div>
+            <FilterOptionRow
+              label="Any"
+              checked={value === ''}
+              onSelect={() => { onChange(''); setOpen(false) }}
+              muted
+            />
+            <FilterOptionRow
+              label="Yes"
+              checked={value === 'true'}
+              onSelect={() => { onChange('true'); setOpen(false) }}
+            />
+            <FilterOptionRow
+              label="No"
+              checked={value === 'false'}
+              onSelect={() => { onChange('false'); setOpen(false) }}
+            />
+          </div>
+        )}
+        {active && (
+          <div className="mt-1.5 border-t pt-1.5" style={{ borderColor: 'var(--border-subtle)' }}>
+            <button
+              type="button"
+              onClick={clear}
+              className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-[11px] hover:bg-[var(--surface-hover)]"
+              style={{ color: 'var(--fg-muted)' }}
+            >
+              <X className="h-3 w-3" />
+              Clear filter
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function FilterOptionRow({
+  label,
+  checked,
+  muted = false,
+  onSelect,
+}: {
+  label: string
+  checked: boolean
+  muted?: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] hover:bg-[var(--surface-hover)]"
+      style={{ color: muted ? 'var(--fg-subtle)' : 'var(--fg)' }}
+    >
+      <span
+        className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border"
+        style={{
+          background: checked ? 'var(--accent)' : 'transparent',
+          borderColor: checked ? 'var(--accent)' : 'var(--border-strong)',
+        }}
+      >
+        {checked && <Check className="h-2.5 w-2.5" style={{ color: 'var(--accent-fg)' }} />}
+      </span>
+      <span className="flex-1 truncate">{label}</span>
+    </button>
+  )
+}
+
+function FilterableHead({
+  label,
+  filter,
+  className,
+  align = 'left',
+}: {
+  label: ReactNode
+  filter?: ReactNode
+  className?: string
+  align?: 'left' | 'right'
+}) {
+  // .group/th lets the filter icon fade in on header hover when no filter is
+  // active (CSS group-hover/th in ColumnFilter's class list).
+  return (
+    <TableHead className={cn('group/th', className)}>
+      <div
+        className={cn(
+          'flex items-center gap-1.5',
+          align === 'right' && 'justify-end',
+        )}
+      >
+        <span className="truncate">{label}</span>
+        {filter}
+      </div>
+    </TableHead>
   )
 }
 
@@ -1687,16 +1870,16 @@ export default function EventsPage() {
 
       {!blockingError && (
         <>
-          {/* Filters */}
+          {/* Toolbar — global filters live here; per-column filters live in
+              the table header next to each column label. */}
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <div className="relative">
               <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Search events..."
+                placeholder="Search events…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="h-8 w-56 pl-8 text-xs"
+                className="h-8 w-64 pl-8 text-xs"
               />
             </div>
             <Select
@@ -1712,88 +1895,10 @@ export default function EventsPage() {
                 <SelectItem value="false">Not implemented</SelectItem>
               </SelectContent>
             </Select>
-            <Select
-              value={filterTag || '__all__'}
-              onValueChange={v => setFilterTag(v === '__all__' ? '' : v)}
-            >
-              <SelectTrigger className="h-8 w-32 text-xs">
-                <SelectValue placeholder="All tags" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All tags</SelectItem>
-                {allTags.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            {fieldColumns.map(f => {
-              const enumOpts = fieldEnumOptions[f.id]
-              if (enumOpts) {
-                return (
-                  <select
-                    key={f.id}
-                    value={fieldFilters[f.name] ?? ''}
-                    onChange={e => updateFieldFilter(f.name, e.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  >
-                    <option value="">{f.display_name}: All</option>
-                    {Array.from(enumOpts).map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                )
-              }
-              if (f.field_type !== 'json') {
-                return (
-                  <Input
-                    key={f.id}
-                    value={fieldFilters[f.name] ?? ''}
-                    onChange={e => updateFieldFilter(f.name, e.target.value)}
-                    className="h-8 w-28 text-xs"
-                    placeholder={f.display_name}
-                  />
-                )
-              }
-              return null
-            })}
-            {metaFields.map((mf: MetaFieldDefinition) => {
-              if (mf.field_type === 'enum' && mf.enum_options) {
-                return (
-                  <select
-                    key={mf.id}
-                    value={metaFilters[mf.name] ?? ''}
-                    onChange={e => updateMetaFilter(mf.name, e.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  >
-                    <option value="">{mf.display_name}: All</option>
-                    {mf.enum_options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                  </select>
-                )
-              }
-              if (mf.field_type === 'boolean') {
-                return (
-                  <select
-                    key={mf.id}
-                    value={metaFilters[mf.name] ?? ''}
-                    onChange={e => updateMetaFilter(mf.name, e.target.value)}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                  >
-                    <option value="">{mf.display_name}: All</option>
-                    <option value="true">Yes</option>
-                    <option value="false">No</option>
-                  </select>
-                )
-              }
-              return (
-                <Input
-                  key={mf.id}
-                  value={metaFilters[mf.name] ?? ''}
-                  onChange={e => updateMetaFilter(mf.name, e.target.value)}
-                  className="h-8 w-28 text-xs"
-                  placeholder={mf.display_name}
-                />
-              )
-            })}
             {hasActiveFilters && (
-              <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-8 text-xs">
+              <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-8 text-xs text-muted-foreground">
                 <X className="mr-1 h-3 w-3" />
-                Clear
+                Clear filters
               </Button>
             )}
             <div className="ml-auto">
@@ -1958,13 +2063,77 @@ export default function EventsPage() {
               <TableHead>Event</TableHead>
               {!activeEt && <TableHead>Type</TableHead>}
               <TableHead className="w-32 text-right">{ROW_METRICS_LABEL}</TableHead>
-              {!hideTags && <TableHead>Tags</TableHead>}
-              {visibleFieldColumns.map(f => (
-                <TableHead key={f.id}>{f.display_name}</TableHead>
-              ))}
-              {visibleMetaFields.map((mf: MetaFieldDefinition) => (
-                <TableHead key={mf.id} className="text-muted-foreground">{mf.display_name}</TableHead>
-              ))}
+              {!hideTags && (
+                <FilterableHead
+                  label="Tags"
+                  filter={
+                    allTags.length > 0 ? (
+                      <ColumnFilter
+                        label="Tag"
+                        type="enum"
+                        value={filterTag}
+                        options={allTags}
+                        onChange={setFilterTag}
+                      />
+                    ) : null
+                  }
+                />
+              )}
+              {visibleFieldColumns.map(f => {
+                const enumOpts = fieldEnumOptions[f.id]
+                const filterType: ColumnFilterType | null =
+                  f.field_type === 'enum' && enumOpts ? 'enum'
+                    : f.field_type === 'boolean' ? 'boolean'
+                    : f.field_type === 'json' ? null
+                    : 'text'
+                return (
+                  <FilterableHead
+                    key={f.id}
+                    label={f.display_name}
+                    filter={
+                      filterType ? (
+                        <ColumnFilter
+                          label={f.display_name}
+                          type={filterType}
+                          value={fieldFilters[f.name] ?? ''}
+                          options={
+                            filterType === 'enum'
+                              ? Array.from(enumOpts ?? [])
+                              : undefined
+                          }
+                          onChange={v => updateFieldFilter(f.name, v)}
+                        />
+                      ) : null
+                    }
+                  />
+                )
+              })}
+              {visibleMetaFields.map((mf: MetaFieldDefinition) => {
+                const filterType: ColumnFilterType =
+                  mf.field_type === 'enum' && mf.enum_options ? 'enum'
+                    : mf.field_type === 'boolean' ? 'boolean'
+                    : 'text'
+                return (
+                  <FilterableHead
+                    key={mf.id}
+                    label={mf.display_name}
+                    className="text-muted-foreground"
+                    filter={
+                      <ColumnFilter
+                        label={mf.display_name}
+                        type={filterType}
+                        value={metaFilters[mf.name] ?? ''}
+                        options={
+                          filterType === 'enum'
+                            ? mf.enum_options ?? undefined
+                            : undefined
+                        }
+                        onChange={v => updateMetaFilter(mf.name, v)}
+                      />
+                    }
+                  />
+                )
+              })}
               <TableHead className="sticky right-0 z-20 w-[7.5rem] border-l bg-background text-right">
                 Actions
               </TableHead>

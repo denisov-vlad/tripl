@@ -185,6 +185,14 @@
   background: var(--bg-sunken);
 }
 
+/* Per-column filter chevron — invisible until the user hovers the header
+   cell, focuses inside it, or the filter is active/open (handled via
+   opacity-100 utility on the button). */
+.tripl-table thead th:hover .tripl-col-filter,
+.tripl-table thead th:focus-within .tripl-col-filter {
+  opacity: 1;
+}
+
 .tripl-table tbody tr {
   height: var(--row-h);
   transition: background 0.12s ease;
