@@ -21,6 +21,11 @@ _SEASONAL_PERIODS_BY_INTERVAL_SECONDS: dict[int, tuple[int, ...]] = {
 _MIN_CYCLES_PER_PERIOD = 2
 _SUSTAINED_SHIFT_WINDOW = 3
 _SUSTAINED_SHIFT_MIN_CURRENT_DELTA_RATIO = 0.03
+# Lower bound on stddev relative to expected magnitude. Without it a perfectly
+# stable series (stddev=0) treats any micro-deviation as a multi-sigma event —
+# e.g. baseline=1000±0, current=1010 would score z=10. A 3% floor anchors the
+# z-scale to "noticeable change relative to volume" instead of pure 1.0-units.
+_RELATIVE_STDDEV_FLOOR_RATIO = 0.03
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,18 @@ def _robust_scale(values: list[float]) -> float:
     return stddev
 
 
+def _effective_stddev(stddev: float, expected_count: float) -> float:
+    """Stddev clamped from below so flat baselines don't produce huge z-scores.
+
+    The floor is the larger of (1.0, 3% of expected_count). Series with very
+    small expected stay at the 1.0 floor (small absolute deviations matter);
+    high-volume series scale by expected so a 1% wobble doesn't trip the
+    threshold.
+    """
+    relative_floor = max(expected_count * _RELATIVE_STDDEV_FLOOR_RATIO, 1.0)
+    return max(stddev, relative_floor)
+
+
 def _fit_expected_series(
     counts: list[int],
     *,
@@ -147,7 +164,7 @@ def _detect_with_rolling_baseline(
         if expected_count < settings.min_expected_count:
             continue
 
-        effective_stddev = stddev if stddev > 0 else 1.0
+        effective_stddev = _effective_stddev(stddev, expected_count)
         z_score = (point.count - expected_count) / effective_stddev
         if abs(z_score) < settings.sigma_threshold:
             continue
@@ -170,9 +187,16 @@ def _detect_sustained_shift(
     expanded: list[SeriesPoint],
     *,
     evaluation_start: datetime,
-    expected_counts: list[float],
     settings: AnomalyDetectionSettings,
 ) -> list[DetectedAnomaly]:
+    """Catch slow shifts that the per-bucket detector misses.
+
+    Per-bucket STL detection can absorb sustained shifts into the trend, so a
+    series that crept up over three buckets ends up with small per-bucket
+    residuals. We compare the recent window's mean against the historical
+    baseline directly — using raw counts (not the STL-fitted expected, which
+    is contaminated by the very shift we're trying to detect).
+    """
     anomalies: list[DetectedAnomaly] = []
     counts = [point.count for point in expanded]
 
@@ -188,14 +212,17 @@ def _detect_sustained_shift(
         if len(baseline) < settings.min_history_buckets:
             continue
 
-        expected_count = max(float(expected_counts[idx]), 0.0)
-        if expected_count < settings.min_expected_count:
-            continue
-
         recent_counts = counts[recent_start : idx + 1]
         baseline_mean, stddev = _rolling_stats(baseline)
+        # Gate on the historical baseline rather than the STL-fitted expected
+        # — for sustained shifts the STL fit is pulled toward the shifted
+        # values, which would let some shifts squeak past min_expected_count
+        # and erase the delta-ratio gate below.
+        if baseline_mean < settings.min_expected_count:
+            continue
+
         recent_mean = fmean(recent_counts)
-        effective_stddev = stddev if stddev > 0 else 1.0
+        effective_stddev = _effective_stddev(stddev, baseline_mean)
         z_score = (recent_mean - baseline_mean) / effective_stddev
         if abs(z_score) < settings.sigma_threshold:
             continue
@@ -208,7 +235,7 @@ def _detect_sustained_shift(
             continue
 
         current_delta_ratio = (
-            abs(point.count - expected_count) / expected_count if expected_count > 0 else 0.0
+            abs(point.count - baseline_mean) / baseline_mean if baseline_mean > 0 else 0.0
         )
         if current_delta_ratio < _SUSTAINED_SHIFT_MIN_CURRENT_DELTA_RATIO:
             continue
@@ -217,7 +244,7 @@ def _detect_sustained_shift(
             DetectedAnomaly(
                 bucket=point.bucket,
                 actual_count=point.count,
-                expected_count=expected_count,
+                expected_count=baseline_mean,
                 stddev=stddev,
                 z_score=z_score,
                 direction=direction,
@@ -277,7 +304,7 @@ def detect_anomalies(
             continue
 
         stddev = _robust_scale(baseline_residuals)
-        effective_stddev = stddev if stddev > 0 else 1.0
+        effective_stddev = _effective_stddev(stddev, expected_count)
         z_score = residuals[idx] / effective_stddev
         if abs(z_score) < settings.sigma_threshold:
             continue
@@ -296,7 +323,6 @@ def detect_anomalies(
     sustained_shift_anomalies = _detect_sustained_shift(
         expanded,
         evaluation_start=evaluation_start,
-        expected_counts=expected_counts,
         settings=settings,
     )
     return _merge_anomalies(point_anomalies, sustained_shift_anomalies)

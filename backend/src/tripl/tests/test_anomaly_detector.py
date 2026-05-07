@@ -179,6 +179,43 @@ def test_detect_anomalies_detects_spike_on_top_of_repeating_daily_pattern() -> N
     assert spike_anomaly.expected_count > 30
 
 
+def test_detect_anomalies_skips_micro_deviation_on_high_volume_flat_baseline() -> None:
+    """Bug fix: a 1% wobble on a 1000-count baseline should not be a 10-sigma
+    anomaly. The relative stddev floor (3% of expected) clamps the z-score so
+    only meaningful relative changes trip the threshold.
+    """
+    points = [SeriesPoint(bucket=_bucket(hour), count=1000) for hour in range(10)]
+    points.append(SeriesPoint(bucket=_bucket(10), count=1010))
+
+    anomalies = detect_anomalies(
+        points,
+        interval=timedelta(hours=1),
+        evaluation_start=_bucket(10),
+        evaluation_end=_bucket(11),
+        settings=SETTINGS,
+    )
+
+    assert anomalies == []
+
+
+def test_detect_anomalies_still_flags_meaningful_high_volume_change() -> None:
+    """Sanity check that the relative floor doesn't suppress real spikes on
+    high-volume series — a 30% jump on a 1000-baseline still trips."""
+    points = [SeriesPoint(bucket=_bucket(hour), count=1000) for hour in range(10)]
+    points.append(SeriesPoint(bucket=_bucket(10), count=1300))
+
+    anomalies = detect_anomalies(
+        points,
+        interval=timedelta(hours=1),
+        evaluation_start=_bucket(10),
+        evaluation_end=_bucket(11),
+        settings=SETTINGS,
+    )
+
+    assert len(anomalies) == 1
+    assert anomalies[0].direction == "spike"
+
+
 def test_detect_anomalies_detects_sustained_growth_on_top_of_daily_pattern() -> None:
     points = [
         SeriesPoint(bucket=_bucket(hour), count=_daily_pattern_count(hour))
