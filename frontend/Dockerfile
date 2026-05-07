@@ -28,8 +28,16 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 
 FROM nginx:alpine AS runtime
 
+# ngx_brotli isn't compiled into the upstream nginx image; pull it from the
+# Alpine community repo. The module file lives at /usr/lib/nginx/modules/
+# and is loaded explicitly in our nginx.conf.
+RUN apk add --no-cache nginx-mod-http-brotli
+
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Override the upstream main config (we need top-level load_module directives
+# for brotli; default.conf in conf.d would be too late).
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN rm -f /etc/nginx/conf.d/default.conf
 
 EXPOSE 5173
 

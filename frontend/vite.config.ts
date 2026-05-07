@@ -1,11 +1,35 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { compression } from 'vite-plugin-compression2'
 import path from 'path'
+import zlib from 'node:zlib'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // Pre-compress JS/CSS/SVG/JSON to .br files served via nginx brotli_static.
+    // We don't ship gzip — nginx falls back to identity if a client doesn't
+    // accept brotli, which is rare in practice (all evergreen browsers do).
+    compression({
+      // [algorithm, options] — build-time, so max brotli quality is fine.
+      algorithms: [
+        [
+          'brotliCompress',
+          {
+            params: {
+              [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
+            },
+          },
+        ],
+      ],
+      include: [/\.(js|mjs|css|html|svg|json|wasm)$/],
+      threshold: 1024,
+      deleteOriginalAssets: false,
+    }),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

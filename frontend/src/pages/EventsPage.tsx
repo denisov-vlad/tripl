@@ -642,6 +642,7 @@ type EventRowProps = {
   rowSignal: MonitoringSignal | undefined
   windowTotal: number | undefined
   windowData: EventMetricPoint[]
+  metaValueMap: Map<string, string> | undefined
   getFieldValue: (ev: TEvent, f: FieldDefinition) => string
   onToggleSelected: (id: string, checked: boolean) => void
   onToggleExpanded: (cellKey: string | null) => void
@@ -662,6 +663,7 @@ const EventRow = memo(function EventRow({
   rowSignal,
   windowTotal,
   windowData,
+  metaValueMap,
   getFieldValue,
   onToggleSelected,
   onToggleExpanded,
@@ -682,11 +684,6 @@ const EventRow = memo(function EventRow({
     position: 'relative',
     zIndex: isDragging ? 1 : undefined,
   }
-
-  const mvMap = useMemo(
-    () => Object.fromEntries(ev.meta_values.map((mv) => [mv.meta_field_definition_id, mv.value])),
-    [ev.meta_values],
-  )
   const anomalyIdx = windowData.findIndex((p) => p.is_anomaly)
   const signalTone: 'danger' | 'warning' | null = rowSignal
     ? rowSignal.state === 'latest_scan'
@@ -791,25 +788,30 @@ const EventRow = memo(function EventRow({
           </TableCell>
         )
       })}
-      {metaFields.map((mf) => (
+      {metaFields.map((mf) => {
+        const mvRaw = metaValueMap?.get(mf.id)
+        const mv = mvRaw ?? ''
+        const href = resolveMetaFieldHref(mf, mv)
+        return (
           <TableCell key={mf.id} className="text-muted-foreground max-w-40 truncate text-xs">
-            {resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ? (
+            {href ? (
               <a
-                href={resolveMetaFieldHref(mf, mvMap[mf.id] ?? '') ?? undefined}
+                href={href}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="block truncate text-primary underline-offset-4 hover:underline"
-                title={mvMap[mf.id]}
+                title={mv}
               >
-                {mvMap[mf.id]}
+                {mv}
               </a>
-            ) : mf.field_type === 'boolean' && mvMap[mf.id] ? (
-              <Badge variant={mvMap[mf.id] === 'true' ? 'success' : 'secondary'} className="text-[10px]">
-                {mvMap[mf.id] === 'true' ? 'Yes' : 'No'}
+            ) : mf.field_type === 'boolean' && mvRaw ? (
+              <Badge variant={mvRaw === 'true' ? 'success' : 'secondary'} className="text-[10px]">
+                {mvRaw === 'true' ? 'Yes' : 'No'}
               </Badge>
-            ) : mvMap[mf.id] ?? ''}
+            ) : mv}
           </TableCell>
-        ))}
+        )
+      })}
       <TableCell className="sticky right-0 z-10 border-l bg-background/95 pl-3 pr-2 backdrop-blur-sm hover:z-40 focus-within:z-40">
         <EventRowActions
           event={ev}
@@ -986,6 +988,8 @@ export default function EventsPage() {
   }, [])
 
   const debouncedSearch = useDebouncedValue(search, 200)
+  const debouncedFieldFilters = useDebouncedValue(fieldFilters, 200)
+  const debouncedMetaFilters = useDebouncedValue(metaFilters, 200)
 
   const eventsQuery = useQuery({
     queryKey: ['events', slug, filterEtId, debouncedSearch, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
@@ -1024,6 +1028,12 @@ export default function EventsPage() {
     () => (eventsData?.items ?? []).map(event => event.id),
     [eventsData?.items],
   )
+  // queryKey wants a stable scalar — a fresh array reference on every refetch
+  // would mint a new cache entry per refetch and refetch in a loop.
+  const eventIdsForSignalsKey = useMemo(
+    () => [...eventIdsForSignals].sort().join(','),
+    [eventIdsForSignals],
+  )
 
   const tabSignalsQuery = useQuery({
     queryKey: ['activeSignals', slug, 'tabs'],
@@ -1034,7 +1044,7 @@ export default function EventsPage() {
   const tabSignals = tabSignalsQuery.data ?? EMPTY_SIGNALS
 
   const rowSignalsQuery = useQuery({
-    queryKey: ['activeSignals', slug, 'rows', eventIdsForSignals],
+    queryKey: ['activeSignals', slug, 'rows', eventIdsForSignalsKey],
     queryFn: () => metricsApi.getActiveSignals(slug!, eventIdsForSignals),
     enabled: !!slug && eventIdsForSignals.length > 0,
     refetchInterval: 60000,
@@ -1216,25 +1226,53 @@ export default function EventsPage() {
     return map
   }, [fieldColumns])
 
+  // One Map<eventId, Map<fieldDefId, value>> built once per events list, instead
+  // of re-building Object.fromEntries(...) inside every filter check and every
+  // <TableCell> render (was O(N · F²) per render on the 2000-event path).
+  const fieldValuesByEvent = useMemo(() => {
+    const map = new Map<string, Map<string, string>>()
+    for (const ev of rawEvents) {
+      const fvMap = new Map<string, string>()
+      for (const fv of ev.field_values) fvMap.set(fv.field_definition_id, fv.value)
+      map.set(ev.id, fvMap)
+    }
+    return map
+  }, [rawEvents])
+
+  const metaValuesByEvent = useMemo(() => {
+    const map = new Map<string, Map<string, string>>()
+    for (const ev of rawEvents) {
+      const mvMap = new Map<string, string>()
+      for (const mv of ev.meta_values) mvMap.set(mv.meta_field_definition_id, mv.value)
+      map.set(ev.id, mvMap)
+    }
+    return map
+  }, [rawEvents])
+
   const getFieldValue = useCallback((ev: TEvent, col: FieldDefinition) => {
-    const fvMap = Object.fromEntries(ev.field_values.map(fv => [fv.field_definition_id, fv.value]))
-    if (fvMap[col.id] !== undefined) return fvMap[col.id]
+    const fvMap = fieldValuesByEvent.get(ev.id)
+    if (fvMap) {
+      const direct = fvMap.get(col.id)
+      if (direct !== undefined) return direct
+    }
+    // Fallback for when the row's field_values reference a different
+    // FieldDefinition row (e.g., another event-type with the same `name`).
     for (const fv of ev.field_values) {
       const def = allFieldDefs.get(fv.field_definition_id)
       if (def && def.name === col.name) return fv.value
     }
     return ''
-  }, [allFieldDefs])
+  }, [allFieldDefs, fieldValuesByEvent])
 
   // Client-side filtering by field values and meta values
   const events = useMemo(() => {
-    const hasFieldFilter = Object.values(fieldFilters).some(v => v !== '')
-    const hasMetaFilter = Object.values(metaFilters).some(v => v !== '')
+    const hasFieldFilter = Object.values(debouncedFieldFilters).some(v => v !== '')
+    const hasMetaFilter = Object.values(debouncedMetaFilters).some(v => v !== '')
     if (!hasFieldFilter && !hasMetaFilter) return rawEvents
 
     return rawEvents.filter(ev => {
       for (const col of fieldColumns) {
-        const fv = fieldFilters[col.name]
+        const fv = debouncedFieldFilters[col.name]
         if (!fv) continue
         const val = getFieldValue(ev, col)
         if (col.field_type === 'enum' || col.field_type === 'boolean') {
@@ -1243,10 +1281,11 @@ export default function EventsPage() {
           if (!val.toLowerCase().includes(fv.toLowerCase())) return false
         }
       }
+      const mvMap = metaValuesByEvent.get(ev.id)
       for (const mf of metaFields) {
-        const mv = metaFilters[mf.name]
+        const mv = debouncedMetaFilters[mf.name]
         if (!mv) continue
-        const val = ev.meta_values.find(m => m.meta_field_definition_id === mf.id)?.value ?? ''
+        const val = mvMap?.get(mf.id) ?? ''
         if (mf.field_type === 'enum' || mf.field_type === 'boolean') {
           if (val !== mv) return false
         } else {
@@ -1255,7 +1294,7 @@ export default function EventsPage() {
       }
       return true
     })
-  }, [rawEvents, fieldFilters, metaFilters, fieldColumns, metaFields, getFieldValue])
+  }, [rawEvents, debouncedFieldFilters, debouncedMetaFilters, fieldColumns, metaFields, getFieldValue, metaValuesByEvent])
 
   const visibleFieldColumns = useMemo(
     () => fieldColumns.filter(f => !hiddenColumns.has(`f:${f.id}`)),
@@ -1435,12 +1474,16 @@ export default function EventsPage() {
     () => events.map(event => event.id),
     [events],
   )
+  const eventIdsForWindowMetricsKey = useMemo(
+    () => [...eventIdsForWindowMetrics].sort().join(','),
+    [eventIdsForWindowMetrics],
+  )
 
   const eventWindowMetricsQuery = useQuery({
     queryKey: [
       'eventWindowMetrics',
       slug,
-      eventIdsForWindowMetrics,
+      eventIdsForWindowMetricsKey,
       rowMetricsRange.time_from,
       rowMetricsRange.time_to,
     ],
@@ -1875,6 +1918,7 @@ export default function EventsPage() {
                   rowSignal={eventRowSignals.get(ev.id)}
                   windowTotal={windowMetric?.total_count}
                   windowData={windowMetric?.data ?? EMPTY_WINDOW_POINTS}
+                  metaValueMap={metaValuesByEvent.get(ev.id)}
                   getFieldValue={getFieldValue}
                   onToggleSelected={toggleEventSelected}
                   onToggleExpanded={onToggleExpandedCell}

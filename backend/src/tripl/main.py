@@ -1,5 +1,6 @@
 import asyncio
 
+from brotli_asgi import BrotliMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,6 +10,15 @@ from tripl.api.v1.router import router as v1_router
 from tripl.database import engine
 
 app = FastAPI(title="tripl", version="0.1.0", description="Analytics tracking plan service")
+
+# Compress responses ≥1KB. quality=4 trades a few percent of ratio for
+# meaningfully lower CPU than the default 11 (this matters for the larger
+# event-list / window-metrics responses that dominate this service).
+app.add_middleware(
+    BrotliMiddleware,
+    quality=4,
+    minimum_size=1024,
+)
 
 app.add_middleware(
     CORSMiddleware,
