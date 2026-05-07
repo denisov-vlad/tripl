@@ -96,6 +96,32 @@ class EventResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class EventListItemResponse(BaseModel):
+    """Slim variant of EventResponse used by the list endpoint.
+
+    Drops the nested ``event_type`` payload — the frontend already loads
+    EventTypes separately and looks them up by id, so shipping the brief here
+    is pure overhead at scale (and triggers an extra selectin SQL query).
+    """
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    event_type_id: uuid.UUID
+    name: str
+    description: str
+    order: int
+    implemented: bool
+    reviewed: bool
+    archived: bool
+    tags: list[EventTagResponse] = []
+    field_values: list[EventFieldValueResponse] = []
+    meta_values: list[EventMetaValueResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class EventListResponse(BaseModel):
-    items: list[EventResponse]
+    items: list[EventListItemResponse]
     total: int

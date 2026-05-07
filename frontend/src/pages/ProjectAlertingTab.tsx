@@ -52,7 +52,7 @@ import type {
   AlertRuleFilterField,
   AlertRuleFilterOperator,
   AlertRuleFilterPayload,
-  Event,
+  EventListItem,
   EventType,
 } from '@/types'
 
@@ -533,7 +533,7 @@ function DestinationCard({
   slug: string
   destination: AlertDestination
   eventTypes: EventType[]
-  events: Event[]
+  events: EventListItem[]
   onEditDestination: (destination: AlertDestination) => void
 }) {
   const qc = useQueryClient()
@@ -893,7 +893,7 @@ function FilterEditor({
 }: {
   filters: RuleFilterDraft[]
   eventTypes: EventType[]
-  events: Event[]
+  events: EventListItem[]
   onChange: (filters: RuleFilterDraft[]) => void
 }) {
   const addFilter = () => {
@@ -953,7 +953,7 @@ function FilterRow({
 }: {
   filter: RuleFilterDraft
   eventTypes: EventType[]
-  events: Event[]
+  events: EventListItem[]
   onChange: (patch: Partial<RuleFilterDraft>) => void
   onRemove: () => void
 }) {

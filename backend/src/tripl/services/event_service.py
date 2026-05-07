@@ -3,6 +3,7 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from tripl import cache
 from tripl.models.event import Event
@@ -53,7 +54,13 @@ async def list_events(
     limit: int = 200,
 ) -> tuple[list[Event], int]:
     project_id = await get_project_id_by_slug(session, slug)
-    query = select(Event).where(Event.project_id == project_id)
+    # Skip the selectin load for Event.event_type — the list response schema
+    # ships only event_type_id, and the client already has EventTypes cached.
+    query = (
+        select(Event)
+        .where(Event.project_id == project_id)
+        .options(noload(Event.event_type))
+    )
     count_query = select(func.count(Event.id)).where(Event.project_id == project_id)
 
     if event_type_id:
@@ -178,40 +185,44 @@ async def update_event(
     if "archived" in update_data:
         event.archived = update_data["archived"]
 
+    # Replace child rows via a single DELETE+INSERT-batch per relation, instead
+    # of `await session.delete(row)` per existing child (was ~N round-trips).
     if data.tags is not None:
-        for t in list(event.tags):
-            await session.delete(t)
+        await session.execute(delete(EventTag).where(EventTag.event_id == event.id))
         await session.flush()
-        for tag_name in data.tags:
-            session.add(EventTag(event_id=event.id, name=tag_name))
+        if data.tags:
+            session.add_all([EventTag(event_id=event.id, name=name) for name in data.tags])
 
     if data.field_values is not None:
         await _validate_field_values(session, event.event_type_id, data.field_values)
-        # Remove existing field values
-        for existing_field_value in list(event.field_values):
-            await session.delete(existing_field_value)
+        await session.execute(
+            delete(EventFieldValue).where(EventFieldValue.event_id == event.id)
+        )
         await session.flush()
-        for field_value in data.field_values:
-            session.add(
+        if data.field_values:
+            session.add_all([
                 EventFieldValue(
                     event_id=event.id,
                     field_definition_id=field_value.field_definition_id,
                     value=field_value.value,
                 )
-            )
+                for field_value in data.field_values
+            ])
 
     if data.meta_values is not None:
-        for existing_meta_value in list(event.meta_values):
-            await session.delete(existing_meta_value)
+        await session.execute(
+            delete(EventMetaValue).where(EventMetaValue.event_id == event.id)
+        )
         await session.flush()
-        for meta_value in data.meta_values:
-            session.add(
+        if data.meta_values:
+            session.add_all([
                 EventMetaValue(
                     event_id=event.id,
                     meta_field_definition_id=meta_value.meta_field_definition_id,
                     value=meta_value.value,
                 )
-            )
+                for meta_value in data.meta_values
+            ])
 
     await session.commit()
     await session.refresh(event)
@@ -308,10 +319,13 @@ async def reorder_events(
         events_by_id[event_id].order = sorted_orders[new_index]
 
     await session.commit()
-    ordered = [events_by_id[event_id] for event_id in data.event_ids]
-    for event in ordered:
-        await session.refresh(event)
-    return ordered
+    # One round-trip with selectin relations (event_type/field_values/meta_values/tags)
+    # instead of N×refresh after commit.
+    refreshed = await session.execute(
+        select(Event).where(Event.id.in_(data.event_ids))
+    )
+    by_id = {event.id: event for event in refreshed.scalars().all()}
+    return [by_id[event_id] for event_id in data.event_ids]
 
 
 async def bulk_create_events(
@@ -392,7 +406,9 @@ async def bulk_create_events(
         session.add_all(children)
 
     await session.commit()
-    for event in events:
-        await session.refresh(event)
+    # One round-trip with selectin relations instead of N×refresh after commit.
+    event_ids = [event.id for event in events]
+    refreshed = await session.execute(select(Event).where(Event.id.in_(event_ids)))
+    by_id = {event.id: event for event in refreshed.scalars().all()}
     await cache.delete_prefix(cache.prefix_projects())
-    return events
+    return [by_id[event_id] for event_id in event_ids]

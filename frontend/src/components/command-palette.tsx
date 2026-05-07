@@ -286,19 +286,26 @@ function CommandPalette() {
                     No events match.
                   </div>
                 ) : (
-                  eventResults.map(ev => (
-                    <Item
-                      key={ev.id}
-                      onSelect={() =>
-                        goTo(`/p/${eventSearchProjectSlug}/events/detail/${ev.id}`)
-                      }
-                      icon={Tag}
-                      iconColor={ev.event_type.color}
-                      label={ev.name}
-                      hint={ev.event_type.display_name}
-                      keywords={[ev.name, ev.event_type.display_name, ev.event_type.name]}
-                    />
-                  ))
+                  eventResults.map(ev => {
+                    const et = eventTypes.find(item => item.id === ev.event_type_id)
+                    return (
+                      <Item
+                        key={ev.id}
+                        onSelect={() =>
+                          goTo(`/p/${eventSearchProjectSlug}/events/detail/${ev.id}`)
+                        }
+                        icon={Tag}
+                        iconColor={et?.color}
+                        label={ev.name}
+                        hint={et?.display_name}
+                        keywords={
+                          et
+                            ? [ev.name, et.display_name, et.name]
+                            : [ev.name]
+                        }
+                      />
+                    )
+                  })
                 )}
               </Group>
             )}

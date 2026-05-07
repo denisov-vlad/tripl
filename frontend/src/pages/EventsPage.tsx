@@ -1,6 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryKey,
+} from '@tanstack/react-query'
 import {
   DndContext,
   PointerSensor,
@@ -28,9 +35,11 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   Event as TEvent,
+  EventListItem,
   EventListResponse,
   EventMetricPoint,
   EventType,
+  EventTypeBrief,
   FieldDefinition,
   MetaFieldDefinition,
   MonitoringSignal,
@@ -38,7 +47,7 @@ import type {
 } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { MetricsChart, MiniMetricsChart } from '@/components/ui/chart'
+import { MetricsChart, MiniMetricsChart } from '@/components/ui/chart-lazy'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -450,7 +459,7 @@ const EventRowActions = memo(function EventRowActions({
   onToggleArchived,
   onDelete,
 }: {
-  event: TEvent
+  event: EventListItem
   slug: string
   canMoveUp: boolean
   canMoveDown: boolean
@@ -629,7 +638,8 @@ type RowAction =
   | 'delete'
 
 type EventRowProps = {
-  ev: TEvent
+  ev: EventListItem
+  eventType: EventTypeBrief | undefined
   selected: boolean
   hideType: boolean
   hideTags: boolean
@@ -643,14 +653,15 @@ type EventRowProps = {
   windowTotal: number | undefined
   windowData: EventMetricPoint[]
   metaValueMap: Map<string, string> | undefined
-  getFieldValue: (ev: TEvent, f: FieldDefinition) => string
+  getFieldValue: (ev: EventListItem, f: FieldDefinition) => string
   onToggleSelected: (id: string, checked: boolean) => void
   onToggleExpanded: (cellKey: string | null) => void
-  onRowAction: (action: RowAction, ev: TEvent) => void
+  onRowAction: (action: RowAction, ev: EventListItem) => void
 }
 
 const EventRow = memo(function EventRow({
   ev,
+  eventType,
   selected,
   hideType,
   hideTags,
@@ -735,9 +746,9 @@ const EventRow = memo(function EventRow({
           <Chip size="xs">
             <span
               className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
-              style={{ backgroundColor: ev.event_type.color }}
+              style={{ backgroundColor: eventType?.color }}
             />
-            {ev.event_type.name}
+            {eventType?.name ?? ''}
           </Chip>
         </TableCell>
       )}
@@ -746,7 +757,7 @@ const EventRow = memo(function EventRow({
           <SignalLink slug={slug} signal={rowSignal} compact />
           <EventWindowMetricsCell
             eventName={ev.name}
-            color={ev.event_type.color}
+            color={eventType?.color ?? 'var(--accent)'}
             totalCount={windowTotal}
             data={windowData}
             anomalyIdx={anomalyIdx >= 0 ? anomalyIdx : null}
@@ -991,21 +1002,40 @@ export default function EventsPage() {
   const debouncedFieldFilters = useDebouncedValue(fieldFilters, 200)
   const debouncedMetaFilters = useDebouncedValue(metaFilters, 200)
 
-  const eventsQuery = useQuery({
+  // Infinite-scroll the events list in 200-row pages instead of fetching the
+  // whole 2000-row table up front. The accumulated items are rendered through
+  // the existing virtualizer, and a sentinel near the bottom triggers
+  // fetchNextPage().
+  const EVENTS_PAGE_SIZE = 200
+  const eventsQuery = useInfiniteQuery({
     queryKey: ['events', slug, filterEtId, debouncedSearch, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery],
-    queryFn: () => eventsApi.list(slug!, {
+    queryFn: ({ pageParam }) => eventsApi.list(slug!, {
       event_type_id: filterEtId,
       search: debouncedSearch || undefined,
       implemented: filterImplemented,
       reviewed: filterReviewedForQuery,
       archived: filterArchivedForQuery,
       tag: filterTag || undefined,
-      limit: 2000,
+      offset: pageParam,
+      limit: EVENTS_PAGE_SIZE,
     }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
+      return loaded < lastPage.total ? loaded : undefined
+    },
     enabled: !!slug,
     placeholderData: (prev) => prev,
   })
-  const eventsData = eventsQuery.data
+  const eventsData = useMemo(() => {
+    const pages = eventsQuery.data?.pages
+    if (!pages || pages.length === 0) return undefined
+    // Flatten pages into the same shape consumers expect (items + total).
+    return {
+      items: pages.flatMap(page => page.items),
+      total: pages[0].total,
+    }
+  }, [eventsQuery.data])
 
   const { data: tabMetrics, isLoading: tabMetricsLoading } = useQuery({
     queryKey: ['eventsMetrics', slug, filterEtId, debouncedSearch, filterImplemented, filterTag, filterReviewedForQuery, filterArchivedForQuery, tabMetricsRange.from, tabMetricsRange.to],
@@ -1066,7 +1096,7 @@ export default function EventsPage() {
   })
   const urlEvent = urlEventQuery.data
 
-  const openEvent = useCallback((ev: TEvent) => {
+  const openEvent = useCallback((ev: EventListItem) => {
     navigate(`/p/${slug}/events/${activeTab}/${ev.id}${searchParams.toString() ? `?${searchParams}` : ''}`)
   }, [slug, activeTab, navigate, searchParams])
 
@@ -1125,19 +1155,31 @@ export default function EventsPage() {
     mutationFn: (eventIds: string[]) => eventsApi.reorder(slug!, eventIds),
     onMutate: async (eventIds) => {
       await qc.cancelQueries({ queryKey: ['events', slug] })
-      const snapshots = qc.getQueriesData<EventListResponse>({ queryKey: ['events', slug] })
-      qc.setQueriesData<EventListResponse>({ queryKey: ['events', slug] }, (data) => {
-        if (!data) return data
+      // Match both shapes: useInfiniteQuery (InfiniteData) for the main events
+      // table, and plain EventListResponse for the unreviewed-count and
+      // alerting-page queries that share the ['events', slug, ...] prefix.
+      type EventsQueryData = EventListResponse | InfiniteData<EventListResponse>
+      const snapshots = qc.getQueriesData<EventsQueryData>({ queryKey: ['events', slug] })
+      const reorderItems = (items: EventListItem[]) => {
         const indexById = new Map(eventIds.map((id, i) => [id, i]))
         const idSet = new Set(eventIds)
-        const reorderedIns = data.items
+        const reorderedIns = items
           .filter((event) => idSet.has(event.id))
           .sort((left, right) => indexById.get(left.id)! - indexById.get(right.id)!)
         let pointer = 0
-        const items = data.items.map((event) =>
+        return items.map((event) =>
           idSet.has(event.id) ? reorderedIns[pointer++] : event,
         )
-        return { ...data, items }
+      }
+      qc.setQueriesData<EventsQueryData>({ queryKey: ['events', slug] }, (data) => {
+        if (!data) return data
+        if ('pages' in data) {
+          return {
+            ...data,
+            pages: data.pages.map(page => ({ ...page, items: reorderItems(page.items) })),
+          }
+        }
+        return { ...data, items: reorderItems(data.items) }
       })
       return { snapshots }
     },
@@ -1213,6 +1255,21 @@ export default function EventsPage() {
     return map
   }, [eventTypes])
 
+  // Slim list responses ship event_type_id only; EventRow looks up the brief
+  // here from the cached EventTypes (already loaded for filter tabs).
+  const eventTypesById = useMemo(() => {
+    const map = new Map<string, EventTypeBrief>()
+    for (const et of eventTypes) {
+      map.set(et.id, {
+        id: et.id,
+        name: et.name,
+        display_name: et.display_name,
+        color: et.color,
+      })
+    }
+    return map
+  }, [eventTypes])
+
   // Collect enum/boolean options per field column for filter dropdowns
   const fieldEnumOptions = useMemo(() => {
     const map: Record<string, Set<string>> = {}
@@ -1249,7 +1306,7 @@ export default function EventsPage() {
     return map
   }, [rawEvents])
 
-  const getFieldValue = useCallback((ev: TEvent, col: FieldDefinition) => {
+  const getFieldValue = useCallback((ev: EventListItem, col: FieldDefinition) => {
     const fvMap = fieldValuesByEvent.get(ev.id)
     if (fvMap) {
       const direct = fvMap.get(col.id)
@@ -1320,6 +1377,30 @@ export default function EventsPage() {
   })
   const virtualItems = virtualize ? rowVirtualizer.getVirtualItems() : []
   const totalVirtualSize = virtualize ? rowVirtualizer.getTotalSize() : 0
+
+  // Auto-fetch the next page when the virtualizer is rendering rows close to
+  // the end of the loaded list. The 50-row prefetch margin keeps scrolling
+  // smooth without prefetching unnecessarily.
+  const fetchNextPage = eventsQuery.fetchNextPage
+  useEffect(() => {
+    if (!eventsQuery.hasNextPage || eventsQuery.isFetchingNextPage) return
+    const lastVisible = virtualItems[virtualItems.length - 1]
+    if (lastVisible && lastVisible.index >= events.length - 50) {
+      void fetchNextPage()
+    } else if (!virtualize && events.length > 0 && events.length < (eventsData?.total ?? 0)) {
+      // Below virtualization threshold but more pages exist — pull the next
+      // page so users on small datasets still get the full list.
+      void fetchNextPage()
+    }
+  }, [
+    virtualItems,
+    events.length,
+    eventsQuery.hasNextPage,
+    eventsQuery.isFetchingNextPage,
+    fetchNextPage,
+    virtualize,
+    eventsData?.total,
+  ])
   const colCount =
     1 /* drag handle */ +
     1 /* checkbox */ +
@@ -1416,7 +1497,7 @@ export default function EventsPage() {
     [visibleEventIds, reorderEventsMut],
   )
 
-  const onRowAction = useCallback((action: RowAction, ev: TEvent) => {
+  const onRowAction = useCallback((action: RowAction, ev: EventListItem) => {
     const ctx = rowCtxRef.current
     switch (action) {
       case 'edit':
@@ -1895,7 +1976,7 @@ export default function EventsPage() {
                 <td colSpan={colCount} />
               </tr>
             )}
-            {(virtualize ? virtualItems.map(vi => events[vi.index]) : events).map((ev: TEvent) => {
+            {(virtualize ? virtualItems.map(vi => events[vi.index]) : events).map((ev: EventListItem) => {
               const idx = visibleIndexById.get(ev.id) ?? -1
               const expandedFieldId =
                 expandedCell && expandedCell.startsWith(ev.id + '-')
@@ -1919,6 +2000,7 @@ export default function EventsPage() {
                   windowTotal={windowMetric?.total_count}
                   windowData={windowMetric?.data ?? EMPTY_WINDOW_POINTS}
                   metaValueMap={metaValuesByEvent.get(ev.id)}
+                  eventType={eventTypesById.get(ev.event_type_id)}
                   getFieldValue={getFieldValue}
                   onToggleSelected={toggleEventSelected}
                   onToggleExpanded={onToggleExpandedCell}

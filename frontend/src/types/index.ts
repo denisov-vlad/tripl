@@ -186,8 +186,12 @@ export interface Event {
   updated_at: string
 }
 
+// Slim shape returned by GET /events: drops nested event_type since the
+// frontend already has EventTypes cached and looks them up by id.
+export type EventListItem = Omit<Event, 'event_type'>
+
 export interface EventListResponse {
-  items: Event[]
+  items: EventListItem[]
   total: number
 }
 
