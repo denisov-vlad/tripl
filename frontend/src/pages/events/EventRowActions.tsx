@@ -1,0 +1,197 @@
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  CircleCheck,
+  Eye,
+  MoreHorizontal,
+  Pencil,
+  Trash2,
+} from 'lucide-react'
+import type { EventListItem } from '@/types'
+import { Button } from '@/components/ui/button'
+
+export const EventRowActions = memo(function EventRowActions({
+  event,
+  slug,
+  canMoveUp,
+  canMoveDown,
+  onEdit,
+  onMoveUp,
+  onMoveDown,
+  onToggleReviewed,
+  onToggleImplemented,
+  onToggleArchived,
+  onDelete,
+}: {
+  event: EventListItem
+  slug: string
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onEdit: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  onToggleReviewed: () => void
+  onToggleImplemented: () => void
+  onToggleArchived: () => void
+  onDelete: () => void
+}) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const closeTimerRef = useRef<number | null>(null)
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const openActions = useCallback(() => {
+    clearCloseTimer()
+    setIsExpanded(true)
+  }, [clearCloseTimer])
+
+  const scheduleClose = useCallback(() => {
+    clearCloseTimer()
+    closeTimerRef.current = window.setTimeout(() => {
+      setIsExpanded(false)
+      closeTimerRef.current = null
+    }, 140)
+  }, [clearCloseTimer])
+
+  useEffect(() => () => clearCloseTimer(), [clearCloseTimer])
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex items-center justify-end"
+      onMouseLeave={scheduleClose}
+      onBlur={event_ => {
+        if (!containerRef.current?.contains(event_.relatedTarget as Node | null)) {
+          scheduleClose()
+        }
+      }}
+    >
+      <div className="relative flex items-center justify-end">
+        <div
+          className={`absolute right-[calc(100%-1px)] top-1/2 z-50 flex -translate-y-1/2 items-center gap-1 rounded-l-lg border border-r-0 bg-background/95 p-1 shadow-lg backdrop-blur-sm transition-all duration-200 ease-out ${
+            isExpanded
+              ? 'pointer-events-auto translate-x-0 opacity-100'
+              : 'pointer-events-none translate-x-2 opacity-0'
+          }`}
+          onMouseEnter={openActions}
+        >
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Move event up"
+            aria-label="Move event up"
+            onClick={onMoveUp}
+            disabled={!canMoveUp}
+          >
+            <ArrowUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Move event down"
+            aria-label="Move event down"
+            onClick={onMoveDown}
+            disabled={!canMoveDown}
+          >
+            <ArrowDown className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant={event.implemented ? 'default' : 'ghost'}
+            size="icon"
+            className="h-7 w-7"
+            title={event.implemented ? 'Implemented' : 'Not implemented'}
+            aria-label="Toggle implemented status"
+            onClick={onToggleImplemented}
+          >
+            <CircleCheck className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="View metrics"
+            aria-label="View metrics"
+            asChild
+          >
+            <Link to={`/p/${slug}/monitoring/event/${event.id}`}>
+              <BarChart3 className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground"
+            title={event.archived ? 'Unarchive' : 'Archive'}
+            aria-label={event.archived ? 'Unarchive event' : 'Archive event'}
+            onClick={onToggleArchived}
+          >
+            {event.archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            title="Delete event"
+            aria-label="Delete event"
+            onClick={onDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <div className={`relative z-10 flex items-center gap-1 rounded-lg border bg-background/95 p-1 backdrop-blur-sm transition-shadow ${isExpanded ? 'shadow-lg' : 'shadow-sm'}`}>
+          <Button
+            variant={event.reviewed ? 'default' : 'ghost'}
+            size="icon"
+            className="h-7 w-7"
+            title={event.reviewed ? 'Reviewed' : 'Not reviewed'}
+            aria-label="Toggle review status"
+            onClick={onToggleReviewed}
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Edit event"
+            aria-label="Edit event"
+            onClick={onEdit}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="More actions"
+            aria-label="More actions"
+            onMouseEnter={openActions}
+            onFocus={openActions}
+            onClick={() => {
+              if (isExpanded) {
+                scheduleClose()
+              } else {
+                openActions()
+              }
+            }}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+})
